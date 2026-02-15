@@ -174,6 +174,111 @@ fn find_closing_quote(text: &str, quote: char) -> Option<usize> {
     None
 }
 
+/// Extract the last quoted span from text, handling both single and double quotes.
+/// A "closing quote" is a quote char followed by a non-alphanumeric char (or end of string).
+/// An "opening quote" is a quote char at position 0 or preceded by a non-alphanumeric char.
+/// This correctly handles apostrophes ("can't"), extra quoted spans, and mixed quote styles.
+fn extract_last_quoted_span(text: &str) -> Option<String> {
+    // Try both quote styles, pick the one with closing quote nearest to end
+    // (closest to "in 'TOOL'"). This handles mixed styles like:
+    //   In module 'x', "permission denied" error in 'Bash'
+    // where double-quote span is closer to "in '" than single-quote 'x'.
+    let mut best: Option<(usize, String)> = None; // (close_pos, span)
+    for quote in [b'\'', b'"'] {
+        let bytes = text.as_bytes();
+        // Find closing: last quote followed by non-alphanumeric
+        let Some(close) = (0..bytes.len()).rev().find(|&i| {
+            bytes[i] == quote
+                && match bytes.get(i + 1) {
+                    Some(c) => !c.is_ascii_alphanumeric(),
+                    None => true,
+                }
+        }) else {
+            continue;
+        };
+        // Find opening: nearest preceding quote at word boundary
+        let Some(open) = (0..close).rev().find(|&i| {
+            bytes[i] == quote
+                && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
+        }) else {
+            continue;
+        };
+        let span = &text[open + 1..close];
+        if !span.is_empty() {
+            if best.as_ref().map_or(true, |(prev_close, _)| close > *prev_close) {
+                best = Some((close, span.to_string()));
+            }
+        }
+    }
+    best.map(|(_, span)| span)
+}
+
+/// Find the first `error in '` position that's NOT inside a double-quoted string.
+/// Returns the position of the `in '` part (skipping "error ").
+fn find_tool_marker(text: &str) -> Option<usize> {
+    let mut search_start = 0;
+    loop {
+        let pos = text[search_start..].find("error in '").map(|p| p + search_start)?;
+        // Check if inside double quotes: odd count of " before this position means inside
+        let quotes_before = text[..pos].bytes().filter(|&b| b == b'"').count();
+        if quotes_before % 2 == 0 {
+            return Some(pos + 6); // skip "error " to point at "in '"
+        }
+        search_start = pos + 1;
+    }
+}
+
+/// Extract an identity key for recurring error insights.
+/// Returns `tool:error_template` when possible, `tool` as last resort.
+///
+/// Handles both formats:
+/// - Heuristic: "Error in 'Read' has occurred 10 times without resolution: file does not exist"
+///   → "read:file does not exist"
+/// - LLM: "'permission denied' error in 'Bash' has recurred 12 times..."
+///   → "bash:permission denied"
+///
+/// Operates entirely on the lowercased string to avoid Unicode byte offset mismatches.
+fn extract_error_identity(description: &str) -> Option<String> {
+    let lower = description.to_lowercase();
+
+    // Find tool name via "error in 'TOOL'".
+    // Iterate all occurrences, skip any inside double-quoted strings
+    // (e.g. "parse error in 'config'" contains a false match).
+    // This handles both earlier and later false matches.
+    let in_pos = find_tool_marker(&lower).or_else(|| {
+        // Fallback: use "in '" only if it appears exactly once (unambiguous)
+        let first = lower.find("in '")?;
+        if lower[first + 1..].find("in '").is_some() {
+            None
+        } else {
+            Some(first)
+        }
+    })?;
+    let after_in = &lower[in_pos + 4..];
+    let tool = after_in.split('\'').next().filter(|s| !s.is_empty())?;
+
+    // Heuristic format: "... without resolution: <template>"
+    if let Some(pos) = lower.find("resolution:") {
+        let after = lower[pos + 11..].trim();
+        if !after.is_empty() {
+            return Some(format!("{}:{}", tool, normalize_for_dedup(after)));
+        }
+    }
+
+    // LLM format: "'<error>' error in 'TOOL' ..." or "\"<error>\" error in 'TOOL' ..."
+    // Find last quoted span before "in '".
+    // Closing quote: last quote char followed by non-alphanumeric (skips apostrophes).
+    // Opening quote: nearest preceding quote at word boundary (start/space/comma).
+    let before_in = &lower[..in_pos];
+    let found_error = extract_last_quoted_span(before_in);
+    if let Some(error_text) = found_error {
+        return Some(format!("{}:{}", tool, normalize_for_dedup(&error_text)));
+    }
+
+    // Last resort: tool-only (no error template found)
+    Some(tool.to_string())
+}
+
 /// Compute a 16-hex-char pattern key, using the primary entity for
 /// file/module-based insight types to avoid false-unique keys from
 /// different LLM phrasings about the same entity.
@@ -181,7 +286,10 @@ fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
     // For file/module insights, key on the entity not the prose
     if matches!(
         pattern_type,
-        "insight_fragile_code" | "insight_untested" | "insight_revert_cluster"
+        "insight_fragile_code"
+            | "insight_untested"
+            | "insight_revert_cluster"
+            | "insight_churn_hotspot"
     ) && let Some(entity) = extract_primary_entity(description)
     {
         return hash_key(&format!("{}:{}", pattern_type, entity));
@@ -195,12 +303,33 @@ fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
             return hash_key(&format!("{}:{}", pattern_type, title.to_lowercase()));
         }
     }
+    // For recurring errors, key on tool name (+ template if available)
+    if pattern_type == "insight_recurring_error" {
+        if let Some(identity) = extract_error_identity(description) {
+            return hash_key(&format!("{}:{}", pattern_type, identity));
+        }
+    }
+    // Health degrading: one per project (only the type matters)
+    if pattern_type == "insight_health_degrading" {
+        return hash_key(pattern_type);
+    }
     // Default: current behavior (normalized description hash)
     hash_key(&normalize_for_dedup(description))
 }
 
 /// Maximum number of insights to keep per pattern_type per project.
-const MAX_INSIGHTS_PER_TYPE: i64 = 10;
+/// Session insights get a tighter cap because LLM paraphrasing creates
+/// variants that similarity-based dedup can't reliably catch.
+fn max_insights_for_type(pattern_type: &str) -> i64 {
+    match pattern_type {
+        "insight_session" => 5,
+        _ => 10,
+    }
+}
+
+/// Bigram Jaccard similarity threshold for near-duplicate detection.
+/// 0.65 catches LLM paraphrasing while allowing genuinely different insights.
+const SIMILARITY_THRESHOLD: f64 = 0.65;
 
 /// Compute text similarity using character bigram Jaccard index.
 /// Returns 0.0 if both strings are empty, otherwise |intersection| / |union|.
@@ -262,6 +391,8 @@ pub(super) async fn store_insights(
     pool.run(move |conn| {
         let mut stored = 0;
         let mut types_touched = std::collections::HashSet::new();
+        // Track descriptions stored in this batch for intra-batch dedup
+        let mut batch_descriptions: Vec<(String, String)> = Vec::new();
 
         for insight in &insights_clone {
             // Generate pattern key using entity-aware hashing
@@ -269,34 +400,65 @@ pub(super) async fn store_insights(
             // Also compute legacy key (pre-entity-aware) so old dismissals are honoured
             let legacy_key = hash_key(&normalize_for_dedup(&insight.description));
 
-            // Skip if this pattern was previously dismissed (check both key strategies)
-            let dismissed: bool = conn
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM behavior_patterns \
-                     WHERE project_id = ? AND pattern_type = ? AND pattern_key IN (?, ?) AND dismissed = 1)",
-                    params![project_id, insight.pattern_type, pattern_key, legacy_key],
-                    |row| row.get(0),
-                )
-                .unwrap_or(false);
-            if dismissed {
-                continue;
-            }
-
-            // Text similarity dedup — only for non-entity-aware pattern types.
-            // Entity-aware types (fragile_code, untested, revert_cluster, stale_goal)
-            // already have identity-preserving keys via compute_pattern_key(), so
-            // same-entity recurrence is handled by the upsert and different entities
-            // must not be suppressed (e.g., src/auth/login.rs vs src/auth/logout.rs
-            // would exceed 0.8 bigram Jaccard despite being distinct entities).
-            let is_entity_aware = matches!(
+            // Types with identity-preserving keys: entity-based (file/goal/tool)
+            // or type-only (health — one per project).
+            // insight_recurring_error is only stable when extract_error_identity
+            // succeeded — if it fell through to normalized-description hash,
+            // it should be treated as non-stable.
+            let has_stable_key = matches!(
                 insight.pattern_type.as_str(),
                 "insight_fragile_code"
                     | "insight_untested"
                     | "insight_revert_cluster"
                     | "insight_stale_goal"
-            );
+                    | "insight_churn_hotspot"
+                    | "insight_health_degrading"
+            ) || (insight.pattern_type == "insight_recurring_error"
+                && extract_error_identity(&insight.description).is_some());
 
-            if !is_entity_aware {
+            // Skip if this pattern was previously dismissed.
+            // Stable-key types skip this check — the upsert resets dismissed=0
+            // so recurring issues with fresh evidence re-activate automatically.
+            if !has_stable_key {
+                let dismissed: bool = conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM behavior_patterns \
+                         WHERE project_id = ? AND pattern_type = ? AND pattern_key IN (?, ?) AND dismissed = 1)",
+                        params![project_id, insight.pattern_type, pattern_key, legacy_key],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                if dismissed {
+                    continue;
+                }
+            }
+
+            // Intra-batch dedup for types WITHOUT stable keys.
+            // Stable-key types rely on the DB upsert (same key → ON CONFLICT).
+            // Non-stable types: limit 1 per pattern_type per batch — LLMs often
+            // generate multiple prose variants of the same finding.
+            // Exception: insight_session can have multiple distinct patterns from
+            // the heuristic (short sessions, high churn, no summaries).
+            if !has_stable_key && insight.pattern_type != "insight_session" {
+                let type_already_in_batch = batch_descriptions
+                    .iter()
+                    .any(|(pt, _)| pt == &insight.pattern_type);
+
+                if type_already_in_batch {
+                    tracing::debug!(
+                        "Skipping duplicate non-stable type in batch: {} ({})",
+                        insight.pattern_type,
+                        insight.description,
+                    );
+                    continue;
+                }
+            }
+
+            // Cross-batch text similarity dedup — only for non-entity-aware types.
+            // Entity-aware types skip this because similar filenames (login.rs vs
+            // logout.rs) would exceed the threshold despite being distinct entities.
+
+            if !has_stable_key {
                 let mut stmt = conn
                     .prepare(
                         "SELECT json_extract(pattern_data, '$.description') \
@@ -317,7 +479,7 @@ pub(super) async fn store_insights(
                     .collect();
 
                 let is_duplicate = existing_descriptions.iter().any(|existing_desc| {
-                    text_similarity(&insight.description, existing_desc) > 0.8
+                    text_similarity(&insight.description, existing_desc) > SIMILARITY_THRESHOLD
                 });
 
                 if is_duplicate {
@@ -343,7 +505,8 @@ pub(super) async fn store_insights(
                     occurrence_count = occurrence_count + 1,
                     confidence = (confidence + excluded.confidence) / 2,
                     pattern_data = excluded.pattern_data,
-                    last_triggered_at = datetime('now')
+                    last_triggered_at = datetime('now'),
+                    dismissed = 0
                 "#,
                 params![
                     project_id,
@@ -358,13 +521,16 @@ pub(super) async fn store_insights(
                 Ok(_) => {
                     stored += 1;
                     types_touched.insert(insight.pattern_type.clone());
+                    batch_descriptions
+                        .push((insight.pattern_type.clone(), insight.description.clone()));
                 }
                 Err(e) => tracing::warn!("Failed to store insight: {}", e),
             }
         }
 
-        // Enforce per-type cap: keep the newest MAX_INSIGHTS_PER_TYPE, evict oldest
+        // Enforce per-type cap: keep the newest N, evict oldest
         for pattern_type in &types_touched {
+            let cap = max_insights_for_type(pattern_type);
             let evicted = conn
                 .execute(
                     r#"
@@ -377,13 +543,7 @@ pub(super) async fn store_insights(
                           LIMIT ?
                       )
                     "#,
-                    params![
-                        project_id,
-                        pattern_type,
-                        project_id,
-                        pattern_type,
-                        MAX_INSIGHTS_PER_TYPE,
-                    ],
+                    params![project_id, pattern_type, project_id, pattern_type, cap,],
                 )
                 .unwrap_or(0);
             if evicted > 0 {
@@ -391,7 +551,7 @@ pub(super) async fn store_insights(
                     "Evicted {} old '{}' insights (cap: {})",
                     evicted,
                     pattern_type,
-                    MAX_INSIGHTS_PER_TYPE,
+                    cap,
                 );
             }
         }
@@ -621,13 +781,14 @@ mod tests {
 
     // ── Legacy key dismissal ────────────────────────────────────────────
 
+    /// Stable-key types bypass the dismissed check — the upsert resets dismissed=0.
+    /// Legacy dismissed entries get reactivated when the issue recurs.
     #[tokio::test]
-    async fn test_legacy_dismissed_key_blocks_new_entity_key() {
+    async fn test_stable_key_reactivates_legacy_dismissed() {
         use crate::db::test_support::setup_test_pool;
 
         let pool = setup_test_pool().await;
 
-        // Create a project
         let project_id = pool
             .run(|conn| {
                 Ok::<_, anyhow::Error>(
@@ -661,7 +822,8 @@ mod tests {
         .await
         .unwrap();
 
-        // Now try to store the same insight — it should be blocked by the legacy dismissal
+        // Store the same insight — stable-key type bypasses dismissed check,
+        // upsert creates a new row (different key: entity-based vs legacy)
         let insights = vec![PonderingInsight {
             pattern_type: pattern_type.to_string(),
             description: description.to_string(),
@@ -670,9 +832,626 @@ mod tests {
         }];
 
         let stored = store_insights(&pool, project_id, &insights).await.unwrap();
+        assert_eq!(stored, 1, "stable-key type should bypass dismissed check");
+    }
+
+    /// Non-stable types should still be blocked by dismissed keys.
+    #[tokio::test]
+    async fn test_non_stable_blocked_by_dismissed() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/dismiss-block", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        let description = "5 sessions lasted under 5 minutes — workflow fragmentation";
+        let pattern_type = "insight_workflow"; // non-stable type
+
+        // Dismiss the insight
+        let pattern_key = hash_key(&normalize_for_dedup(description));
+        pool.run({
+            let pattern_key = pattern_key.clone();
+            let pattern_type = pattern_type.to_string();
+            move |conn| {
+                conn.execute(
+                    r#"INSERT INTO behavior_patterns
+                        (project_id, pattern_type, pattern_key, pattern_data, confidence,
+                         dismissed, last_triggered_at, first_seen_at, updated_at)
+                       VALUES (?, ?, ?, '{}', 0.5, 1, datetime('now'), datetime('now'), datetime('now'))"#,
+                    params![project_id, pattern_type, pattern_key],
+                )?;
+                Ok::<_, anyhow::Error>(())
+            }
+        })
+        .await
+        .unwrap();
+
+        // Try to store — should be blocked
+        let insights = vec![PonderingInsight {
+            pattern_type: pattern_type.to_string(),
+            description: description.to_string(),
+            confidence: 0.7,
+            evidence: vec!["test".to_string()],
+        }];
+
+        let stored = store_insights(&pool, project_id, &insights).await.unwrap();
+        assert_eq!(stored, 0, "non-stable type should be blocked by dismissal");
+    }
+
+    // ── Churn hotspot entity-aware keying ──────────────────────────────
+
+    #[test]
+    fn test_churn_hotspot_same_file_different_prose() {
+        let key1 = compute_pattern_key(
+            "insight_churn_hotspot",
+            "'src/mcp/mod.rs' touched in 56 sessions over 20 days — consider refactoring",
+        );
+        let key2 = compute_pattern_key(
+            "insight_churn_hotspot",
+            "src/mcp/mod.rs has been in continuous modification for 20+ days with 301 changes",
+        );
+        assert_eq!(key1, key2, "same file should produce same key");
+    }
+
+    #[test]
+    fn test_churn_hotspot_different_files() {
+        let key1 = compute_pattern_key(
+            "insight_churn_hotspot",
+            "'src/mcp/mod.rs' touched in 56 sessions",
+        );
+        let key2 = compute_pattern_key(
+            "insight_churn_hotspot",
+            "'src/mcp/requests.rs' touched in 53 sessions",
+        );
+        assert_ne!(key1, key2, "different files should produce different keys");
+    }
+
+    // ── Recurring error entity-aware keying ─────────────────────────────
+
+    #[test]
+    fn test_recurring_error_same_tool_same_error() {
+        // Heuristic format — includes template via "resolution:" suffix
+        let key1 = compute_pattern_key(
+            "insight_recurring_error",
+            "Error in 'Read' has occurred 10 times without resolution: file does not exist",
+        );
+        let key2 = compute_pattern_key(
+            "insight_recurring_error",
+            "Error in 'Read' has occurred 12 times without resolution: file does not exist",
+        );
+        assert_eq!(key1, key2, "same tool+error should produce same key");
+    }
+
+    #[test]
+    fn test_recurring_error_different_errors_same_tool() {
+        // Same tool, different error templates — should be distinct
+        let key1 = compute_pattern_key(
+            "insight_recurring_error",
+            "Error in 'Read' has occurred 10 times without resolution: file does not exist",
+        );
+        let key2 = compute_pattern_key(
+            "insight_recurring_error",
+            "Error in 'Read' has occurred 8 times without resolution: permission denied",
+        );
+        assert_ne!(
+            key1, key2,
+            "different errors in same tool should produce different keys"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_llm_format_different_errors() {
+        // LLM format: "'error' error in 'Tool' ..." — extracts error from first quotes
+        let key_llm1 = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 12 times across sessions",
+        );
+        let key_llm2 = compute_pattern_key(
+            "insight_recurring_error",
+            "'command not found' error in 'Bash' has recurred 8 times",
+        );
+        // Both extract tool+error: bash:permission denied vs bash:command not found
+        assert_ne!(
+            key_llm1, key_llm2,
+            "LLM format should distinguish different errors for same tool"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_llm_format_same_error_paraphrased() {
+        // Same error paraphrased differently by LLM — should produce same key
+        let key1 = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 12 times across sessions",
+        );
+        let key2 = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' keeps occurring — 12 occurrences noted",
+        );
         assert_eq!(
-            stored, 0,
-            "insight should be blocked by legacy dismissed key"
+            key1, key2,
+            "same error+tool should produce same key regardless of surrounding text"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_llm_format_apostrophe_in_error() {
+        // Error text contains apostrophe — should not truncate at it
+        let key = compute_pattern_key(
+            "insight_recurring_error",
+            "'can't connect to server' error in 'Bash' has recurred 5 times",
+        );
+        let key_clean = compute_pattern_key(
+            "insight_recurring_error",
+            "'can't connect to server' error in 'Bash' keeps happening",
+        );
+        assert_eq!(key, key_clean, "apostrophe in error should not truncate");
+
+        // Verify it's distinct from a different error
+        let key_other = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        assert_ne!(key, key_other, "different errors should produce different keys");
+    }
+
+    #[test]
+    fn test_recurring_error_extra_quoted_spans_before_error() {
+        // Extra quoted text before the error — should extract only the last quoted span
+        let key = compute_pattern_key(
+            "insight_recurring_error",
+            "In module 'x', 'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        let key_simple = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        assert_eq!(
+            key, key_simple,
+            "extra quoted spans before error should not pollute the key"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_trailing_in_quoted_after_tool() {
+        // "in '/tmp/foo'" in the resolution text after the tool
+        let id = extract_error_identity(
+            "Error in 'Read' has occurred 10 times without resolution: no such file in '/tmp/foo'",
+        );
+        assert!(
+            id.as_ref().unwrap().starts_with("read:"),
+            "tool should be 'read', got: {:?}",
+            id
+        );
+
+        let id_bar = extract_error_identity(
+            "Error in 'Read' has occurred 10 times without resolution: no such file in '/tmp/bar'",
+        );
+        assert!(id_bar.as_ref().unwrap().starts_with("read:"));
+        // Different paths → different resolution templates → different identity
+        assert_ne!(id, id_bar);
+    }
+
+    #[test]
+    fn test_recurring_error_llm_trailing_in_after_tool() {
+        // LLM prose with "in 'module'" after the tool
+        let id = extract_error_identity(
+            "'permission denied' error in 'Bash' while in 'module x' across sessions",
+        );
+        assert!(
+            id.as_ref().unwrap().starts_with("bash:"),
+            "tool should be 'bash', got: {:?}",
+            id
+        );
+
+        let id_simple = extract_error_identity(
+            "'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        assert_eq!(id, id_simple, "trailing context should not affect identity");
+    }
+
+    #[test]
+    fn test_recurring_error_error_in_quoted_error_text() {
+        // Error text inside double quotes contains "error in '...'" — skipped
+        let id = extract_error_identity(
+            "\"parse error in 'config'\" error in 'Bash' has recurred 5 times",
+        );
+        assert!(
+            id.as_ref().unwrap().starts_with("bash:"),
+            "tool should be 'bash', got: {:?}",
+            id
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_trailing_error_in_after_tool() {
+        // "error in '...'" appears AFTER the real tool — should still pick the first
+        let id = extract_error_identity(
+            "'permission denied' error in 'Bash' has recurred; likely error in 'config' loader",
+        );
+        assert!(
+            id.as_ref().unwrap().starts_with("bash:"),
+            "tool should be 'bash', got: {:?}",
+            id
+        );
+
+        // Heuristic format with "error in" in the resolution text
+        let id2 = extract_error_identity(
+            "Error in 'Read' has occurred 10 times without resolution: parse failure due to error in 'yaml' format",
+        );
+        assert!(
+            id2.as_ref().unwrap().starts_with("read:"),
+            "tool should be 'read', got: {:?}",
+            id2
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_earlier_in_quoted_span() {
+        // "In 'module x'" before the actual tool — anchored "error in '" skips it
+        let key = compute_pattern_key(
+            "insight_recurring_error",
+            "In 'module x', 'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        let key_simple = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        assert_eq!(
+            key, key_simple,
+            "earlier 'in ...' should not steal the tool position"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_double_quotes() {
+        // LLM uses double quotes around error
+        let key_dq = compute_pattern_key(
+            "insight_recurring_error",
+            "\"permission denied\" error in 'Bash' has recurred 12 times",
+        );
+        let key_sq = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 12 times",
+        );
+        assert_eq!(
+            key_dq, key_sq,
+            "double-quoted and single-quoted errors should produce the same key"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_mixed_quote_styles() {
+        // Single-quoted module name + double-quoted error — should pick double-quoted
+        // span (closer to "in '") not the single-quoted 'x'
+        let key = compute_pattern_key(
+            "insight_recurring_error",
+            "In module 'x', \"permission denied\" error in 'Bash' has recurred 5 times",
+        );
+        let key_simple = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        assert_eq!(
+            key, key_simple,
+            "mixed quotes should extract the error span closest to 'in TOOL'"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_punctuation_after_closing_quote() {
+        // Comma after closing quote instead of space
+        let key = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied', error in 'Bash' has recurred 5 times",
+        );
+        let key_simple = compute_pattern_key(
+            "insight_recurring_error",
+            "'permission denied' error in 'Bash' has recurred 5 times",
+        );
+        assert_eq!(
+            key, key_simple,
+            "punctuation after closing quote should still extract the error"
+        );
+    }
+
+    #[test]
+    fn test_recurring_error_different_tools() {
+        let key1 = compute_pattern_key(
+            "insight_recurring_error",
+            "Error in 'Read' has occurred 10 times without resolution: file does not exist",
+        );
+        let key2 = compute_pattern_key(
+            "insight_recurring_error",
+            "Error in 'Bash' has occurred 10 times without resolution: permission denied",
+        );
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_recurring_error_unicode_safety() {
+        // İ (U+0130) lowercases to "i\u{0307}" (2 chars), shifting byte offsets.
+        // extract_error_identity operates entirely on lowercased string to avoid this.
+        let key = compute_pattern_key(
+            "insight_recurring_error",
+            "İrror in 'Bash' has occurred 5 times without resolution: timeout",
+        );
+        // Should still extract "bash" as the tool
+        let key_plain = compute_pattern_key(
+            "insight_recurring_error",
+            "Error in 'Bash' has occurred 5 times without resolution: timeout",
+        );
+        assert_eq!(key, key_plain, "Unicode should not affect tool extraction");
+    }
+
+    // ── Health degrading: one per project ───────────────────────────────
+
+    #[test]
+    fn test_health_degrading_always_same_key() {
+        let key1 = compute_pattern_key(
+            "insight_health_degrading",
+            "Codebase health degraded: avg debt score 42.0 → 55.0 (+31% change, 8 modules)",
+        );
+        let key2 = compute_pattern_key(
+            "insight_health_degrading",
+            "Health getting worse: score went from 40 to 60 across 10 modules",
+        );
+        assert_eq!(
+            key1, key2,
+            "health_degrading should always produce the same key per project"
+        );
+    }
+
+    // ── Recurring error: stable key fallback ────────────────────────────
+
+    #[test]
+    fn test_recurring_error_no_quotes_falls_back_to_description_hash() {
+        // No "in 'TOOL'" pattern → extract_error_identity returns None → description hash
+        let key1 = compute_pattern_key(
+            "insight_recurring_error",
+            "Recurring errors detected in the build pipeline",
+        );
+        let key2 = compute_pattern_key(
+            "insight_recurring_error",
+            "Recurring errors detected in the build pipeline",
+        );
+        assert_eq!(key1, key2, "identical description should match");
+
+        // Verify it's NOT a stable key (it's a description hash)
+        assert!(
+            extract_error_identity("Recurring errors detected in the build pipeline").is_none(),
+            "no quotes → extract_error_identity should return None"
+        );
+    }
+
+    // ── Intra-batch dedup ───────────────────────────────────────────────
+
+    /// Non-stable, non-session types are limited to 1 per batch.
+    #[tokio::test]
+    async fn test_intra_batch_limits_non_session_non_stable() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/intra-batch", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // LLM generates 3 variants of a workflow insight — only 1 should survive
+        let insights = vec![
+            PonderingInsight {
+                pattern_type: "insight_workflow".to_string(),
+                description: "Developer frequently switches between unrelated tasks".to_string(),
+                confidence: 0.7,
+                evidence: vec!["task switching".to_string()],
+            },
+            PonderingInsight {
+                pattern_type: "insight_workflow".to_string(),
+                description: "High task switching frequency observed across sessions".to_string(),
+                confidence: 0.7,
+                evidence: vec!["pattern".to_string()],
+            },
+        ];
+
+        let stored = store_insights(&pool, project_id, &insights).await.unwrap();
+        assert_eq!(
+            stored, 1,
+            "Non-stable non-session type limited to 1 per batch, got {}",
+            stored,
+        );
+    }
+
+    /// Entity-aware types CAN have multiple entries per batch (one per entity).
+    #[tokio::test]
+    async fn test_intra_batch_allows_multiple_entity_types() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/intra-batch-entity", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Two different files — both should be stored
+        let insights = vec![
+            PonderingInsight {
+                pattern_type: "insight_churn_hotspot".to_string(),
+                description:
+                    "'src/mcp/mod.rs' touched in 56 sessions over 20 days — high churn area"
+                        .to_string(),
+                confidence: 0.7,
+                evidence: vec!["56 sessions".to_string()],
+            },
+            PonderingInsight {
+                pattern_type: "insight_churn_hotspot".to_string(),
+                description:
+                    "'src/mcp/requests.rs' touched in 53 sessions over 20 days — high churn area"
+                        .to_string(),
+                confidence: 0.7,
+                evidence: vec!["53 sessions".to_string()],
+            },
+        ];
+
+        let stored = store_insights(&pool, project_id, &insights).await.unwrap();
+        assert_eq!(
+            stored, 2,
+            "Entity-aware types should allow multiple per batch (different entities)"
+        );
+    }
+
+    /// Distinct session patterns (from heuristic) should coexist since they
+    /// have different normalized hashes. LLM variants are limited by the
+    /// intra-batch type dedup + per-type eviction cap.
+    #[tokio::test]
+    async fn test_distinct_session_patterns_coexist() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/session-distinct", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // 3 distinct heuristic session patterns
+        let insights = vec![
+            PonderingInsight {
+                pattern_type: "insight_session".to_string(),
+                description: "18 sessions in the last 7 days lasted less than 5 minutes"
+                    .to_string(),
+                confidence: 0.5,
+                evidence: vec!["count: 18".to_string()],
+            },
+            PonderingInsight {
+                pattern_type: "insight_session".to_string(),
+                description:
+                    "122 sessions in the last 7 days — high context-switching frequency"
+                        .to_string(),
+                confidence: 0.5,
+                evidence: vec!["count: 122".to_string()],
+            },
+            PonderingInsight {
+                pattern_type: "insight_session".to_string(),
+                description: "55 sessions in the last 7 days ended without a summary".to_string(),
+                confidence: 0.5,
+                evidence: vec!["count: 55".to_string()],
+            },
+        ];
+
+        // insight_session is exempt from intra-batch type limit,
+        // so all 3 distinct patterns survive in a single batch.
+        store_insights(&pool, project_id, &insights).await.unwrap();
+
+        let count: i64 = pool
+            .run(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM behavior_patterns \
+                     WHERE project_id = ? AND pattern_type = 'insight_session'",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 3,
+            "Distinct session patterns should each get their own row"
+        );
+    }
+
+    /// Upsert should reset dismissed=0 so recurring issues re-activate.
+    #[tokio::test]
+    async fn test_upsert_resets_dismissed_flag() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/dismiss-reset", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Store an insight
+        let insights = vec![PonderingInsight {
+            pattern_type: "insight_health_degrading".to_string(),
+            description: "Health degrading: score 42 → 55".to_string(),
+            confidence: 0.7,
+            evidence: vec!["test".to_string()],
+        }];
+        store_insights(&pool, project_id, &insights).await.unwrap();
+
+        // Simulate auto-dismiss
+        pool.run(move |conn| {
+            conn.execute(
+                "UPDATE behavior_patterns SET dismissed = 1 \
+                 WHERE project_id = ? AND pattern_type = 'insight_health_degrading'",
+                params![project_id],
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .unwrap();
+
+        // Store again (issue recurs) — should un-dismiss via upsert
+        let insights2 = vec![PonderingInsight {
+            pattern_type: "insight_health_degrading".to_string(),
+            description: "Health degrading: score 48 → 60".to_string(),
+            confidence: 0.75,
+            evidence: vec!["updated".to_string()],
+        }];
+        store_insights(&pool, project_id, &insights2).await.unwrap();
+
+        let dismissed: bool = pool
+            .run(move |conn| {
+                conn.query_row(
+                    "SELECT dismissed FROM behavior_patterns \
+                     WHERE project_id = ? AND pattern_type = 'insight_health_degrading'",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+        assert!(
+            !dismissed,
+            "Upsert should reset dismissed=0 when issue recurs"
         );
     }
 
@@ -707,7 +1486,12 @@ mod tests {
         let a = "File src/db/pool.rs modified 8 times and shows high churn";
         let b = "File src/db/pool.rs modified 12 times and shows high churn";
         let sim = text_similarity(a, b);
-        assert!(sim > 0.8, "Expected similarity > 0.8, got {}", sim);
+        assert!(
+            sim > SIMILARITY_THRESHOLD,
+            "Expected similarity > {}, got {}",
+            SIMILARITY_THRESHOLD,
+            sim
+        );
     }
 
     #[test]
@@ -715,7 +1499,12 @@ mod tests {
         let a = "File src/db/pool.rs has issues";
         let b = "File src/auth/login.rs has issues";
         let sim = text_similarity(a, b);
-        assert!(sim < 0.8, "Expected similarity < 0.8, got {}", sim);
+        assert!(
+            sim < SIMILARITY_THRESHOLD,
+            "Expected similarity < {}, got {}",
+            SIMILARITY_THRESHOLD,
+            sim
+        );
     }
 
     #[test]
