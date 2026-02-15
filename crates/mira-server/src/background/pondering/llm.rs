@@ -441,4 +441,59 @@ mod tests {
         assert_eq!(insights[1].confidence, 0.6); // unchanged
         assert_eq!(insights[2].confidence, 0.7); // capped from 1.0
     }
+
+    #[test]
+    fn test_build_prompt_filters_benign_errors() {
+        use super::super::types::*;
+        let data = ProjectInsightData {
+            recurring_errors: vec![
+                RecurringError {
+                    tool_name: "Read".to_string(),
+                    error_template: "file does not exist: /foo/bar".to_string(),
+                    occurrence_count: 5,
+                    first_seen_session_id: None,
+                    last_seen_session_id: None,
+                },
+                RecurringError {
+                    tool_name: "Grep".to_string(),
+                    error_template: "No matches found".to_string(),
+                    occurrence_count: 8,
+                    first_seen_session_id: None,
+                    last_seen_session_id: None,
+                },
+                RecurringError {
+                    tool_name: "some_tool".to_string(),
+                    error_template: "real error worth reporting".to_string(),
+                    occurrence_count: 4,
+                    first_seen_session_id: None,
+                    last_seen_session_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let prompt = build_prompt("mira", &data, &[], &[], &[]);
+        // Benign errors should be excluded
+        assert!(!prompt.contains("file does not exist"));
+        assert!(!prompt.contains("No matches found"));
+        // Real error should remain
+        assert!(prompt.contains("real error worth reporting"));
+        assert!(prompt.contains("some_tool"));
+    }
+
+    #[test]
+    fn test_build_prompt_omits_section_when_all_errors_benign() {
+        use super::super::types::*;
+        let data = ProjectInsightData {
+            recurring_errors: vec![RecurringError {
+                tool_name: "Glob".to_string(),
+                error_template: "no matches".to_string(),
+                occurrence_count: 3,
+                first_seen_session_id: None,
+                last_seen_session_id: None,
+            }],
+            ..Default::default()
+        };
+        let prompt = build_prompt("mira", &data, &[], &[], &[]);
+        assert!(!prompt.contains("Recurring Unresolved Errors"));
+    }
 }
