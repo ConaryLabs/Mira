@@ -197,7 +197,7 @@ const BENIGN_ERRORS: &[(&str, &str)] = &[
 ];
 
 /// Check if an error pattern is benign (expected normal behavior).
-fn is_benign_error(tool_name: &str, error_template: &str) -> bool {
+pub(super) fn is_benign_error(tool_name: &str, error_template: &str) -> bool {
     let tool_lower = tool_name.to_lowercase();
     let template_lower = error_template.to_lowercase();
     BENIGN_ERRORS

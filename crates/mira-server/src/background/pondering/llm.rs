@@ -161,11 +161,12 @@ fn build_prompt(
         sections.push(format!("## Recent Session Patterns\n{}", items.join("\n")));
     }
 
-    // Recurring errors section
-    if !data.recurring_errors.is_empty() {
+    // Recurring errors section (filter benign errors same as heuristic path)
+    {
         let items: Vec<String> = data
             .recurring_errors
             .iter()
+            .filter(|e| !super::heuristic::is_benign_error(&e.tool_name, &e.error_template))
             .map(|e| {
                 format!(
                     "- {} in '{}': {} occurrences, unresolved",
@@ -175,10 +176,12 @@ fn build_prompt(
                 )
             })
             .collect();
-        sections.push(format!(
-            "## Recurring Unresolved Errors\n{}",
-            items.join("\n")
-        ));
+        if !items.is_empty() {
+            sections.push(format!(
+                "## Recurring Unresolved Errors\n{}",
+                items.join("\n")
+            ));
+        }
     }
 
     // Churn hotspots section
