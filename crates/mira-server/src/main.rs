@@ -26,8 +26,8 @@ async fn main() -> Result<()> {
         Some(Commands::Hook { .. }) => {
             // Hooks: configurable via MIRA_HOOK_LOG_LEVEL (default: warn)
             // No timestamps or module targets — hooks are ephemeral processes
-            let hook_level = std::env::var("MIRA_HOOK_LOG_LEVEL")
-                .unwrap_or_else(|_| "warn".to_string());
+            let hook_level =
+                std::env::var("MIRA_HOOK_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string());
             let level = match hook_level.to_lowercase().as_str() {
                 "off" => None,
                 "error" => Some(Level::ERROR),

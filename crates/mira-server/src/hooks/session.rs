@@ -216,15 +216,17 @@ pub async fn run() -> Result<()> {
             );
 
             let membership = async {
-                let team_id = client.register_team_session(
-                    &det.team_name,
-                    &det.config_path,
-                    &det.member_name,
-                    &det.role,
-                    det.agent_type.as_deref(),
-                    sid,
-                    cwd,
-                ).await?;
+                let team_id = client
+                    .register_team_session(
+                        &det.team_name,
+                        &det.config_path,
+                        &det.member_name,
+                        &det.role,
+                        det.agent_type.as_deref(),
+                        sid,
+                        cwd,
+                    )
+                    .await?;
                 Some(TeamMembership {
                     team_id,
                     team_name: det.team_name.clone(),
@@ -247,7 +249,9 @@ pub async fn run() -> Result<()> {
     let session_id_owned = session_id.map(String::from);
 
     let context = if source == "resume" {
-        client.get_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref()).await
+        client
+            .get_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref())
+            .await
     } else {
         client.get_startup_context(cwd_owned.as_deref()).await
     };

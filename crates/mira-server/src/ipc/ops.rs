@@ -3,7 +3,7 @@
 
 use crate::mcp::MiraServer;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Resolve a project by CWD or return the last active project.
 pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value> {
@@ -20,9 +20,8 @@ pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value
                 anyhow::bail!("no cwd provided and no active project found");
             };
 
-            let (id, _name) =
-                crate::db::get_or_create_project_sync(conn, &project_path, None)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let (id, _name) = crate::db::get_or_create_project_sync(conn, &project_path, None)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             Ok((id, project_path))
         })
         .await?;
@@ -90,10 +89,7 @@ pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
         .and_then(|v| v.as_str())
         .unwrap_or("tool_use")
         .to_string();
-    let event_data = params
-        .get("event_data")
-        .cloned()
-        .unwrap_or(json!({}));
+    let event_data = params.get("event_data").cloned().unwrap_or(json!({}));
 
     server
         .pool
@@ -184,10 +180,7 @@ pub async fn get_active_goals(server: &MiraServer, params: Value) -> Result<Valu
         .get("project_id")
         .and_then(|v| v.as_i64())
         .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
     let goals = crate::hooks::format_active_goals(&server.pool, project_id, limit).await;
     Ok(json!({"goals": goals}))
@@ -334,7 +327,10 @@ pub async fn resolve_error_patterns(server: &MiraServer, params: Value) -> Resul
         .pool
         .interact(move |conn| {
             let candidates = crate::db::get_unresolved_patterns_for_tool_sync(
-                conn, project_id, &tool_name, &session_id,
+                conn,
+                project_id,
+                &tool_name,
+                &session_id,
             );
 
             let mut best: Option<(String, i64, i64)> = None;
@@ -475,7 +471,11 @@ pub async fn get_file_conflicts(server: &MiraServer, params: Value) -> Result<Va
     let conflicts: Vec<crate::db::FileConflict> = server
         .pool
         .interact(move |conn| {
-            Ok::<_, anyhow::Error>(crate::db::get_file_conflicts_sync(conn, team_id, &session_id))
+            Ok::<_, anyhow::Error>(crate::db::get_file_conflicts_sync(
+                conn,
+                team_id,
+                &session_id,
+            ))
         })
         .await?;
 
@@ -616,9 +616,8 @@ pub async fn register_session(server: &MiraServer, params: Value) -> Result<Valu
     let project_id = server
         .pool
         .interact(move |conn| {
-            let (project_id, _) =
-                crate::db::get_or_create_project_sync(conn, &cwd, None)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let (project_id, _) = crate::db::get_or_create_project_sync(conn, &cwd, None)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             crate::db::create_session_ext_sync(
                 conn,
                 &session_id,
@@ -670,10 +669,7 @@ pub async fn register_team_session(server: &MiraServer, params: Value) -> Result
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing required param: session_id"))?
         .to_string();
-    let cwd = params
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let cwd = params.get("cwd").and_then(|v| v.as_str()).map(String::from);
 
     let team_id = server
         .pool
@@ -685,12 +681,8 @@ pub async fn register_team_session(server: &MiraServer, params: Value) -> Result
             } else {
                 None
             };
-            let tid = crate::db::get_or_create_team_sync(
-                conn,
-                &team_name,
-                project_id,
-                &config_path,
-            )?;
+            let tid =
+                crate::db::get_or_create_team_sync(conn, &team_name, project_id, &config_path)?;
             crate::db::register_team_session_sync(
                 conn,
                 tid,
@@ -718,12 +710,9 @@ pub async fn get_startup_context(server: &MiraServer, params: Value) -> Result<V
 pub async fn get_resume_context(server: &MiraServer, params: Value) -> Result<Value> {
     let cwd = params.get("cwd").and_then(|v| v.as_str());
     let session_id = params.get("session_id").and_then(|v| v.as_str());
-    let context = crate::hooks::session::build_resume_context(
-        cwd,
-        session_id,
-        Some(server.pool.clone()),
-    )
-    .await;
+    let context =
+        crate::hooks::session::build_resume_context(cwd, session_id, Some(server.pool.clone()))
+            .await;
     Ok(json!({"context": context}))
 }
 
@@ -759,14 +748,11 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
 
             if !session_id.is_empty() {
                 // Best-effort: snapshot may fail if session has no data yet
-                if let Err(e) =
-                    crate::hooks::stop::save_session_snapshot(conn, &session_id)
-                {
+                if let Err(e) = crate::hooks::stop::save_session_snapshot(conn, &session_id) {
                     tracing::warn!("[mira] Session snapshot failed: {}", e);
                 }
                 // Best-effort: close may fail if session was already closed
-                if let Err(e) =
-                    crate::db::close_session_sync(conn, &session_id, summary.as_deref())
+                if let Err(e) = crate::db::close_session_sync(conn, &session_id, summary.as_deref())
                 {
                     tracing::warn!("[mira] Failed to close session: {e}");
                 }
@@ -927,10 +913,7 @@ pub async fn write_auto_memory(server: &MiraServer, params: Value) -> Result<Val
 /// Returns reactive context, proactive insights, team context, and cross-project
 /// knowledge in a single response.
 pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Result<Value> {
-    let message = params
-        .get("message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let message = params.get("message").and_then(|v| v.as_str()).unwrap_or("");
     let session_id = params
         .get("session_id")
         .and_then(|v| v.as_str())

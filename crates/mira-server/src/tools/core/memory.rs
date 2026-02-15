@@ -587,10 +587,7 @@ pub async fn recall<C: ToolContext>(
         };
 
         // Filter out low-quality results (distance >= 0.7 means similarity < 0.3)
-        let results: Vec<_> = results
-            .into_iter()
-            .filter(|r| r.distance < 0.7)
-            .collect();
+        let results: Vec<_> = results.into_iter().filter(|r| r.distance < 0.7).collect();
 
         if !results.is_empty() {
             // Apply category/fact_type filters if requested (using inline metadata)
@@ -601,9 +598,7 @@ pub async fn recall<C: ToolContext>(
                     .into_iter()
                     .filter(|r| {
                         let ft_ok = ft.as_ref().is_none_or(|f| f == &r.fact_type);
-                        let cat_ok =
-                            cat.as_ref()
-                                .is_none_or(|c| r.category.as_ref() == Some(c));
+                        let cat_ok = cat.as_ref().is_none_or(|c| r.category.as_ref() == Some(c));
                         ft_ok && cat_ok
                     })
                     .take(limit)

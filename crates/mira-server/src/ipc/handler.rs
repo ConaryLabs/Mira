@@ -10,10 +10,16 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 /// medium ops (search/recall) get 10s, fast ops (simple lookups/writes) get 5s.
 fn op_timeout(op: &str) -> Duration {
     match op {
-        "get_user_prompt_context" | "close_session" | "get_startup_context"
-        | "get_resume_context" | "distill_team_session" => Duration::from_secs(30),
-        "recall_memories" | "get_active_goals" | "snapshot_tasks"
-        | "write_claude_local_md" | "write_auto_memory" => Duration::from_secs(10),
+        "get_user_prompt_context"
+        | "close_session"
+        | "get_startup_context"
+        | "get_resume_context"
+        | "distill_team_session" => Duration::from_secs(30),
+        "recall_memories"
+        | "get_active_goals"
+        | "snapshot_tasks"
+        | "write_claude_local_md"
+        | "write_auto_memory" => Duration::from_secs(10),
         _ => Duration::from_secs(5),
     }
 }
@@ -57,16 +63,14 @@ pub async fn handle_connection(stream: tokio::net::UnixStream, server: MiraServe
         let id = req.id.clone();
 
         // Dispatch with per-op timeout
-        let resp = match tokio::time::timeout(
-            op_timeout(&req.op),
-            dispatch(&req.op, req.params, &server),
-        )
-        .await
-        {
-            Ok(Ok(result)) => IpcResponse::success(id, result),
-            Ok(Err(e)) => IpcResponse::error(id, e.to_string()),
-            Err(_) => IpcResponse::error(id, "timeout"),
-        };
+        let resp =
+            match tokio::time::timeout(op_timeout(&req.op), dispatch(&req.op, req.params, &server))
+                .await
+            {
+                Ok(Ok(result)) => IpcResponse::success(id, result),
+                Ok(Err(e)) => IpcResponse::error(id, e.to_string()),
+                Err(_) => IpcResponse::error(id, "timeout"),
+            };
 
         if write_response(&mut writer, &resp).await.is_err() {
             break; // Client disconnected
@@ -78,9 +82,8 @@ async fn write_response(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     resp: &IpcResponse,
 ) -> std::io::Result<()> {
-    let mut json = serde_json::to_string(resp).unwrap_or_else(|_| {
-        r#"{"id":"","ok":false,"error":"serialize error"}"#.to_string()
-    });
+    let mut json = serde_json::to_string(resp)
+        .unwrap_or_else(|_| r#"{"id":"","ok":false,"error":"serialize error"}"#.to_string());
     json.push('\n');
     writer.write_all(json.as_bytes()).await?;
     writer.flush().await

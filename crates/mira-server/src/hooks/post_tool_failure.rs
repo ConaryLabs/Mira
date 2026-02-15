@@ -87,12 +87,7 @@ pub async fn run() -> Result<()> {
             "error_fingerprint": fingerprint,
         });
         client
-            .log_behavior(
-                &failure_input.session_id,
-                project_id,
-                "tool_failure",
-                data,
-            )
+            .log_behavior(&failure_input.session_id, project_id, "tool_failure", data)
             .await;
     }
 

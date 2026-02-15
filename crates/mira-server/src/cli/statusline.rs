@@ -89,20 +89,6 @@ fn query_insights(conn: &Connection, project_id: i64) -> (i64, i64) {
     .unwrap_or((0, 0))
 }
 
-/// Get how long ago the code index was last updated, as a human-readable string.
-fn query_index_age(conn: &Connection, project_id: i64) -> Option<String> {
-    let seconds: i64 = conn
-        .query_row(
-            "SELECT CAST((julianday('now') - julianday(MAX(indexed_at))) * 86400 AS INTEGER) \
-             FROM code_symbols WHERE project_id = ?1",
-            [project_id],
-            |r| r.get(0),
-        )
-        .ok()?;
-
-    Some(format_duration(seconds))
-}
-
 /// Count pending/draft documentation tasks for a project.
 fn query_stale_docs(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
@@ -197,6 +183,7 @@ fn get_llm_info() -> Option<(String, String)> {
 }
 
 /// Format seconds into a compact human-readable duration.
+#[cfg(test)]
 fn format_duration(seconds: i64) -> String {
     if seconds < 60 {
         "just now".to_string()
@@ -261,15 +248,12 @@ pub fn run() -> Result<()> {
     let bg_stalled = query_bg_stalled(&main_conn);
 
     let code_conn = open_readonly(&code_db);
-    let index_age = code_conn
-        .as_ref()
-        .and_then(|c| query_index_age(c, project_id));
     let pending = code_conn
         .as_ref()
         .map(|c| query_pending(c, project_id))
         .unwrap_or(0);
 
-    // Build output: Mira project: Name · background: zhipu/glm-5 · 3 goals · indexed 2h ago · ...
+    // Build output: Mira project: Name · background: deepseek-reasoner · 3 goals · ...
     let mut parts = Vec::new();
 
     // 1. Stable context
@@ -277,11 +261,9 @@ pub fn run() -> Result<()> {
         parts.push(format!("{DIM}project:{RESET} {project_name}"));
     }
 
-    // 2. LLM provider info
-    if let Some((provider, model)) = get_llm_info() {
-        parts.push(format!(
-            "{DIM}background:{RESET} {DIM}{provider}/{model}{RESET}"
-        ));
+    // 2. LLM model info
+    if let Some((_provider, model)) = get_llm_info() {
+        parts.push(format!("{DIM}background:{RESET} {DIM}{model}{RESET}"));
     }
 
     // 3. Active workload
@@ -289,19 +271,14 @@ pub fn run() -> Result<()> {
         parts.push(format!("{GREEN}{goals}{RESET} goals"));
     }
 
-    // 4. Index age
-    if let Some(age) = &index_age {
-        parts.push(format!("{DIM}indexed {age}{RESET}"));
-    }
-
-    // 5. Actionable items
+    // 4. Actionable items
     if total_insights > 0 {
         if new_insights > 0 {
             parts.push(format!(
-                "{MAGENTA}{total_insights}{RESET} insights ({MAGENTA}{new_insights} new{RESET})"
+                "{MAGENTA}{total_insights}\u{00a0}insights{RESET} ({MAGENTA}{new_insights}\u{00a0}new{RESET})"
             ));
         } else {
-            parts.push(format!("{DIM}{total_insights} insights{RESET}"));
+            parts.push(format!("{DIM}{total_insights}\u{00a0}insights{RESET}"));
         }
     }
 

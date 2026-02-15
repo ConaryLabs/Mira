@@ -390,11 +390,9 @@ async fn test_log_behavior_empty_session_id() {
     let count: i64 = pool_verify
         .interact(|conn| {
             Ok::<_, anyhow::Error>(
-                conn.query_row(
-                    "SELECT COUNT(*) FROM session_behavior_log",
-                    [],
-                    |row| row.get(0),
-                )
+                conn.query_row("SELECT COUNT(*) FROM session_behavior_log", [], |row| {
+                    row.get(0)
+                })
                 .unwrap_or(0),
             )
         })

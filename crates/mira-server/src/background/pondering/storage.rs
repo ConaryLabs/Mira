@@ -87,7 +87,10 @@ fn extract_goal_id(description: &str) -> Option<u64> {
                 .is_alphanumeric();
         if before_ok {
             let after = lower[abs_pos + 4..].trim_start();
-            let after = after.strip_prefix('#').map(|s| s.trim_start()).unwrap_or(after);
+            let after = after
+                .strip_prefix('#')
+                .map(|s| s.trim_start())
+                .unwrap_or(after);
             let num_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
             if !num_str.is_empty() {
                 return num_str.parse().ok();
@@ -197,15 +200,18 @@ fn extract_last_quoted_span(text: &str) -> Option<String> {
             continue;
         };
         // Find opening: nearest preceding quote at word boundary
-        let Some(open) = (0..close).rev().find(|&i| {
-            bytes[i] == quote
-                && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
-        }) else {
+        let Some(open) = (0..close)
+            .rev()
+            .find(|&i| bytes[i] == quote && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric()))
+        else {
             continue;
         };
         let span = &text[open + 1..close];
         if !span.is_empty() {
-            if best.as_ref().map_or(true, |(prev_close, _)| close > *prev_close) {
+            if best
+                .as_ref()
+                .map_or(true, |(prev_close, _)| close > *prev_close)
+            {
                 best = Some((close, span.to_string()));
             }
         }
@@ -218,7 +224,9 @@ fn extract_last_quoted_span(text: &str) -> Option<String> {
 fn find_tool_marker(text: &str) -> Option<usize> {
     let mut search_start = 0;
     loop {
-        let pos = text[search_start..].find("error in '").map(|p| p + search_start)?;
+        let pos = text[search_start..]
+            .find("error in '")
+            .map(|p| p + search_start)?;
         // Check if inside double quotes: odd count of " before this position means inside
         let quotes_before = text[..pos].bytes().filter(|&b| b == b'"').count();
         if quotes_before % 2 == 0 {
@@ -1001,7 +1009,10 @@ mod tests {
             "insight_recurring_error",
             "'permission denied' error in 'Bash' has recurred 5 times",
         );
-        assert_ne!(key, key_other, "different errors should produce different keys");
+        assert_ne!(
+            key, key_other,
+            "different errors should produce different keys"
+        );
     }
 
     #[test]
@@ -1053,9 +1064,8 @@ mod tests {
             id
         );
 
-        let id_simple = extract_error_identity(
-            "'permission denied' error in 'Bash' has recurred 5 times",
-        );
+        let id_simple =
+            extract_error_identity("'permission denied' error in 'Bash' has recurred 5 times");
         assert_eq!(id, id_simple, "trailing context should not affect identity");
     }
 
@@ -1353,9 +1363,8 @@ mod tests {
             },
             PonderingInsight {
                 pattern_type: "insight_session".to_string(),
-                description:
-                    "122 sessions in the last 7 days — high context-switching frequency"
-                        .to_string(),
+                description: "122 sessions in the last 7 days — high context-switching frequency"
+                    .to_string(),
                 confidence: 0.5,
                 evidence: vec!["count: 122".to_string()],
             },
@@ -1742,7 +1751,10 @@ mod tests {
 
     #[test]
     fn test_extract_goal_id() {
-        assert_eq!(extract_goal_id("Goal 94 (deadpool migration) has been in_progress"), Some(94));
+        assert_eq!(
+            extract_goal_id("Goal 94 (deadpool migration) has been in_progress"),
+            Some(94)
+        );
         assert_eq!(extract_goal_id("goal 42 is stale"), Some(42));
         assert_eq!(extract_goal_id("Goal #123 needs attention"), Some(123));
         assert_eq!(extract_goal_id("no goal here"), None);
@@ -1776,7 +1788,9 @@ mod tests {
         // Two rephrasings of the same stale goal, neither using quotes
         let insights1 = vec![PonderingInsight {
             pattern_type: "insight_stale_goal".to_string(),
-            description: "Goal 94 (deadpool migration) has been in_progress 23 days with 0/3 milestones".to_string(),
+            description:
+                "Goal 94 (deadpool migration) has been in_progress 23 days with 0/3 milestones"
+                    .to_string(),
             confidence: 0.6,
             evidence: vec!["stale".to_string()],
         }];
@@ -1786,7 +1800,8 @@ mod tests {
         // Same goal, different phrasing, still unquoted
         let insights2 = vec![PonderingInsight {
             pattern_type: "insight_stale_goal".to_string(),
-            description: "Goal 94 has made no progress in 23 days — consider breaking it down".to_string(),
+            description: "Goal 94 has made no progress in 23 days — consider breaking it down"
+                .to_string(),
             confidence: 0.65,
             evidence: vec!["stale".to_string()],
         }];

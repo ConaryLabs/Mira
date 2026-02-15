@@ -70,7 +70,10 @@ pub async fn run() -> Result<()> {
 
     if !goal_lines.is_empty() {
         // Log active goals to stderr (Stop hook doesn't support additionalContext)
-        tracing::warn!(count = goal_lines.len(), "[mira] Active goal(s) — remember to update progress");
+        tracing::warn!(
+            count = goal_lines.len(),
+            "[mira] Active goal(s) — remember to update progress"
+        );
         for line in &goal_lines {
             tracing::warn!("  {}", line);
         }
@@ -204,7 +207,10 @@ async fn snapshot_tasks(
 }
 
 /// Build a session summary from tool history or behavior log, whichever is richer.
-pub(crate) fn build_session_summary(conn: &rusqlite::Connection, session_id: &str) -> Option<String> {
+pub(crate) fn build_session_summary(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Option<String> {
     // Get stats from both sources and pick the richer one.
     // Compare total event counts (including file_access for behavior) to match
     // the background worker's line-count comparison in session_summaries.rs.

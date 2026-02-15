@@ -144,7 +144,10 @@ pub async fn run() -> Result<()> {
     // Try IPC first — single composite call runs everything server-side
     let mut client = crate::ipc::client::HookClient::connect().await;
 
-    if let Some(ctx) = client.get_user_prompt_context(user_message, session_id).await {
+    if let Some(ctx) = client
+        .get_user_prompt_context(user_message, session_id)
+        .await
+    {
         return assemble_output_from_ipc(ctx);
     }
 
@@ -153,9 +156,7 @@ pub async fn run() -> Result<()> {
 }
 
 /// Assemble hook output from the composite IPC result.
-fn assemble_output_from_ipc(
-    ctx: crate::ipc::client::UserPromptContextResult,
-) -> Result<()> {
+fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) -> Result<()> {
     use crate::context::{
         BudgetEntry, BudgetManager, PRIORITY_CROSS_PROJECT, PRIORITY_PROACTIVE, PRIORITY_REACTIVE,
         PRIORITY_TASKS, PRIORITY_TEAM,
@@ -211,8 +212,7 @@ fn assemble_output_from_ipc(
         budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
     }
 
-    let hook_budget =
-        BudgetManager::with_limit(ctx.config_max_chars.saturating_mul(2).max(3000));
+    let hook_budget = BudgetManager::with_limit(ctx.config_max_chars.saturating_mul(2).max(3000));
     let final_context = hook_budget.apply_budget_prioritized(budget_entries);
 
     if !final_context.is_empty() {
@@ -411,10 +411,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
 }
 
 /// Get team context: lazy detection, heartbeat, and recent team discoveries.
-pub(crate) async fn get_team_context(
-    pool: &Arc<DatabasePool>,
-    session_id: &str,
-) -> Option<String> {
+pub(crate) async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str) -> Option<String> {
     if session_id.is_empty() {
         return None;
     }
@@ -503,7 +500,8 @@ pub(crate) async fn get_team_context(
             let _ = crate::hooks::session::write_team_membership(session_id, &membership);
             tracing::info!(
                 "[mira] Lazy team detection: {} (team_id: {})",
-                membership.team_name, membership.team_id
+                membership.team_name,
+                membership.team_id
             );
             membership
         }

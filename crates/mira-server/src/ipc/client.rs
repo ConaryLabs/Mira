@@ -52,14 +52,11 @@ impl HookClient {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "[mira] IPC: both socket and database unavailable: {e}"
-                        );
+                        tracing::warn!("[mira] IPC: both socket and database unavailable: {e}");
                         // Create a dead-end IPC backend — peer is dropped so reads
                         // return EOF. call() will attempt fallback_to_direct on first
                         // I/O error, and methods fall through to Direct if available.
-                        let (sock, peer) =
-                            tokio::net::UnixStream::pair().expect("socketpair");
+                        let (sock, peer) = tokio::net::UnixStream::pair().expect("socketpair");
                         drop(peer);
                         let (read, write) = sock.into_split();
                         Self {
@@ -159,7 +156,9 @@ impl HookClient {
                     let err_msg = resp.error.unwrap_or_else(|| "unknown IPC error".into());
                     // Server-level errors mean the connection is being closed
                     if err_msg.contains("overloaded") || err_msg.contains("timeout") {
-                        tracing::warn!("[mira] IPC server error ({err_msg}), switching to direct DB");
+                        tracing::warn!(
+                            "[mira] IPC server error ({err_msg}), switching to direct DB"
+                        );
                         self.fallback_to_direct().await;
                     }
                     anyhow::bail!(err_msg)
@@ -508,7 +507,11 @@ impl HookClient {
                 "fingerprint": fingerprint,
             });
             if let Ok(result) = self.call("lookup_resolved_pattern", params).await {
-                if result.get("found").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if result
+                    .get("found")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
                     return result
                         .get("fix_description")
                         .and_then(|v| v.as_str())
@@ -658,14 +661,15 @@ impl HookClient {
 
     /// Get team membership for a session.
     /// Returns (team_id, team_name, member_name, role) if found.
-    pub async fn get_team_membership(
-        &mut self,
-        session_id: &str,
-    ) -> Option<TeamMembershipInfo> {
+    pub async fn get_team_membership(&mut self, session_id: &str) -> Option<TeamMembershipInfo> {
         if self.is_ipc() {
             let params = json!({"session_id": session_id});
             if let Ok(result) = self.call("get_team_membership", params).await {
-                if result.get("found").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if result
+                    .get("found")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
                     return Some(TeamMembershipInfo {
                         team_id: result.get("team_id")?.as_i64()?,
                         team_name: result.get("team_name")?.as_str()?.to_string(),
@@ -681,9 +685,10 @@ impl HookClient {
             let session_id = session_id.to_string();
             let membership = pool
                 .interact(move |conn| {
-                    Ok::<_, anyhow::Error>(
-                        crate::db::get_team_membership_for_session_sync(conn, &session_id),
-                    )
+                    Ok::<_, anyhow::Error>(crate::db::get_team_membership_for_session_sync(
+                        conn,
+                        &session_id,
+                    ))
                 })
                 .await
                 .ok()
@@ -800,11 +805,7 @@ impl HookClient {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Save compaction context to session_snapshots. Fire-and-forget.
-    pub async fn save_compaction_context(
-        &mut self,
-        session_id: &str,
-        context: serde_json::Value,
-    ) {
+    pub async fn save_compaction_context(&mut self, session_id: &str, context: serde_json::Value) {
         if self.is_ipc() {
             let params = json!({"session_id": session_id, "context": context});
             if self.call("save_compaction_context", params).await.is_ok() {
@@ -877,8 +878,7 @@ impl HookClient {
             let source = source.to_string();
             return pool
                 .run(move |conn| {
-                    let (project_id, _) =
-                        crate::db::get_or_create_project_sync(conn, &cwd, None)?;
+                    let (project_id, _) = crate::db::get_or_create_project_sync(conn, &cwd, None)?;
                     crate::db::create_session_ext_sync(
                         conn,
                         &session_id,
@@ -992,8 +992,12 @@ impl HookClient {
             }
         }
         if let Backend::Direct { pool } = &self.inner {
-            return crate::hooks::session::build_resume_context(cwd, session_id, Some(pool.clone()))
-                .await;
+            return crate::hooks::session::build_resume_context(
+                cwd,
+                session_id,
+                Some(pool.clone()),
+            )
+            .await;
         }
         None
     }
@@ -1023,9 +1027,7 @@ impl HookClient {
                     None
                 };
                 if !session_id.is_empty() {
-                    if let Err(e) =
-                        crate::hooks::stop::save_session_snapshot(conn, &session_id)
-                    {
+                    if let Err(e) = crate::hooks::stop::save_session_snapshot(conn, &session_id) {
                         tracing::warn!("[mira] Session snapshot failed: {}", e);
                     }
                     if let Err(e) =
@@ -1078,12 +1080,14 @@ impl HookClient {
             });
             match self.call("snapshot_tasks", params).await {
                 Ok(v) => {
-                    let count =
-                        v.get("count").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
+                    let count = v.get("count").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
                     let label = if is_session_end { "SessionEnd" } else { "Stop" };
                     tracing::debug!(
                         "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
-                        label, count, completed, remaining,
+                        label,
+                        count,
+                        completed,
+                        remaining,
                     );
                     ipc_ok = true;
                 }
@@ -1113,7 +1117,10 @@ impl HookClient {
                         let label = if is_session_end { "SessionEnd" } else { "Stop" };
                         tracing::debug!(
                             "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
-                            label, count, completed, remaining,
+                            label,
+                            count,
+                            completed,
+                            remaining,
                         );
                     }
                     Err(e) => {
@@ -1145,11 +1152,10 @@ impl HookClient {
         if let Backend::Direct { pool } = &self.inner {
             let pool = pool.clone();
             pool.try_interact_warn("CLAUDE.local.md export", move |conn| {
-                let path =
-                    crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
-                        tracing::warn!("Failed to get last active project: {e}");
-                        None
-                    });
+                let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
+                    tracing::warn!("Failed to get last active project: {e}");
+                    None
+                });
                 if let Some(project_path) = path {
                     match crate::tools::core::claude_local::write_claude_local_md_sync(
                         conn,
@@ -1197,8 +1203,7 @@ impl HookClient {
     /// Export memories to MEMORY.mira.md. Fire-and-forget.
     pub async fn write_auto_memory(&mut self, project_id: i64, project_path: &str) {
         if self.is_ipc() {
-            let params =
-                json!({"project_id": project_id, "project_path": project_path});
+            let params = json!({"project_id": project_id, "project_path": project_path});
             match self.call("write_auto_memory", params).await {
                 Ok(v) => {
                     let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
@@ -1251,8 +1256,10 @@ impl HookClient {
             let params = json!({"team_id": team_id, "project_id": project_id});
             match self.call("distill_team_session", params).await {
                 Ok(v) => {
-                    let distilled =
-                        v.get("distilled").and_then(|d| d.as_bool()).unwrap_or(false);
+                    let distilled = v
+                        .get("distilled")
+                        .and_then(|d| d.as_bool())
+                        .unwrap_or(false);
                     let count = v
                         .get("findings_count")
                         .and_then(|c| c.as_u64())
@@ -1272,9 +1279,7 @@ impl HookClient {
         }
         if let Backend::Direct { pool } = &self.inner {
             return match crate::background::knowledge_distillation::distill_team_session(
-                pool,
-                team_id,
-                project_id,
+                pool, team_id, project_id,
             )
             .await
             {

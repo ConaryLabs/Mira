@@ -237,13 +237,12 @@ impl Drop for HookTimer {
         if elapsed > HOOK_PERF_THRESHOLD_MS {
             tracing::warn!(
                 "[mira] PERF: {} hook took {}ms (threshold: {}ms)",
-                self.hook_name, elapsed, HOOK_PERF_THRESHOLD_MS
+                self.hook_name,
+                elapsed,
+                HOOK_PERF_THRESHOLD_MS
             );
         } else {
-            tracing::debug!(
-                "[mira] {} hook completed in {}ms",
-                self.hook_name, elapsed
-            );
+            tracing::debug!("[mira] {} hook completed in {}ms", self.hook_name, elapsed);
         }
     }
 }
