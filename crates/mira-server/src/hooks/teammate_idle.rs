@@ -43,9 +43,10 @@ pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let idle_input = TeammateIdleInput::from_json(&input);
 
-    eprintln!(
-        "[mira] TeammateIdle hook triggered (teammate: {}, team: {})",
-        idle_input.teammate_name, idle_input.team_name,
+    tracing::debug!(
+        teammate = %idle_input.teammate_name,
+        team = %idle_input.team_name,
+        "TeammateIdle hook triggered"
     );
 
     // Connect to MCP server via IPC (falls back to direct DB if server unavailable)

@@ -748,7 +748,7 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
                 "last_stop_time",
                 &chrono::Utc::now().to_rfc3339(),
             ) {
-                eprintln!("  Warning: failed to save server state: {e}");
+                tracing::warn!("[mira] Failed to save server state: {e}");
             }
 
             let summary = if !session_id.is_empty() {
@@ -762,15 +762,15 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
                 if let Err(e) =
                     crate::hooks::stop::save_session_snapshot(conn, &session_id)
                 {
-                    eprintln!("[mira] Session snapshot failed: {}", e);
+                    tracing::warn!("[mira] Session snapshot failed: {}", e);
                 }
                 // Best-effort: close may fail if session was already closed
                 if let Err(e) =
                     crate::db::close_session_sync(conn, &session_id, summary.as_deref())
                 {
-                    eprintln!("  Warning: failed to close session: {e}");
+                    tracing::warn!("[mira] Failed to close session: {e}");
                 }
-                eprintln!(
+                tracing::debug!(
                     "[mira] Closed session {}",
                     crate::utils::truncate_at_boundary(&session_id, 8)
                 );
@@ -851,7 +851,7 @@ pub async fn write_claude_local_md(server: &MiraServer, params: Value) -> Result
                 ) {
                     Ok(count) => Ok::<_, anyhow::Error>(count),
                     Err(e) => {
-                        eprintln!("[mira] CLAUDE.local.md export failed: {}", e);
+                        tracing::warn!("[mira] CLAUDE.local.md export failed: {}", e);
                         Ok(0)
                     }
                 }
@@ -904,7 +904,7 @@ pub async fn write_auto_memory(server: &MiraServer, params: Value) -> Result<Val
                 ) {
                     Ok(count) => Ok::<_, anyhow::Error>(count),
                     Err(e) => {
-                        eprintln!("[mira] Auto memory export failed: {}", e);
+                        tracing::warn!("[mira] Auto memory export failed: {}", e);
                         Ok(0)
                     }
                 }

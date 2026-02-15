@@ -52,10 +52,10 @@ pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let post_input = PostToolInput::from_json(&input);
 
-    eprintln!(
-        "[mira] PostToolUse hook triggered (tool: {}, file: {:?})",
-        post_input.tool_name,
-        post_input.file_path.as_deref().unwrap_or("none")
+    tracing::debug!(
+        tool = %post_input.tool_name,
+        file = post_input.file_path.as_deref().unwrap_or("none"),
+        "PostToolUse hook triggered"
     );
 
     // Connect via IPC (falls back to direct DB)
@@ -74,9 +74,9 @@ pub async fn run() -> Result<()> {
         .resolve_error_patterns(project_id, &post_input.session_id, &post_input.tool_name)
         .await;
     if resolved {
-        eprintln!(
-            "[mira] Resolved error pattern for tool '{}'",
-            post_input.tool_name
+        tracing::info!(
+            tool = %post_input.tool_name,
+            "Resolved error pattern for tool"
         );
     }
 
@@ -156,9 +156,9 @@ pub async fn run() -> Result<()> {
                 "[Mira/conflict] File conflict warning:\n{}",
                 warnings.join("\n")
             ));
-            eprintln!(
-                "[mira] {} file conflict(s) detected with teammates",
-                conflicts.len()
+            tracing::warn!(
+                count = conflicts.len(),
+                "File conflict(s) detected with teammates"
             );
         }
     }

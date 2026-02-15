@@ -66,7 +66,8 @@ pub async fn resolve_project_id(
     resolve_project(pool).await.0
 }
 
-/// Performance threshold in milliseconds - warn if hook exceeds this
+/// Performance threshold in milliseconds - warn if hook exceeds this.
+/// Note: UserPromptSubmit routinely exceeds this due to embedding lookups.
 const HOOK_PERF_THRESHOLD_MS: u128 = 100;
 
 /// Read hook input from stdin (Claude Code passes JSON)
@@ -234,12 +235,15 @@ impl Drop for HookTimer {
     fn drop(&mut self) {
         let elapsed = self.start.elapsed().as_millis();
         if elapsed > HOOK_PERF_THRESHOLD_MS {
-            eprintln!(
-                "[mira] PERF WARNING: {} hook took {}ms (threshold: {}ms)",
+            tracing::warn!(
+                "[mira] PERF: {} hook took {}ms (threshold: {}ms)",
                 self.hook_name, elapsed, HOOK_PERF_THRESHOLD_MS
             );
         } else {
-            eprintln!("[mira] {} hook completed in {}ms", self.hook_name, elapsed);
+            tracing::debug!(
+                "[mira] {} hook completed in {}ms",
+                self.hook_name, elapsed
+            );
         }
     }
 }

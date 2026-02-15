@@ -50,9 +50,10 @@ pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let task_input = TaskCompletedInput::from_json(&input);
 
-    eprintln!(
-        "[mira] TaskCompleted hook triggered (task: {}, subject: {})",
-        task_input.task_id, task_input.task_subject,
+    tracing::debug!(
+        task_id = %task_input.task_id,
+        subject = %task_input.task_subject,
+        "TaskCompleted hook triggered"
     );
 
     // Connect via IPC (falls back to direct DB)
@@ -176,9 +177,11 @@ pub fn auto_link_milestone(
                 .map(|(_, t)| t.as_str())
                 .unwrap_or("unknown");
 
-            eprintln!(
-                "[mira] Auto-linked task '{}' to milestone '{}' (goal: '{}')",
-                task_subject, milestone_title, goal_title,
+            tracing::info!(
+                task = task_subject,
+                milestone = %milestone_title,
+                goal = goal_title,
+                "Auto-linked task to milestone"
             );
             // Only match the first milestone
             break;

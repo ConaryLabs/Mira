@@ -39,15 +39,15 @@ pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let stop_input = StopInput::from_json(&input);
 
-    eprintln!(
-        "[mira] Stop hook triggered (session: {}, stop_hook_active: {})",
-        truncate_at_boundary(&stop_input.session_id, 8),
-        stop_input.stop_hook_active
+    tracing::debug!(
+        session = %truncate_at_boundary(&stop_input.session_id, 8),
+        stop_hook_active = stop_input.stop_hook_active,
+        "Stop hook triggered"
     );
 
     // Don't create infinite loops - if stop hook is already active, just allow stop
     if stop_input.stop_hook_active {
-        eprintln!("[mira] Stop hook already active, allowing stop");
+        tracing::debug!("Stop hook already active, allowing stop");
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     }
@@ -70,9 +70,9 @@ pub async fn run() -> Result<()> {
 
     if !goal_lines.is_empty() {
         // Log active goals to stderr (Stop hook doesn't support additionalContext)
-        eprintln!("[mira] {} active goal(s) found:", goal_lines.len());
+        tracing::warn!(count = goal_lines.len(), "[mira] Active goal(s) — remember to update progress");
         for line in &goal_lines {
-            eprintln!("[mira]   {}", line);
+            tracing::warn!("  {}", line);
         }
     }
 
@@ -97,9 +97,9 @@ pub async fn run_session_end() -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    eprintln!(
-        "[mira] SessionEnd hook triggered (session: {})",
-        truncate_at_boundary(session_id, 8),
+    tracing::debug!(
+        session = %truncate_at_boundary(session_id, 8),
+        "SessionEnd hook triggered"
     );
 
     // Connect to MCP server (or fall back to direct DB)
@@ -114,18 +114,19 @@ pub async fn run_session_end() -> Result<()> {
                 .distill_team_session(membership.team_id, distill_project_id)
                 .await;
             if distilled {
-                eprintln!(
-                    "[mira] Distilled {} finding(s) from team '{}'",
-                    findings_count, team_name,
+                tracing::info!(
+                    findings = findings_count,
+                    team = %team_name,
+                    "Distilled findings from team"
                 );
             } else {
-                eprintln!("[mira] No findings to distill for team session");
+                tracing::debug!("No findings to distill for team session");
             }
 
             client.deactivate_team_session(session_id).await;
-            eprintln!(
-                "[mira] Deactivated team session (team: {})",
-                membership.team_name
+            tracing::debug!(
+                team = %membership.team_name,
+                "Deactivated team session"
             );
         }
         // Clean up per-session team file
@@ -135,9 +136,9 @@ pub async fn run_session_end() -> Result<()> {
     // Close the session (builds summary, saves snapshot, updates status)
     if !session_id.is_empty() {
         client.close_session(session_id).await;
-        eprintln!(
-            "[mira] SessionEnd closed session {}",
-            truncate_at_boundary(session_id, 8)
+        tracing::debug!(
+            session = %truncate_at_boundary(session_id, 8),
+            "SessionEnd closed session"
         );
     }
 
@@ -172,7 +173,7 @@ async fn snapshot_tasks(
     let task_list_dir = match crate::tasks::find_current_task_list() {
         Some(dir) => dir,
         None => {
-            eprintln!("[mira] No native task list found, skipping snapshot");
+            tracing::debug!("No native task list found, skipping snapshot");
             return;
         }
     };
@@ -182,7 +183,7 @@ async fn snapshot_tasks(
     let tasks = match crate::tasks::read_task_list(&task_list_dir) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("[mira] Failed to read native tasks: {}", e);
+            tracing::warn!("Failed to read native tasks: {}", e);
             return;
         }
     };
@@ -354,10 +355,10 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
             rusqlite::params![session_id, snapshot_str],
         )?;
 
-        eprintln!(
-            "[mira] Session snapshot saved from behavior log ({} tools, {} files modified)",
-            behavior_count,
-            files_modified.len()
+        tracing::debug!(
+            tools = behavior_count,
+            files_modified = files_modified.len(),
+            "Session snapshot saved from behavior log"
         );
         return Ok(());
     }
@@ -423,10 +424,10 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
         rusqlite::params![session_id, snapshot_str],
     )?;
 
-    eprintln!(
-        "[mira] Session snapshot saved ({} tools, {} files modified)",
-        tool_count,
-        files_modified.len()
+    tracing::debug!(
+        tools = tool_count,
+        files_modified = files_modified.len(),
+        "Session snapshot saved"
     );
 
     Ok(())

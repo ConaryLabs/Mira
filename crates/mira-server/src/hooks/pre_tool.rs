@@ -220,7 +220,7 @@ pub async fn run() -> Result<()> {
     let _lock = match try_acquire_lock() {
         Some(lock) => lock,
         None => {
-            eprintln!("[mira] PreToolUse skipped (another instance running)");
+            tracing::debug!("PreToolUse skipped (another instance running)");
             write_hook_output(&serde_json::json!({}));
             return Ok(());
         }
@@ -228,10 +228,10 @@ pub async fn run() -> Result<()> {
 
     let _timer = HookTimer::start("PreToolUse");
 
-    eprintln!(
-        "[mira] PreToolUse hook triggered (tool: {}, pattern: {:?})",
-        pre_input.tool_name,
-        pre_input.pattern.as_deref().unwrap_or("none")
+    tracing::debug!(
+        tool = %pre_input.tool_name,
+        pattern = pre_input.pattern.as_deref().unwrap_or("none"),
+        "PreToolUse hook triggered"
     );
 
     // Build search query from pattern and path
@@ -245,12 +245,12 @@ pub async fn run() -> Result<()> {
     if let Some(state) = read_cooldown() {
         let now = unix_now();
         if now - state.last_fired_at < COOLDOWN_SECS {
-            eprintln!("[mira] PreToolUse skipped (cooldown)");
+            tracing::debug!("PreToolUse skipped (cooldown)");
             write_hook_output(&serde_json::json!({}));
             return Ok(());
         }
         if state.recent_queries.contains(&search_query) {
-            eprintln!("[mira] PreToolUse skipped (duplicate query)");
+            tracing::debug!("PreToolUse skipped (duplicate query)");
             write_hook_output(&serde_json::json!({}));
             return Ok(());
         }
@@ -258,9 +258,9 @@ pub async fn run() -> Result<()> {
 
     // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
     let mut client = crate::ipc::client::HookClient::connect().await;
-    eprintln!(
-        "[mira] PreToolUse using {} backend",
-        if client.is_ipc() { "IPC" } else { "direct" }
+    tracing::debug!(
+        backend = if client.is_ipc() { "IPC" } else { "direct" },
+        "PreToolUse using backend"
     );
 
     // Get current project

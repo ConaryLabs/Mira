@@ -72,9 +72,9 @@ pub async fn run() -> Result<()> {
             let canonical = match path.canonicalize() {
                 Ok(c) => c,
                 Err(_) => {
-                    eprintln!(
-                        "[mira] PreCompact rejected transcript_path (canonicalize failed): {}",
-                        p
+                    tracing::warn!(
+                        path = p,
+                        "PreCompact rejected transcript_path (canonicalize failed)"
                     );
                     return None;
                 }
@@ -89,17 +89,17 @@ pub async fn run() -> Result<()> {
             if canonical.starts_with("/tmp") {
                 return Some(canonical);
             }
-            eprintln!(
-                "[mira] PreCompact rejected transcript_path outside home directory: {}",
-                p
+            tracing::warn!(
+                path = p,
+                "PreCompact rejected transcript_path outside home directory"
             );
             None
         });
 
-    eprintln!(
-        "[mira] PreCompact hook triggered (session: {}, trigger: {})",
-        truncate_at_boundary(session_id, 8),
-        trigger
+    tracing::debug!(
+        session = truncate_at_boundary(session_id, 8),
+        trigger,
+        "PreCompact hook triggered"
     );
 
     // Read transcript if available
@@ -114,7 +114,7 @@ pub async fn run() -> Result<()> {
     if let Err(e) =
         save_pre_compaction_state(&mut client, session_id, trigger, transcript.as_deref()).await
     {
-        eprintln!("[mira] Failed to save pre-compaction state: {}", e);
+        tracing::error!(error = %e, "Failed to save pre-compaction state");
     }
 
     super::write_hook_output(&serde_json::json!({}));
@@ -154,10 +154,10 @@ async fn save_pre_compaction_state(
     if let Some(transcript) = transcript
         && let Err(e) = extract_and_save_context(client, session_id, transcript).await
     {
-        eprintln!("[mira] Context extraction failed: {}", e);
+        tracing::warn!(error = %e, "Context extraction failed");
     }
 
-    eprintln!("[mira] Pre-compaction state saved");
+    tracing::debug!("Pre-compaction state saved");
     Ok(())
 }
 
@@ -299,7 +299,7 @@ pub(crate) async fn extract_and_save_context(
 
     client.save_compaction_context(session_id, ctx_json).await;
 
-    eprintln!("[mira] Extracted {} context items from transcript", count);
+    tracing::debug!(count, "Extracted context items from transcript");
     Ok(())
 }
 

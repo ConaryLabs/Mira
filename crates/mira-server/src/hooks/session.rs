@@ -125,9 +125,9 @@ pub async fn run() -> Result<()> {
     let input = super::read_hook_input().context("Failed to parse hook input from stdin")?;
 
     // Log hook input keys for debugging
-    eprintln!(
-        "[mira] SessionStart hook input keys: {:?}",
-        input.as_object().map(|obj| obj.keys().collect::<Vec<_>>())
+    tracing::debug!(
+        keys = ?input.as_object().map(|obj| obj.keys().collect::<Vec<_>>()),
+        "SessionStart hook input keys"
     );
 
     // Ensure .mira directory exists
@@ -141,7 +141,7 @@ pub async fn run() -> Result<()> {
     if let Some(sid) = session_id {
         let path = session_file_path();
         write_file_restricted(&path, sid)?;
-        eprintln!("[mira] Captured Claude session: {}", sid);
+        tracing::debug!(session_id = sid, "Captured Claude session");
     }
 
     // Extract cwd from Claude's hook input for auto-project detection
@@ -149,7 +149,7 @@ pub async fn run() -> Result<()> {
     if let Some(cwd_val) = cwd {
         let path = cwd_file_path();
         write_file_restricted(&path, cwd_val)?;
-        eprintln!("[mira] Captured Claude cwd: {}", cwd_val);
+        tracing::debug!(cwd = cwd_val, "Captured Claude cwd");
     }
 
     // Determine session source (startup vs resume)
@@ -178,7 +178,7 @@ pub async fn run() -> Result<()> {
     let temp_path = source_path.with_extension("tmp");
     fs::write(&temp_path, &source_json)?;
     fs::rename(&temp_path, &source_path)?;
-    eprintln!("[mira] Captured Claude source: {}", source);
+    tracing::debug!(source = source, "Captured Claude source");
 
     // Extract task_list_id from Claude's hook input or env var
     let task_list_id = input
@@ -190,7 +190,7 @@ pub async fn run() -> Result<()> {
     if let Some(ref list_id) = task_list_id {
         let path = task_list_file_path();
         write_file_restricted(&path, list_id)?;
-        eprintln!("[mira] Captured Claude task list: {}", list_id);
+        tracing::debug!(task_list_id = %list_id, "Captured Claude task list");
     }
 
     // Connect to MCP server via IPC (falls back to direct DB)
@@ -199,8 +199,8 @@ pub async fn run() -> Result<()> {
     // Register session in DB so the background loop sees activity
     if let (Some(sid), Some(cwd_val)) = (session_id, cwd) {
         match client.register_session(sid, cwd_val, source).await {
-            Some(pid) => eprintln!("[mira] Session registered in DB (project: {})", pid),
-            None => eprintln!("[mira] Failed to register session"),
+            Some(pid) => tracing::debug!(project_id = pid, "Session registered in DB"),
+            None => tracing::warn!("Failed to register session"),
         }
     }
 
@@ -208,9 +208,11 @@ pub async fn run() -> Result<()> {
     if let Some(sid) = session_id {
         let detection = detect_team_membership(&input, Some(sid), cwd);
         if let Some(det) = detection {
-            eprintln!(
-                "[mira] Team detected: {} (role: {}, member: {})",
-                det.team_name, det.role, det.member_name
+            tracing::info!(
+                team = %det.team_name,
+                role = %det.role,
+                member = %det.member_name,
+                "Team detected"
             );
 
             let membership = async {
@@ -235,7 +237,7 @@ pub async fn run() -> Result<()> {
 
             if let Some(ref m) = membership {
                 let _ = write_team_membership(sid, m);
-                eprintln!("[mira] Team session registered (team_id: {})", m.team_id);
+                tracing::debug!(team_id = m.team_id, "Team session registered");
             }
         }
     }

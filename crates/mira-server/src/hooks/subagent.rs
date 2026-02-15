@@ -82,17 +82,17 @@ pub async fn run_start() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let start_input = SubagentStartInput::from_json(&input);
 
-    eprintln!(
-        "[mira] SubagentStart hook triggered (type: {}, task: {:?})",
-        start_input.subagent_type,
-        start_input
+    tracing::debug!(
+        subagent_type = %start_input.subagent_type,
+        task = ?start_input
             .task_description
             .as_deref()
             .map(|s| if s.len() > 50 {
                 format!("{}...", truncate_at_boundary(s, 50))
             } else {
                 s.to_string()
-            })
+            }),
+        "SubagentStart hook triggered"
     );
 
     // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
@@ -168,14 +168,14 @@ pub async fn run_stop() -> Result<()> {
 
     // Prevent infinite loops per CC 2.1.39 protocol
     if stop_input.stop_hook_active {
-        eprintln!("[mira] SubagentStop hook already active, skipping");
+        tracing::debug!("SubagentStop hook already active, skipping");
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     }
 
-    eprintln!(
-        "[mira] SubagentStop hook triggered (type: {})",
-        stop_input.subagent_type
+    tracing::debug!(
+        subagent_type = %stop_input.subagent_type,
+        "SubagentStop hook triggered"
     );
 
     let subagent_output = match &stop_input.subagent_output {
@@ -204,17 +204,17 @@ pub async fn run_stop() -> Result<()> {
     }
 
     if entities.len() < MIN_SIGNIFICANT_ENTITIES {
-        eprintln!(
-            "[mira] SubagentStop: only {} entities found, skipping memory storage",
-            entities.len()
+        tracing::debug!(
+            count = entities.len(),
+            "SubagentStop: below threshold, skipping memory storage"
         );
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     }
 
-    eprintln!(
-        "[mira] SubagentStop: {} significant entities found, storing discovery",
-        entities.len()
+    tracing::debug!(
+        count = entities.len(),
+        "SubagentStop: significant entities found, storing discovery"
     );
 
     // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
@@ -254,9 +254,9 @@ fn validate_transcript_path(path_str: &str) -> Option<PathBuf> {
     let canonical = match path.canonicalize() {
         Ok(c) => c,
         Err(_) => {
-            eprintln!(
-                "[mira] SubagentStop rejected transcript_path (canonicalize failed): {}",
-                path_str
+            tracing::warn!(
+                path = %path_str,
+                "SubagentStop rejected transcript_path (canonicalize failed)"
             );
             return None;
         }
@@ -271,9 +271,9 @@ fn validate_transcript_path(path_str: &str) -> Option<PathBuf> {
     if canonical.starts_with("/tmp") {
         return Some(canonical);
     }
-    eprintln!(
-        "[mira] SubagentStop rejected transcript_path outside home directory: {}",
-        path_str
+    tracing::warn!(
+        path = %path_str,
+        "SubagentStop rejected transcript_path outside home directory"
     );
     None
 }
@@ -288,7 +288,7 @@ fn extract_transcript_entities(path: &Option<String>) -> Option<Vec<crate::entit
     let content = match std::fs::read_to_string(&canonical) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[mira] SubagentStop failed to read transcript: {}", e);
+            tracing::warn!(error = %e, "SubagentStop failed to read transcript");
             return None;
         }
     };
@@ -339,9 +339,9 @@ fn extract_transcript_entities(path: &Option<String>) -> Option<Vec<crate::entit
         return None;
     }
 
-    eprintln!(
-        "[mira] SubagentStop: extracted {} additional entities from transcript",
-        entities.len()
+    tracing::debug!(
+        count = entities.len(),
+        "SubagentStop: extracted additional entities from transcript"
     );
     Some(entities)
 }

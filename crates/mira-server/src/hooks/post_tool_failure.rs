@@ -50,9 +50,10 @@ pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let failure_input = PostToolFailureInput::from_json(&input);
 
-    eprintln!(
-        "[mira] PostToolUseFailure hook triggered (tool: {}, interrupt: {})",
-        failure_input.tool_name, failure_input.is_interrupt,
+    tracing::debug!(
+        tool = %failure_input.tool_name,
+        interrupt = failure_input.is_interrupt,
+        "PostToolUseFailure hook triggered"
     );
 
     // Skip if user cancelled (not a real failure)
@@ -112,9 +113,10 @@ pub async fn run() -> Result<()> {
         .count_session_failures(&failure_input.session_id, &failure_input.tool_name)
         .await;
 
-    eprintln!(
-        "[mira] Tool '{}' has failed {} time(s) in this session",
-        failure_input.tool_name, failure_count,
+    tracing::info!(
+        tool = %failure_input.tool_name,
+        failure_count,
+        "Tool has failed in this session"
     );
 
     // If 3+ failures, look up known fixes first, then fall back to memory recall

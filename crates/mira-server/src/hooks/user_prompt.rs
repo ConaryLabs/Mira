@@ -111,7 +111,7 @@ fn get_task_context() -> Option<String> {
         }
         Ok(_) => None,
         Err(e) => {
-            eprintln!("[mira] Failed to read native tasks: {}", e);
+            tracing::warn!("[mira] Failed to read native tasks: {}", e);
             None
         }
     }
@@ -131,12 +131,12 @@ pub async fn run() -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    eprintln!(
+    tracing::debug!(
         "[mira] UserPromptSubmit hook triggered (session: {}, message length: {})",
         truncate_at_boundary(session_id, 8),
         user_message.len()
     );
-    eprintln!(
+    tracing::debug!(
         "[mira] Hook input keys: {:?}",
         input.as_object().map(|obj| obj.keys().collect::<Vec<_>>())
     );
@@ -164,7 +164,7 @@ fn assemble_output_from_ipc(
     // Get pending native tasks (filesystem-only, not served via IPC)
     let task_context = get_task_context();
     if task_context.is_some() {
-        eprintln!("[mira] Added pending task context");
+        tracing::debug!("[mira] Added pending task context");
     }
 
     let mut budget_entries: Vec<BudgetEntry> = Vec::new();
@@ -176,13 +176,13 @@ fn assemble_output_from_ipc(
             "reactive",
         ));
         if !ctx.reactive_summary.is_empty() {
-            eprintln!("[mira] {}", ctx.reactive_summary);
+            tracing::debug!("[mira] {}", ctx.reactive_summary);
         }
     }
 
     if let Some(ref tc) = ctx.team_context {
         budget_entries.push(BudgetEntry::new(PRIORITY_TEAM, tc.clone(), "team"));
-        eprintln!("[mira] Added team context");
+        tracing::debug!("[mira] Added team context");
     }
 
     let has_proactive = match ctx.proactive_context {
@@ -192,7 +192,7 @@ fn assemble_output_from_ipc(
                 pc.clone(),
                 "proactive",
             ));
-            eprintln!("[mira] Added proactive context suggestions");
+            tracing::debug!("[mira] Added proactive context suggestions");
             true
         }
         _ => false,
@@ -204,7 +204,7 @@ fn assemble_output_from_ipc(
             cpc.clone(),
             "cross-project",
         ));
-        eprintln!("[mira] Added cross-project context");
+        tracing::debug!("[mira] Added cross-project context");
     }
 
     if let Some(ref tc) = task_context {
@@ -229,7 +229,7 @@ fn assemble_output_from_ipc(
         write_hook_output(&output);
     } else {
         if let Some(reason) = &ctx.reactive_skip_reason {
-            eprintln!("[mira] Context injection skipped: {}", reason);
+            tracing::debug!("[mira] Context injection skipped: {}", reason);
         }
         write_hook_output(&serde_json::json!({}));
     }
@@ -247,7 +247,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
         match DatabasePool::open_code_db(&code_db_path).await {
             Ok(cp) => Some(Arc::new(cp)),
             Err(e) => {
-                eprintln!("[mira] Failed to open code database: {}", e);
+                tracing::warn!("[mira] Failed to open code database: {}", e);
                 None
             }
         }
@@ -290,13 +290,13 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     };
     let proactive_context: Option<String> = if let Some(project_id) = project_id {
         if crate::context::is_simple_command(user_message) {
-            eprintln!("[mira] Proactive context skipped: simple command");
+            tracing::debug!("[mira] Proactive context skipped: simple command");
             None
         } else {
             let config = manager.config();
             let msg_len = user_message.trim().len();
             if msg_len < config.min_message_len || msg_len > config.max_message_len {
-                eprintln!("[mira] Proactive context skipped: message length out of bounds");
+                tracing::debug!("[mira] Proactive context skipped: message length out of bounds");
                 None
             } else {
                 get_proactive_context(
@@ -332,7 +332,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     // Get pending native tasks
     let task_context = get_task_context();
     if task_context.is_some() {
-        eprintln!("[mira] Added pending task context");
+        tracing::debug!("[mira] Added pending task context");
     }
 
     // Route ALL context through a unified budget with priority scoring.
@@ -349,12 +349,12 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
             result.context.clone(),
             "reactive",
         ));
-        eprintln!("[mira] {}", result.summary());
+        tracing::debug!("[mira] {}", result.summary());
     }
 
     if let Some(ref tc) = team_context {
         budget_entries.push(BudgetEntry::new(PRIORITY_TEAM, tc.clone(), "team"));
-        eprintln!("[mira] Added team context");
+        tracing::debug!("[mira] Added team context");
     }
 
     let has_proactive = match proactive_context {
@@ -364,7 +364,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
                 pc.clone(),
                 "proactive",
             ));
-            eprintln!("[mira] Added proactive context suggestions");
+            tracing::debug!("[mira] Added proactive context suggestions");
             true
         }
         _ => false,
@@ -376,7 +376,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
             cpc.clone(),
             "cross-project",
         ));
-        eprintln!("[mira] Added cross-project context");
+        tracing::debug!("[mira] Added cross-project context");
     }
 
     if let Some(ref tc) = task_context {
@@ -402,7 +402,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
         write_hook_output(&output);
     } else {
         if let Some(reason) = &result.skip_reason {
-            eprintln!("[mira] Context injection skipped: {}", reason);
+            tracing::debug!("[mira] Context injection skipped: {}", reason);
         }
         write_hook_output(&serde_json::json!({}));
     }
@@ -501,7 +501,7 @@ pub(crate) async fn get_team_context(
 
             // Cache for future calls
             let _ = crate::hooks::session::write_team_membership(session_id, &membership);
-            eprintln!(
+            tracing::info!(
                 "[mira] Lazy team detection: {} (team_id: {})",
                 membership.team_name, membership.team_id
             );

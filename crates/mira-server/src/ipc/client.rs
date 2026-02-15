@@ -32,7 +32,7 @@ impl HookClient {
         match tokio::time::timeout(Duration::from_millis(100), UnixStream::connect(&sock)).await {
             Ok(Ok(stream)) => {
                 let (read, write) = stream.into_split();
-                eprintln!("[mira] IPC: connected via socket");
+                tracing::debug!("[mira] IPC: connected via socket");
                 Self {
                     inner: Backend::Ipc {
                         reader: BufReader::new(read),
@@ -44,7 +44,7 @@ impl HookClient {
                 let db_path = crate::hooks::get_db_path();
                 match DatabasePool::open_hook(&db_path).await {
                     Ok(pool) => {
-                        eprintln!("[mira] IPC: connected via direct DB");
+                        tracing::debug!("[mira] IPC: connected via direct DB");
                         Self {
                             inner: Backend::Direct {
                                 pool: Arc::new(pool),
@@ -52,7 +52,7 @@ impl HookClient {
                         }
                     }
                     Err(e) => {
-                        eprintln!(
+                        tracing::warn!(
                             "[mira] IPC: both socket and database unavailable: {e}"
                         );
                         // Create a dead-end IPC backend — peer is dropped so reads
@@ -159,14 +159,14 @@ impl HookClient {
                     let err_msg = resp.error.unwrap_or_else(|| "unknown IPC error".into());
                     // Server-level errors mean the connection is being closed
                     if err_msg.contains("overloaded") || err_msg.contains("timeout") {
-                        eprintln!("[mira] IPC server error ({err_msg}), switching to direct DB");
+                        tracing::warn!("[mira] IPC server error ({err_msg}), switching to direct DB");
                         self.fallback_to_direct().await;
                     }
                     anyhow::bail!(err_msg)
                 }
             }
             Err(e) => {
-                eprintln!("[mira] IPC connection error ({e}), switching to direct DB");
+                tracing::warn!("[mira] IPC connection error ({e}), switching to direct DB");
                 self.fallback_to_direct().await;
                 anyhow::bail!("IPC failed: {e}")
             }
@@ -181,10 +181,10 @@ impl HookClient {
                 self.inner = Backend::Direct {
                     pool: Arc::new(pool),
                 };
-                eprintln!("[mira] Switched to direct DB fallback");
+                tracing::debug!("[mira] Switched to direct DB fallback");
             }
             Err(e) => {
-                eprintln!("[mira] Direct DB fallback also failed: {e}");
+                tracing::warn!("[mira] Direct DB fallback also failed: {e}");
             }
         }
     }
@@ -1015,7 +1015,7 @@ impl HookClient {
                     "last_stop_time",
                     &chrono::Utc::now().to_rfc3339(),
                 ) {
-                    eprintln!("  Warning: failed to save server state: {e}");
+                    tracing::warn!("[mira] Failed to save server state: {e}");
                 }
                 let summary = if !session_id.is_empty() {
                     crate::hooks::stop::build_session_summary(conn, &session_id)
@@ -1026,14 +1026,14 @@ impl HookClient {
                     if let Err(e) =
                         crate::hooks::stop::save_session_snapshot(conn, &session_id)
                     {
-                        eprintln!("[mira] Session snapshot failed: {}", e);
+                        tracing::warn!("[mira] Session snapshot failed: {}", e);
                     }
                     if let Err(e) =
                         crate::db::close_session_sync(conn, &session_id, summary.as_deref())
                     {
-                        eprintln!("  Warning: failed to close session: {e}");
+                        tracing::warn!("[mira] Failed to close session: {e}");
                     }
-                    eprintln!(
+                    tracing::debug!(
                         "[mira] Closed session {}",
                         crate::utils::truncate_at_boundary(&session_id, 8)
                     );
@@ -1066,7 +1066,7 @@ impl HookClient {
             let tasks_json = match serde_json::to_value(tasks) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("[mira] Failed to serialize tasks: {}", e);
+                    tracing::warn!("[mira] Failed to serialize tasks: {}", e);
                     return;
                 }
             };
@@ -1081,7 +1081,7 @@ impl HookClient {
                     let count =
                         v.get("count").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
                     let label = if is_session_end { "SessionEnd" } else { "Stop" };
-                    eprintln!(
+                    tracing::debug!(
                         "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
                         label, count, completed, remaining,
                     );
@@ -1111,13 +1111,13 @@ impl HookClient {
                 {
                     Ok(count) => {
                         let label = if is_session_end { "SessionEnd" } else { "Stop" };
-                        eprintln!(
+                        tracing::debug!(
                             "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
                             label, count, completed, remaining,
                         );
                     }
                     Err(e) => {
-                        eprintln!("[mira] Task snapshot failed: {}", e);
+                        tracing::warn!("[mira] Task snapshot failed: {}", e);
                     }
                 }
             }
@@ -1132,7 +1132,7 @@ impl HookClient {
                 Ok(v) => {
                     let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
                     if count > 0 {
-                        eprintln!(
+                        tracing::debug!(
                             "[mira] Auto-exported {} memories to CLAUDE.local.md",
                             count
                         );
@@ -1157,13 +1157,13 @@ impl HookClient {
                         &project_path,
                     ) {
                         Ok(count) if count > 0 => {
-                            eprintln!(
+                            tracing::debug!(
                                 "[mira] Auto-exported {} memories to CLAUDE.local.md",
                                 count
                             );
                         }
                         Err(e) => {
-                            eprintln!("[mira] CLAUDE.local.md export failed: {}", e);
+                            tracing::warn!("[mira] CLAUDE.local.md export failed: {}", e);
                         }
                         _ => {}
                     }
@@ -1189,7 +1189,7 @@ impl HookClient {
                 .run(move |conn| crate::db::deactivate_team_session_sync(conn, &session_id))
                 .await
             {
-                eprintln!("[mira] Failed to deactivate team session: {}", e);
+                tracing::warn!("[mira] Failed to deactivate team session: {}", e);
             }
         }
     }
@@ -1203,7 +1203,7 @@ impl HookClient {
                 Ok(v) => {
                     let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
                     if count > 0 {
-                        eprintln!(
+                        tracing::debug!(
                             "[mira] Auto-exported {} memories to MEMORY.mira.md",
                             count
                         );
@@ -1224,13 +1224,13 @@ impl HookClient {
                         &project_path,
                     ) {
                         Ok(count) if count > 0 => {
-                            eprintln!(
+                            tracing::debug!(
                                 "[mira] Auto-exported {} memories to MEMORY.mira.md",
                                 count
                             );
                         }
                         Err(e) => {
-                            eprintln!("[mira] Auto memory export failed: {}", e);
+                            tracing::warn!("[mira] Auto memory export failed: {}", e);
                         }
                         _ => {}
                     }
@@ -1265,7 +1265,7 @@ impl HookClient {
                     return (distilled, count, name);
                 }
                 Err(e) => {
-                    eprintln!("[mira] Knowledge distillation via IPC failed: {}", e);
+                    tracing::warn!("[mira] Knowledge distillation via IPC failed: {}", e);
                     // fall through to Direct
                 }
             }
@@ -1281,7 +1281,7 @@ impl HookClient {
                 Ok(Some(result)) => (true, result.findings.len(), result.team_name),
                 Ok(None) => (false, 0, String::new()),
                 Err(e) => {
-                    eprintln!("[mira] Knowledge distillation failed: {}", e);
+                    tracing::warn!("[mira] Knowledge distillation failed: {}", e);
                     (false, 0, String::new())
                 }
             };
