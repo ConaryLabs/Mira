@@ -661,13 +661,13 @@ async fn action_sessions<C: ToolContext>(
         .await
         .map_err(|e| format!("Failed to count sessions: {}", e))?;
 
-    let mut response = format!("Goal {} — {} session(s):\n", goal_id, total);
+    let mut response = format!("Goal {} — {} distinct session(s):\n", goal_id, total);
     let entries: Vec<GoalSessionEntry> = links
         .into_iter()
         .map(|link| {
             response.push_str(&format!(
-                "  [{}] {} ({})\n",
-                link.interaction_type, link.session_id, link.created_at
+                "  {} — {} (last: {})\n",
+                link.session_id, link.interaction_type, link.created_at
             ));
             GoalSessionEntry {
                 session_id: link.session_id,
@@ -792,7 +792,7 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
                 .goal_id
                 .ok_or("goal_id is required for goal(action=sessions). Use goal(action=\"list\") to see available goals.")?;
             let id = validate_positive_id(id, "goal_id")?;
-            let limit = req.limit.unwrap_or(20) as usize;
+            let limit = req.limit.unwrap_or(20).max(1) as usize;
             action_sessions(ctx, id, limit).await
         }
     }

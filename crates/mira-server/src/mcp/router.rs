@@ -78,7 +78,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Track cross-session objectives, progress, and milestones. Actions: create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, progress. Use for multi-session work planning and progress tracking.",
+        description = "Track cross-session objectives, progress, and milestones. Actions: create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, progress, sessions. Use for multi-session work planning and progress tracking.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::GoalOutput>()
             .expect("GoalOutput schema")
     )]

@@ -32,7 +32,8 @@ pub fn record_session_goal_sync(
     Ok(rows > 0)
 }
 
-/// Get all sessions that worked on a specific goal, ordered by most recent first.
+/// Get distinct sessions that worked on a specific goal, ordered by most recent first.
+/// Returns one row per session with the latest interaction type and timestamp.
 pub fn get_sessions_for_goal_sync(
     conn: &Connection,
     goal_id: i64,
@@ -40,10 +41,13 @@ pub fn get_sessions_for_goal_sync(
 ) -> rusqlite::Result<Vec<SessionGoalLink>> {
     let limit = if limit == 0 { 20 } else { limit };
     let mut stmt = conn.prepare(
-        "SELECT sg.id, sg.session_id, sg.goal_id, sg.interaction_type, sg.created_at
+        "SELECT MAX(sg.id), sg.session_id, sg.goal_id,
+                GROUP_CONCAT(DISTINCT sg.interaction_type) AS interaction_types,
+                MAX(sg.created_at) AS last_activity
          FROM session_goals sg
          WHERE sg.goal_id = ?1
-         ORDER BY sg.created_at DESC
+         GROUP BY sg.session_id
+         ORDER BY last_activity DESC
          LIMIT ?2",
     )?;
     let rows = stmt.query_map(params![goal_id, limit], parse_session_goal_row)?;
