@@ -94,6 +94,28 @@ pub fn migrate_sessions_resume(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migration v42: Create session_goals junction table for goal-session linkage
+pub fn migrate_session_goals_table(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::create_table_if_missing;
+    create_table_if_missing(
+        conn,
+        "session_goals",
+        "CREATE TABLE IF NOT EXISTS session_goals (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            goal_id INTEGER NOT NULL REFERENCES goals(id),
+            interaction_type TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(session_id, goal_id, interaction_type)
+        )",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_session_goals_goal ON session_goals(goal_id, created_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_session_goals_session ON session_goals(session_id);"
+    )?;
+    Ok(())
+}
+
 /// Create session_snapshots table for lightweight session state capture on stop
 pub fn migrate_session_snapshots_table(conn: &Connection) -> Result<()> {
     use crate::db::migration_helpers::create_table_if_missing;

@@ -2,16 +2,18 @@
 //! Goal and milestone tools - split into focused action functions
 
 use crate::db::{
-    complete_milestone_sync, create_goal_sync, create_milestone_sync, delete_goal_sync,
-    delete_milestone_sync, get_active_goals_sync, get_goal_by_id_sync, get_goals_sync,
-    get_milestone_by_id_sync, get_milestones_for_goal_sync,
+    complete_milestone_sync, count_sessions_for_goal_sync, create_goal_sync, create_milestone_sync,
+    delete_goal_sync, delete_milestone_sync, get_active_goals_sync, get_goal_by_id_sync,
+    get_goals_sync, get_milestone_by_id_sync, get_milestones_for_goal_sync,
+    get_sessions_for_goal_sync, record_session_goal_sync,
     update_goal_progress_from_milestones_sync, update_goal_sync,
 };
 use crate::mcp::requests::{GoalAction, GoalRequest};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     GoalBulkCreatedData, GoalCreatedData, GoalCreatedEntry, GoalData, GoalGetData, GoalListData,
-    GoalOutput, GoalSummary, MilestoneInfo, MilestoneProgressData,
+    GoalOutput, GoalSessionEntry, GoalSessionsData, GoalSummary, MilestoneInfo,
+    MilestoneProgressData,
 };
 use crate::tools::core::ToolContext;
 use serde::Deserialize;
@@ -137,6 +139,20 @@ fn validate_positive_id(id: i64, field: &str) -> Result<i64, String> {
     }
 }
 
+/// Record a session-goal link (fire-and-forget, never fails the parent operation).
+async fn record_goal_interaction<C: ToolContext>(ctx: &C, goal_id: i64, interaction_type: &str) {
+    let session_id = match ctx.get_session_id().await {
+        Some(id) => id,
+        None => return, // No active session, skip recording
+    };
+    let itype = interaction_type.to_string();
+    let _ = ctx
+        .pool()
+        .run(move |conn| record_session_goal_sync(conn, &session_id, goal_id, &itype))
+        .await;
+    // Silently ignore errors — this is best-effort tracking
+}
+
 // ============================================================================
 // Action-specific functions
 // ============================================================================
@@ -225,6 +241,9 @@ async fn action_create<C: ToolContext>(
         .await
         .map_err(|e| format!("Failed to create goal: {}", e))?;
 
+    // Record session-goal link
+    record_goal_interaction(ctx, id, "created").await;
+
     Ok(Json(GoalOutput {
         action: "create".into(),
         message: format!("Created goal '{}' (id: {})", title_for_result, id),
@@ -280,6 +299,11 @@ async fn action_bulk_create<C: ToolContext>(
             Ok::<_, rusqlite::Error>(entries)
         })
         .await?;
+
+    // Record session-goal links for all created goals
+    for &(id, _) in &results {
+        record_goal_interaction(ctx, id, "created").await;
+    }
 
     let created: Vec<String> = results
         .iter()
@@ -469,6 +493,9 @@ async fn action_update<C: ToolContext>(
         })
         .await?;
 
+    // Record session-goal link
+    record_goal_interaction(ctx, goal_id, "updated").await;
+
     Ok(Json(GoalOutput {
         action: "update".into(),
         message: format!("Updated goal {}", goal_id),
@@ -507,6 +534,9 @@ async fn action_add_milestone<C: ToolContext>(
         .run(move |conn| create_milestone_sync(conn, goal_id, &milestone_title, weight))
         .await?;
 
+    // Record session-goal link
+    record_goal_interaction(ctx, goal_id, "milestone_added").await;
+
     Ok(Json(GoalOutput {
         action: "add_milestone".into(),
         message: format!(
@@ -538,6 +568,9 @@ async fn action_complete_milestone<C: ToolContext>(
             .pool()
             .run(move |conn| update_goal_progress_from_milestones_sync(conn, gid))
             .await?;
+
+        // Record session-goal link
+        record_goal_interaction(ctx, gid, "milestone_completed").await;
 
         Ok(Json(GoalOutput {
             action: "complete_milestone".into(),
@@ -605,6 +638,54 @@ async fn action_delete_milestone<C: ToolContext>(
             })),
         }))
     }
+}
+
+/// List sessions that worked on a goal
+async fn action_sessions<C: ToolContext>(
+    ctx: &C,
+    goal_id: i64,
+    limit: usize,
+) -> Result<Json<GoalOutput>, String> {
+    get_authorized_goal(ctx, goal_id).await?;
+
+    let lim = limit;
+    let links = ctx
+        .pool()
+        .run(move |conn| get_sessions_for_goal_sync(conn, goal_id, lim))
+        .await
+        .map_err(|e| format!("Failed to get sessions for goal: {}", e))?;
+
+    let total = ctx
+        .pool()
+        .run(move |conn| count_sessions_for_goal_sync(conn, goal_id))
+        .await
+        .map_err(|e| format!("Failed to count sessions: {}", e))?;
+
+    let mut response = format!("Goal {} — {} session(s):\n", goal_id, total);
+    let entries: Vec<GoalSessionEntry> = links
+        .into_iter()
+        .map(|link| {
+            response.push_str(&format!(
+                "  [{}] {} ({})\n",
+                link.interaction_type, link.session_id, link.created_at
+            ));
+            GoalSessionEntry {
+                session_id: link.session_id,
+                interaction_type: link.interaction_type,
+                created_at: link.created_at,
+            }
+        })
+        .collect();
+
+    Ok(Json(GoalOutput {
+        action: "sessions".into(),
+        message: response,
+        data: Some(GoalData::Sessions(GoalSessionsData {
+            goal_id,
+            sessions: entries,
+            total_sessions: total,
+        })),
+    }))
 }
 
 // ============================================================================
@@ -705,6 +786,14 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
                 .ok_or("milestone_id is required for goal(action=delete_milestone). Use goal(action=\"get\", goal_id=N) to see milestones.")?;
             let mid = validate_positive_id(mid, "milestone_id")?;
             action_delete_milestone(ctx, mid).await
+        }
+        GoalAction::Sessions => {
+            let id = req
+                .goal_id
+                .ok_or("goal_id is required for goal(action=sessions). Use goal(action=\"list\") to see available goals.")?;
+            let id = validate_positive_id(id, "goal_id")?;
+            let limit = req.limit.unwrap_or(20) as usize;
+            action_sessions(ctx, id, limit).await
         }
     }
 }
@@ -869,6 +958,7 @@ mod tests {
             ("add_milestone", GoalAction::AddMilestone),
             ("complete_milestone", GoalAction::CompleteMilestone),
             ("delete_milestone", GoalAction::DeleteMilestone),
+            ("sessions", GoalAction::Sessions),
         ];
         for (s, expected) in actions {
             let json = format!(r#"{{"action": "{}"}}"#, s);

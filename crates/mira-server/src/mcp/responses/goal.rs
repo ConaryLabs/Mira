@@ -13,6 +13,7 @@ pub enum GoalData {
     List(GoalListData),
     Get(GoalGetData),
     MilestoneProgress(MilestoneProgressData),
+    Sessions(GoalSessionsData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -76,4 +77,18 @@ pub struct MilestoneProgressData {
     pub goal_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress_percent: Option<i32>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GoalSessionsData {
+    pub goal_id: i64,
+    pub sessions: Vec<GoalSessionEntry>,
+    pub total_sessions: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GoalSessionEntry {
+    pub session_id: String,
+    pub interaction_type: String,
+    pub created_at: String,
 }

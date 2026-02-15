@@ -42,6 +42,8 @@ pub enum GoalAction {
     CompleteMilestone,
     /// Delete a milestone
     DeleteMilestone,
+    /// List sessions that worked on a goal
+    Sessions,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -191,7 +193,7 @@ pub struct CodeRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoalRequest {
     #[schemars(
-        description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress"
+        description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress/sessions"
     )]
     pub action: GoalAction,
     #[schemars(description = "Goal ID")]

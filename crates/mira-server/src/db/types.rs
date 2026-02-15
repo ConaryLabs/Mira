@@ -78,6 +78,16 @@ pub struct Goal {
     pub created_at: String,
 }
 
+/// Session-goal link record (junction table)
+#[derive(Debug, Clone)]
+pub struct SessionGoalLink {
+    pub id: i64,
+    pub session_id: String,
+    pub goal_id: i64,
+    pub interaction_type: String,
+    pub created_at: String,
+}
+
 /// Milestone record (sub-item of a goal)
 #[derive(Debug, Clone)]
 pub struct Milestone {

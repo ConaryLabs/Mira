@@ -5,7 +5,7 @@
 //!   session_behavior_log, proactive_interventions, injection_feedback, proactive_suggestions
 //! - chat_days (default 30): chat_messages, chat_summaries
 //! - sessions_days (default 90): sessions (completed only), session_snapshots, session_tasks,
-//!   session_task_iterations
+//!   session_task_iterations, session_goals
 //! - analytics_days (default 180): llm_usage, embeddings_usage
 //! - behavior_days (default 365): behavior_patterns (non-insight)
 //! - observations_days (default 90): system_observations
@@ -37,6 +37,12 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
         },
         RetentionRule {
             table: "session_task_iterations",
+            time_column: "created_at",
+            days: config.sessions_days,
+            extra_filter: "",
+        },
+        RetentionRule {
+            table: "session_goals",
             time_column: "created_at",
             days: config.sessions_days,
             extra_filter: "",
@@ -247,6 +253,16 @@ pub fn cleanup_orphans(conn: &Connection) -> Result<usize, String> {
     total += try_execute(
         conn,
         "DELETE FROM session_task_iterations WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)",
+    );
+    // session_goals without parent session
+    total += try_execute(
+        conn,
+        "DELETE FROM session_goals WHERE session_id NOT IN (SELECT id FROM sessions)",
+    );
+    // session_goals without parent goal
+    total += try_execute(
+        conn,
+        "DELETE FROM session_goals WHERE goal_id NOT IN (SELECT id FROM goals)",
     );
     // error_patterns without parent project
     total += try_execute(

@@ -26,6 +26,7 @@ mod schema;
 pub use schema::vectors::check_embedding_provider_change;
 mod search;
 mod session;
+mod session_goals;
 pub mod session_tasks;
 mod tasks;
 pub mod team;
@@ -40,6 +41,8 @@ mod insights_tests;
 mod memory_tests;
 #[cfg(test)]
 mod project_tests;
+#[cfg(test)]
+mod session_goals_tests;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]
@@ -182,6 +185,10 @@ pub use session::{
     get_session_history_sync, get_session_stats_sync, get_session_tool_summary_sync,
     get_sessions_needing_summary_sync, get_stale_sessions_sync, log_tool_call_sync,
     touch_session_sync, update_session_summary_sync,
+};
+pub use session_goals::{
+    count_sessions_for_goal_sync, delete_session_goals_for_goal_sync, get_goals_for_session_sync,
+    get_sessions_for_goal_sync, parse_session_goal_row, record_session_goal_sync,
 };
 pub use tasks::{
     count_goals_sync, create_goal_sync, create_task_sync, delete_goal_sync, delete_task_sync,

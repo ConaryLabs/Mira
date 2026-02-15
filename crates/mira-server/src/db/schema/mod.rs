@@ -241,6 +241,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "health_snapshots_table",
             func: migrate_health_snapshots_table,
         },
+        Migration {
+            version: 42,
+            name: "session_goals_table",
+            func: session::migrate_session_goals_table,
+        },
     ]
 }
 
