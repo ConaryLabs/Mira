@@ -109,6 +109,10 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
 
     // 6. Recurring errors — unresolved errors with 3+ occurrences
     for error in &data.recurring_errors {
+        // Skip benign errors that are normal Claude Code behavior
+        if is_benign_error(&error.tool_name, &error.error_template) {
+            continue;
+        }
         let confidence = if error.occurrence_count >= 10 {
             0.9
         } else if error.occurrence_count >= 5 {
@@ -178,6 +182,27 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
     }
 
     insights
+}
+
+/// Benign error patterns that are normal Claude Code behavior, not actual bugs.
+/// These get recorded in error_patterns for data completeness but should not
+/// generate pondering insights.
+const BENIGN_ERRORS: &[(&str, &str)] = &[
+    ("read", "file does not exist"),
+    ("read", "not found"),
+    ("glob", "no matches"),
+    ("glob", "no files found"),
+    ("grep", "no matches"),
+    ("grep", "no results"),
+];
+
+/// Check if an error pattern is benign (expected normal behavior).
+fn is_benign_error(tool_name: &str, error_template: &str) -> bool {
+    let tool_lower = tool_name.to_lowercase();
+    let template_lower = error_template.to_lowercase();
+    BENIGN_ERRORS
+        .iter()
+        .any(|(t, e)| tool_lower == *t && template_lower.contains(e))
 }
 
 #[cfg(test)]
@@ -389,6 +414,47 @@ mod tests {
         };
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights[0].confidence, 0.6);
+    }
+
+    #[test]
+    fn test_benign_errors_filtered() {
+        let data = ProjectInsightData {
+            recurring_errors: vec![
+                RecurringError {
+                    tool_name: "Read".to_string(),
+                    error_template: "file does not exist".to_string(),
+                    occurrence_count: 15,
+                    first_seen_session_id: None,
+                    last_seen_session_id: None,
+                },
+                RecurringError {
+                    tool_name: "Glob".to_string(),
+                    error_template: "No files found".to_string(),
+                    occurrence_count: 8,
+                    first_seen_session_id: None,
+                    last_seen_session_id: None,
+                },
+                RecurringError {
+                    tool_name: "Grep".to_string(),
+                    error_template: "no matches found".to_string(),
+                    occurrence_count: 10,
+                    first_seen_session_id: None,
+                    last_seen_session_id: None,
+                },
+                // This one is NOT benign — should still generate an insight
+                RecurringError {
+                    tool_name: "code_search".to_string(),
+                    error_template: "connection refused".to_string(),
+                    occurrence_count: 5,
+                    first_seen_session_id: None,
+                    last_seen_session_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert_eq!(insights.len(), 1);
+        assert!(insights[0].description.contains("connection refused"));
     }
 
     #[test]
