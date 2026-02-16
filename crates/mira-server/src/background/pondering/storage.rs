@@ -83,7 +83,7 @@ fn extract_goal_id(description: &str) -> Option<u64> {
             || !lower[..abs_pos]
                 .chars()
                 .next_back()
-                .unwrap()
+                .unwrap_or(' ')
                 .is_alphanumeric();
         if before_ok {
             let after = lower[abs_pos + 4..].trim_start();
@@ -207,13 +207,12 @@ fn extract_last_quoted_span(text: &str) -> Option<String> {
             continue;
         };
         let span = &text[open + 1..close];
-        if !span.is_empty() {
-            if best
+        if !span.is_empty()
+            && best
                 .as_ref()
-                .map_or(true, |(prev_close, _)| close > *prev_close)
-            {
-                best = Some((close, span.to_string()));
-            }
+                .is_none_or(|(prev_close, _)| close > *prev_close)
+        {
+            best = Some((close, span.to_string()));
         }
     }
     best.map(|(_, span)| span)
@@ -256,7 +255,7 @@ fn extract_error_identity(description: &str) -> Option<String> {
     let in_pos = find_tool_marker(&lower).or_else(|| {
         // Fallback: use "in '" only if it appears exactly once (unambiguous)
         let first = lower.find("in '")?;
-        if lower[first + 1..].find("in '").is_some() {
+        if lower[first + 1..].contains("in '") {
             None
         } else {
             Some(first)
@@ -312,10 +311,10 @@ fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
         }
     }
     // For recurring errors, key on tool name (+ template if available)
-    if pattern_type == "insight_recurring_error" {
-        if let Some(identity) = extract_error_identity(description) {
-            return hash_key(&format!("{}:{}", pattern_type, identity));
-        }
+    if pattern_type == "insight_recurring_error"
+        && let Some(identity) = extract_error_identity(description)
+    {
+        return hash_key(&format!("{}:{}", pattern_type, identity));
     }
     // Health degrading: one per project (only the type matters)
     if pattern_type == "insight_health_degrading" {

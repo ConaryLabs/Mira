@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.1] - 2026-02-16
+
+### Changed
+- **Extract `diff` into standalone MCP tool** — `diff` is now its own `#[tool]` with correct `DiffOutput` schema, fixing a latent schema mismatch where the `code` tool declared `CodeOutput` but returned `DiffOutput` for diff actions. The `code` tool drops from 9 to 6 params.
+- **Clippy cleanup** — resolved collapsible-if, search-is-some, single-match, unwrap-used, and too-many-arguments warnings across pondering storage, IPC client, and IPC ops modules.
+
+### Fixed
+- Code tool MCP description no longer advertises diff capability (was causing invalid_params when clients followed the description).
+- Plugin README now correctly lists 8 MCP tools (was 6, missing diff and recipe).
+
+---
+
 ## Development History
 
 Mira evolved through several major eras before adopting semantic versioning. This section captures the journey from 1,200+ commits.

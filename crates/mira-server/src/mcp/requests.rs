@@ -717,7 +717,10 @@ mod tests {
     #[test]
     fn code_action_rejects_diff() {
         let result = serde_json::from_value::<McpCodeAction>(json!("diff"));
-        assert!(result.is_err(), "McpCodeAction should reject 'diff' (now a standalone tool)");
+        assert!(
+            result.is_err(),
+            "McpCodeAction should reject 'diff' (now a standalone tool)"
+        );
     }
 
     // ── McpIndexAction deserialization ────────────────────────────────

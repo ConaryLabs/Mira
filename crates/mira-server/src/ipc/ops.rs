@@ -789,10 +789,10 @@ pub async fn snapshot_tasks(server: &MiraServer, params: Value) -> Result<Value>
         .ok_or_else(|| anyhow::anyhow!("missing required param: tasks"))?;
 
     // Reject unreasonably large task arrays before deserializing
-    if let Some(arr) = tasks_json.as_array() {
-        if arr.len() > 10_000 {
-            anyhow::bail!("too many tasks: {} (max 10000)", arr.len());
-        }
+    if let Some(arr) = tasks_json.as_array()
+        && arr.len() > 10_000
+    {
+        anyhow::bail!("too many tasks: {} (max 10000)", arr.len());
     }
 
     let tasks: Vec<crate::tasks::NativeTask> = serde_json::from_value(tasks_json)
@@ -957,31 +957,32 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
     let (reactive, proactive, team, cross_project) = tokio::join!(
         manager.get_context_for_message(message, session_id),
         async {
-            if let Some(pid) = project_id {
-                if !is_simple && in_bounds {
-                    return crate::hooks::user_prompt::get_proactive_context(
-                        &server.pool,
-                        pid,
-                        project_path.as_deref(),
-                        session_opt,
-                    )
-                    .await;
-                }
+            if let Some(pid) = project_id
+                && !is_simple
+                && in_bounds
+            {
+                return crate::hooks::user_prompt::get_proactive_context(
+                    &server.pool,
+                    pid,
+                    project_path.as_deref(),
+                    session_opt,
+                )
+                .await;
             }
             None
         },
         crate::hooks::user_prompt::get_team_context(&server.pool, session_id),
         async {
-            if let Some(pid) = project_id {
-                if !is_simple {
-                    return crate::hooks::user_prompt::get_cross_project_context(
-                        &server.pool,
-                        &server.embeddings,
-                        pid,
-                        message,
-                    )
-                    .await;
-                }
+            if let Some(pid) = project_id
+                && !is_simple
+            {
+                return crate::hooks::user_prompt::get_cross_project_context(
+                    &server.pool,
+                    &server.embeddings,
+                    pid,
+                    message,
+                )
+                .await;
             }
             None
         },

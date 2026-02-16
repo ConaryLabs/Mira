@@ -32,16 +32,11 @@ async fn spawn_test_server(pool: Arc<DatabasePool>) -> (PathBuf, tokio::task::Jo
     let server = MiraServer::from_api_keys(pool, code_pool, None, &ApiKeys::default(), false);
 
     let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let srv = server.clone();
-                    tokio::spawn(async move {
-                        handler::handle_connection(stream, srv).await;
-                    });
-                }
-                Err(_) => break,
-            }
+        while let Ok((stream, _)) = listener.accept().await {
+            let srv = server.clone();
+            tokio::spawn(async move {
+                handler::handle_connection(stream, srv).await;
+            });
         }
     });
 

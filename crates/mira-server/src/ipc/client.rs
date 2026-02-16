@@ -56,6 +56,8 @@ impl HookClient {
                         // Create a dead-end IPC backend — peer is dropped so reads
                         // return EOF. call() will attempt fallback_to_direct on first
                         // I/O error, and methods fall through to Direct if available.
+                        #[allow(clippy::expect_used)]
+                        // socketpair is infallible on supported platforms
                         let (sock, peer) = tokio::net::UnixStream::pair().expect("socketpair");
                         drop(peer);
                         let (read, write) = sock.into_split();
@@ -325,6 +327,7 @@ impl HookClient {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Store an observation. Fire-and-forget.
+    #[allow(clippy::too_many_arguments)]
     pub async fn store_observation(
         &mut self,
         project_id: Option<i64>,
@@ -901,6 +904,7 @@ impl HookClient {
     }
 
     /// Register a team session. Returns team_id.
+    #[allow(clippy::too_many_arguments)]
     pub async fn register_team_session(
         &mut self,
         team_name: &str,
@@ -1078,9 +1082,39 @@ impl HookClient {
                 "session_id": session_id,
                 "tasks": tasks_json,
             });
-            match self.call("snapshot_tasks", params).await {
-                Ok(v) => {
-                    let count = v.get("count").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
+            if let Ok(v) = self.call("snapshot_tasks", params).await {
+                let count = v.get("count").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
+                let label = if is_session_end { "SessionEnd" } else { "Stop" };
+                tracing::debug!(
+                    "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
+                    label,
+                    count,
+                    completed,
+                    remaining,
+                );
+                ipc_ok = true;
+            }
+            // fall through to Direct
+        }
+        if !ipc_ok && let Backend::Direct { pool } = &self.inner {
+            let pool = pool.clone();
+            let list_id = list_id.to_string();
+            let session_id = session_id.map(String::from);
+            let tasks = tasks.to_vec();
+            match pool
+                .interact(move |conn| {
+                    let count = crate::db::session_tasks::snapshot_native_tasks_sync(
+                        conn,
+                        project_id,
+                        &list_id,
+                        session_id.as_deref(),
+                        &tasks,
+                    )?;
+                    Ok::<_, anyhow::Error>(count)
+                })
+                .await
+            {
+                Ok(count) => {
                     let label = if is_session_end { "SessionEnd" } else { "Stop" };
                     tracing::debug!(
                         "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
@@ -1089,43 +1123,9 @@ impl HookClient {
                         completed,
                         remaining,
                     );
-                    ipc_ok = true;
                 }
-                Err(_) => {} // fall through to Direct
-            }
-        }
-        if !ipc_ok {
-            if let Backend::Direct { pool } = &self.inner {
-                let pool = pool.clone();
-                let list_id = list_id.to_string();
-                let session_id = session_id.map(String::from);
-                let tasks = tasks.to_vec();
-                match pool
-                    .interact(move |conn| {
-                        let count = crate::db::session_tasks::snapshot_native_tasks_sync(
-                            conn,
-                            project_id,
-                            &list_id,
-                            session_id.as_deref(),
-                            &tasks,
-                        )?;
-                        Ok::<_, anyhow::Error>(count)
-                    })
-                    .await
-                {
-                    Ok(count) => {
-                        let label = if is_session_end { "SessionEnd" } else { "Stop" };
-                        tracing::debug!(
-                            "[mira] {} snapshot: {} tasks ({} completed, {} remaining)",
-                            label,
-                            count,
-                            completed,
-                            remaining,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("[mira] Task snapshot failed: {}", e);
-                    }
+                Err(e) => {
+                    tracing::warn!("[mira] Task snapshot failed: {}", e);
                 }
             }
         }
@@ -1135,19 +1135,14 @@ impl HookClient {
     pub async fn write_claude_local_md(&mut self, project_id: i64) {
         if self.is_ipc() {
             let params = json!({"project_id": project_id});
-            match self.call("write_claude_local_md", params).await {
-                Ok(v) => {
-                    let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
-                    if count > 0 {
-                        tracing::debug!(
-                            "[mira] Auto-exported {} memories to CLAUDE.local.md",
-                            count
-                        );
-                    }
-                    return;
+            if let Ok(v) = self.call("write_claude_local_md", params).await {
+                let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
+                if count > 0 {
+                    tracing::debug!("[mira] Auto-exported {} memories to CLAUDE.local.md", count);
                 }
-                Err(_) => {} // fall through to Direct
+                return;
             }
+            // fall through to Direct
         }
         if let Backend::Direct { pool } = &self.inner {
             let pool = pool.clone();
@@ -1204,19 +1199,14 @@ impl HookClient {
     pub async fn write_auto_memory(&mut self, project_id: i64, project_path: &str) {
         if self.is_ipc() {
             let params = json!({"project_id": project_id, "project_path": project_path});
-            match self.call("write_auto_memory", params).await {
-                Ok(v) => {
-                    let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
-                    if count > 0 {
-                        tracing::debug!(
-                            "[mira] Auto-exported {} memories to MEMORY.mira.md",
-                            count
-                        );
-                    }
-                    return;
+            if let Ok(v) = self.call("write_auto_memory", params).await {
+                let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
+                if count > 0 {
+                    tracing::debug!("[mira] Auto-exported {} memories to MEMORY.mira.md", count);
                 }
-                Err(_) => {} // fall through to Direct
+                return;
             }
+            // fall through to Direct
         }
         if let Backend::Direct { pool } = &self.inner {
             let pool = pool.clone();
