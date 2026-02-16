@@ -112,7 +112,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session management and insights. Actions: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight), current_session (show current).",
+        description = "Session management and insights. Actions: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight; insight_source required: 'pondering' or 'doc_gap'), current_session (show current).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
             .expect("SessionOutput schema")
     )]

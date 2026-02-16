@@ -1190,7 +1190,7 @@ mod tests {
             &now,
         );
 
-        let result = dismiss_insight_sync(&conn, project_id, row_id).unwrap();
+        let result = dismiss_insight_sync(&conn, project_id, row_id, Some("pondering")).unwrap();
         assert!(result, "Should return true for valid dismissal");
 
         // Verify dismissed
@@ -1220,7 +1220,7 @@ mod tests {
         );
 
         // Use wrong project_id
-        let result = dismiss_insight_sync(&conn, project_id + 999, row_id).unwrap();
+        let result = dismiss_insight_sync(&conn, project_id + 999, row_id, Some("pondering")).unwrap();
         assert!(!result, "Should return false when project_id doesn't match");
 
         // Verify not dismissed
@@ -1256,7 +1256,7 @@ mod tests {
         .unwrap();
         let row_id = conn.last_insert_rowid();
 
-        let result = dismiss_insight_sync(&conn, project_id, row_id).unwrap();
+        let result = dismiss_insight_sync(&conn, project_id, row_id, Some("pondering")).unwrap();
         assert!(!result, "Should return false for non-insight pattern_type");
     }
 
@@ -1276,11 +1276,11 @@ mod tests {
         );
 
         // First dismiss
-        let result1 = dismiss_insight_sync(&conn, project_id, row_id).unwrap();
+        let result1 = dismiss_insight_sync(&conn, project_id, row_id, Some("pondering")).unwrap();
         assert!(result1, "First dismiss should succeed");
 
         // Second dismiss — already dismissed
-        let result2 = dismiss_insight_sync(&conn, project_id, row_id).unwrap();
+        let result2 = dismiss_insight_sync(&conn, project_id, row_id, Some("pondering")).unwrap();
         assert!(!result2, "Should return false when already dismissed");
     }
 
@@ -1289,8 +1289,98 @@ mod tests {
         let conn = setup_test_connection();
         let project_id = create_test_project(&conn);
 
-        let result = dismiss_insight_sync(&conn, project_id, 99999).unwrap();
+        let result = dismiss_insight_sync(&conn, project_id, 99999, Some("pondering")).unwrap();
         assert!(!result, "Should return false for nonexistent ID");
+    }
+
+    #[test]
+    fn test_dismiss_requires_source() {
+        let conn = setup_test_connection();
+        let project_id = create_test_project(&conn);
+
+        let result = dismiss_insight_sync(&conn, project_id, 1, None);
+        assert!(result.is_err(), "None source should return an error");
+    }
+
+    #[test]
+    fn test_dismiss_rejects_unknown_source() {
+        let conn = setup_test_connection();
+        let project_id = create_test_project(&conn);
+
+        let result = dismiss_insight_sync(&conn, project_id, 1, Some("health_trend"));
+        assert!(result.is_err(), "Unknown source should return an error");
+    }
+
+    #[test]
+    fn test_dismiss_doc_gap_insight() {
+        let conn = setup_test_connection();
+        let project_id = create_test_project(&conn);
+
+        insert_doc_task(&conn, project_id, "api", "endpoint", "/docs/api.md", "high");
+
+        // Get the doc task row_id from insights
+        let results =
+            get_unified_insights_sync(&conn, project_id, Some("doc_gap"), 0.0, 30, 100).unwrap();
+        assert_eq!(results.len(), 1);
+        let row_id = results[0].row_id.expect("doc_gap should have row_id");
+
+        // Dismiss via doc_gap source
+        let result =
+            dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
+        assert!(result, "Should return true for valid doc_gap dismissal");
+
+        // Verify the doc task is now 'skipped'
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM documentation_tasks WHERE id = ?1",
+                params![row_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "skipped");
+
+        // Verify it no longer appears in insights
+        let results =
+            get_unified_insights_sync(&conn, project_id, Some("doc_gap"), 0.0, 30, 100).unwrap();
+        assert!(results.is_empty(), "Dismissed doc_gap should not appear");
+    }
+
+    #[test]
+    fn test_dismiss_doc_gap_wrong_project() {
+        let conn = setup_test_connection();
+        let project_id = create_test_project(&conn);
+
+        insert_doc_task(&conn, project_id, "api", "endpoint", "/docs/api.md", "high");
+
+        let results =
+            get_unified_insights_sync(&conn, project_id, Some("doc_gap"), 0.0, 30, 100).unwrap();
+        let row_id = results[0].row_id.unwrap();
+
+        let result =
+            dismiss_insight_sync(&conn, project_id + 999, row_id, Some("doc_gap")).unwrap();
+        assert!(!result, "Should return false when project_id doesn't match");
+    }
+
+    #[test]
+    fn test_dismiss_doc_gap_already_skipped() {
+        let conn = setup_test_connection();
+        let project_id = create_test_project(&conn);
+
+        insert_doc_task(&conn, project_id, "api", "endpoint", "/docs/api.md", "high");
+
+        let results =
+            get_unified_insights_sync(&conn, project_id, Some("doc_gap"), 0.0, 30, 100).unwrap();
+        let row_id = results[0].row_id.unwrap();
+
+        // First dismiss
+        let result1 =
+            dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
+        assert!(result1, "First dismiss should succeed");
+
+        // Second dismiss — already skipped
+        let result2 =
+            dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
+        assert!(!result2, "Should return false when already skipped");
     }
 
     // ═══════════════════════════════════════
@@ -1470,7 +1560,7 @@ mod tests {
     }
 
     #[test]
-    fn test_doc_gap_insight_has_no_row_id() {
+    fn test_doc_gap_insight_has_row_id() {
         let conn = setup_test_connection();
         let project_id = create_test_project(&conn);
 
@@ -1480,7 +1570,10 @@ mod tests {
             get_unified_insights_sync(&conn, project_id, Some("doc_gap"), 0.0, 30, 100).unwrap();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].row_id, None);
+        assert!(
+            results[0].row_id.is_some(),
+            "Doc gap insights should have a row_id for dismissal"
+        );
     }
 
     #[test]

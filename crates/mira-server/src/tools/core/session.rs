@@ -76,7 +76,9 @@ pub async fn handle_session<C: ToolContext>(
             )
             .await
         }
-        SessionAction::DismissInsight => dismiss_insight(ctx, req.insight_id).await,
+        SessionAction::DismissInsight => {
+            dismiss_insight(ctx, req.insight_id, req.insight_source).await
+        }
         SessionAction::StorageStatus => storage_status(ctx).await,
         SessionAction::Cleanup => cleanup(ctx, req.dry_run, req.category).await,
         SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
@@ -279,7 +281,7 @@ async fn query_insights<C: ToolContext>(
     if dismissable > 0 {
         output.push_str("---\n");
         output.push_str(&format!(
-            "{} dismissable (use session action=dismiss_insight insight_id=<row_id>)\n",
+            "{} dismissable (use session action=dismiss_insight insight_id=<row_id> insight_source=<source>)\n",
             dismissable
         ));
     }
@@ -310,7 +312,12 @@ async fn query_insights<C: ToolContext>(
         .collect();
 
     // Fire-and-forget: mark all returned pondering insights as shown by row ID
-    let row_ids: Vec<i64> = insights.iter().filter_map(|i| i.row_id).collect();
+    // Only pondering insights live in behavior_patterns — filter to avoid cross-table ID collision
+    let row_ids: Vec<i64> = insights
+        .iter()
+        .filter(|i| i.source == "pondering")
+        .filter_map(|i| i.row_id)
+        .collect();
     if !row_ids.is_empty() {
         let pool = ctx.pool().clone();
         tokio::spawn(async move {
@@ -344,12 +351,18 @@ async fn query_insights<C: ToolContext>(
     }))
 }
 
-/// Dismiss a single insight by row ID
+/// Dismiss a single insight by row ID, routed by source.
+/// - `"pondering"` → dismisses behavior_patterns row
+/// - `"doc_gap"` → marks documentation_tasks row as 'skipped'
+/// `insight_source` is required to prevent cross-table ID collisions.
 async fn dismiss_insight<C: ToolContext>(
     ctx: &C,
     insight_id: Option<i64>,
+    insight_source: Option<String>,
 ) -> Result<Json<SessionOutput>, String> {
     let id = insight_id.ok_or("insight_id is required for dismiss_insight action")?;
+    let source = insight_source
+        .ok_or("insight_source is required for dismiss_insight (use 'pondering' or 'doc_gap')")?;
 
     let project = ctx.get_project().await;
     let project_id = project
@@ -357,18 +370,22 @@ async fn dismiss_insight<C: ToolContext>(
         .map(|p| p.id)
         .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
 
+    let source_clone = source.clone();
     let updated = ctx
         .pool()
         .run(move |conn| {
-            dismiss_insight_sync(conn, project_id, id)
+            dismiss_insight_sync(conn, project_id, id, Some(&source_clone))
                 .map_err(|e| format!("Failed to dismiss insight: {}", e))
         })
         .await?;
 
     let message = if updated {
-        format!("Insight {} dismissed.", id)
+        format!("Insight {} ({}) dismissed.", id, source)
     } else {
-        format!("Insight {} not found or already dismissed.", id)
+        format!(
+            "Insight {} ({}) not found or already dismissed.",
+            id, source
+        )
     };
 
     Ok(Json(SessionOutput {

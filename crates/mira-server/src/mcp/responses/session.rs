@@ -62,7 +62,7 @@ pub struct InsightsData {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct InsightItem {
-    /// Row ID for dismissable insights (pondering). Use with dismiss_insight action.
+    /// Row ID for dismissable insights (pondering, doc_gap). Use with dismiss_insight action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub row_id: Option<i64>,
     pub source: String,

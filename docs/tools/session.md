@@ -99,6 +99,7 @@ Remove a resolved insight so it no longer appears in future queries.
 **Parameters:**
 - `action` (string, required) - `"dismiss_insight"`
 - `insight_id` (integer, required) - Row ID of the insight to dismiss
+- `insight_source` (string, required) - Source table to target: `"pondering"` or `"doc_gap"`
 
 **Returns:** Confirmation or "not found" message.
 

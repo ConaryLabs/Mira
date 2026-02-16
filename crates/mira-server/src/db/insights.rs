@@ -59,18 +59,44 @@ pub fn get_unified_insights_sync(
     Ok(all)
 }
 
-/// Dismiss a single insight by setting `dismissed = 1` on its behavior_patterns row.
-/// Scoped to project_id and insight pattern_types only.
-/// Returns whether a row was actually updated.
-pub fn dismiss_insight_sync(conn: &Connection, project_id: i64, id: i64) -> rusqlite::Result<bool> {
-    let rows = conn.execute(
-        "UPDATE behavior_patterns SET dismissed = 1 \
-         WHERE id = ?1 AND project_id = ?2 \
-           AND pattern_type LIKE 'insight_%' \
-           AND (dismissed IS NULL OR dismissed = 0)",
-        params![id, project_id],
-    )?;
-    Ok(rows > 0)
+/// Dismiss a single insight by ID, routed by source.
+/// - `"pondering"` → sets `dismissed = 1` on behavior_patterns
+/// - `"doc_gap"` → sets `status = 'skipped'` on documentation_tasks
+/// Source is required to prevent cross-table ID collisions.
+/// Scoped to project_id. Returns whether a row was actually updated.
+pub fn dismiss_insight_sync(
+    conn: &Connection,
+    project_id: i64,
+    id: i64,
+    source: Option<&str>,
+) -> rusqlite::Result<bool> {
+    match source {
+        Some("doc_gap") => {
+            let rows = conn.execute(
+                "UPDATE documentation_tasks SET status = 'skipped', skip_reason = 'Dismissed by user' \
+                 WHERE id = ?1 AND project_id = ?2 AND status = 'pending'",
+                params![id, project_id],
+            )?;
+            Ok(rows > 0)
+        }
+        Some("pondering") => {
+            let rows = conn.execute(
+                "UPDATE behavior_patterns SET dismissed = 1 \
+                 WHERE id = ?1 AND project_id = ?2 \
+                   AND pattern_type LIKE 'insight_%' \
+                   AND (dismissed IS NULL OR dismissed = 0)",
+                params![id, project_id],
+            )?;
+            Ok(rows > 0)
+        }
+        None => Err(rusqlite::Error::InvalidParameterName(
+            "insight_source is required. Use 'pondering' or 'doc_gap'.".to_string(),
+        )),
+        Some(other) => Err(rusqlite::Error::InvalidParameterName(format!(
+            "Unknown insight source: '{}'. Use 'pondering' or 'doc_gap'.",
+            other
+        ))),
+    }
 }
 
 /// Compute age in days from a timestamp string (format: "YYYY-MM-DD HH:MM:SS").
@@ -221,7 +247,7 @@ fn fetch_doc_gap_insights(
     project_id: i64,
 ) -> rusqlite::Result<Vec<UnifiedInsight>> {
     let sql = format!(
-        "SELECT doc_type, doc_category, target_doc_path, priority, reason, created_at
+        "SELECT id, doc_type, doc_category, target_doc_path, priority, reason, created_at
            FROM documentation_tasks
            WHERE project_id = ?1
              AND status = 'pending'
@@ -231,13 +257,15 @@ fn fetch_doc_gap_insights(
     let mut stmt = conn.prepare(&sql)?;
 
     let rows = stmt.query_map(params![project_id], |row| {
-        let doc_type: String = row.get(0)?;
-        let doc_category: String = row.get(1)?;
-        let target_doc_path: String = row.get(2)?;
-        let priority: String = row.get::<_, Option<String>>(3)?.unwrap_or("medium".into());
-        let reason: Option<String> = row.get(4)?;
-        let timestamp: String = row.get::<_, Option<String>>(5)?.unwrap_or_default();
+        let row_id: i64 = row.get(0)?;
+        let doc_type: String = row.get(1)?;
+        let doc_category: String = row.get(2)?;
+        let target_doc_path: String = row.get(3)?;
+        let priority: String = row.get::<_, Option<String>>(4)?.unwrap_or("medium".into());
+        let reason: Option<String> = row.get(5)?;
+        let timestamp: String = row.get::<_, Option<String>>(6)?.unwrap_or_default();
         Ok((
+            row_id,
             doc_type,
             doc_category,
             target_doc_path,
@@ -249,7 +277,7 @@ fn fetch_doc_gap_insights(
 
     let mut insights = Vec::new();
     for row in rows {
-        let (doc_type, doc_category, target_doc_path, priority, reason, timestamp) = row?;
+        let (row_id, doc_type, doc_category, target_doc_path, priority, reason, timestamp) = row?;
 
         let priority_score = super::priority_score(&priority);
 
@@ -266,7 +294,7 @@ fn fetch_doc_gap_insights(
             confidence: priority_score,
             timestamp,
             evidence: reason,
-            row_id: None,
+            row_id: Some(row_id),
             trend: None,
             change_summary: None,
             category: Some("documentation".to_string()),

@@ -253,7 +253,7 @@ pub enum SessionAction {
     UsageList,
     /// Query unified insights digest (pondering, proactive, doc gaps)
     Insights,
-    /// Dismiss an insight by ID (removes it from future queries)
+    /// Dismiss an insight by ID (insight_source required: 'pondering' or 'doc_gap')
     DismissInsight,
     /// List all running and recently completed tasks
     TasksList,
@@ -286,7 +286,7 @@ pub struct SessionRequest {
     #[schemars(description = "Filter to last N days (default: 30)")]
     pub since_days: Option<u32>,
     #[schemars(
-        description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)"
+        description = "Filter insights by source: pondering/proactive/doc_gap (for insights action). Required for dismiss_insight: 'pondering' or 'doc_gap'"
     )]
     pub insight_source: Option<String>,
     #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.5)")]
@@ -589,7 +589,7 @@ pub enum McpSessionAction {
     Recap,
     /// Query unified insights digest (pondering, proactive, doc gaps)
     Insights,
-    /// Dismiss an insight by ID (removes it from future queries)
+    /// Dismiss an insight by ID (insight_source required: 'pondering' or 'doc_gap')
     DismissInsight,
     /// Show current session
     CurrentSession,
@@ -609,11 +609,11 @@ impl From<McpSessionAction> for SessionAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpSessionRequest {
     #[schemars(
-        description = "Action: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight), current_session (show current)"
+        description = "Action: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight; requires insight_source), current_session (show current)"
     )]
     pub action: McpSessionAction,
     #[schemars(
-        description = "Filter insights by source: pondering/proactive/doc_gap (for insights action)"
+        description = "Filter insights by source: pondering/proactive/doc_gap (for insights action). Required for dismiss_insight: 'pondering' or 'doc_gap'"
     )]
     pub insight_source: Option<String>,
     #[schemars(description = "Minimum confidence threshold for insights (0.0-1.0, default: 0.5)")]
