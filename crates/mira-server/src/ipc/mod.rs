@@ -2,17 +2,15 @@
 // Unix socket IPC for hook-to-server communication
 
 pub mod client;
+#[cfg(unix)]
 pub mod handler;
 pub mod ops;
 pub mod protocol;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
 
-use crate::mcp::MiraServer;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tracing::info;
 
 /// Returns the path to the Mira IPC socket (~/.mira/mira.sock).
 pub fn socket_path() -> PathBuf {
@@ -23,7 +21,11 @@ pub fn socket_path() -> PathBuf {
 }
 
 /// Start the Unix socket listener, accepting one-shot IPC connections from hooks.
-pub async fn run_socket_listener(server: MiraServer) -> anyhow::Result<()> {
+#[cfg(unix)]
+pub async fn run_socket_listener(server: crate::mcp::MiraServer) -> anyhow::Result<()> {
+    use std::sync::Arc;
+    use tracing::info;
+
     let path = socket_path();
 
     // Remove stale socket from previous run
@@ -34,7 +36,6 @@ pub async fn run_socket_listener(server: MiraServer) -> anyhow::Result<()> {
     let listener = tokio::net::UnixListener::bind(&path)?;
 
     // Restrict socket to owner only
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;

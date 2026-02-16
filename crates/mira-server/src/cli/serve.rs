@@ -243,12 +243,15 @@ pub async fn run_mcp_server() -> Result<()> {
     server.watcher = Some(watcher_handle);
 
     // Start IPC socket listener (shares MiraServer state via Arc fields)
-    let ipc_server = server.clone();
-    let ipc_handle = tokio::spawn(async move {
-        if let Err(e) = mira::ipc::run_socket_listener(ipc_server).await {
-            tracing::warn!("IPC listener failed: {}", e);
-        }
-    });
+    #[cfg(unix)]
+    let ipc_handle = {
+        let ipc_server = server.clone();
+        tokio::spawn(async move {
+            if let Err(e) = mira::ipc::run_socket_listener(ipc_server).await {
+                tracing::warn!("IPC listener failed: {}", e);
+            }
+        })
+    };
 
     // Log project restoration
     let restored_project = server
@@ -280,8 +283,11 @@ pub async fn run_mcp_server() -> Result<()> {
     service.waiting().await?;
 
     // Cleanup IPC socket on shutdown
-    ipc_handle.abort();
-    let _ = std::fs::remove_file(mira::ipc::socket_path());
+    #[cfg(unix)]
+    {
+        ipc_handle.abort();
+        let _ = std::fs::remove_file(mira::ipc::socket_path());
+    }
 
     Ok(())
 }
