@@ -114,7 +114,19 @@ impl MiraServer {
         tool_result(tools::handle_session(self, req.into()).await)
     }
 
-    // documentation, team, recipe tools removed from MCP surface.
+    #[tool(
+        description = "Get agentic team recipes for expert review, full-cycle, QA hardening, and refactoring workflows. Actions: list (available recipes), get (full recipe with members, tasks, coordination).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::RecipeOutput>()
+            .expect("RecipeOutput schema")
+    )]
+    async fn recipe(
+        &self,
+        Parameters(req): Parameters<RecipeRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_recipe(req).await)
+    }
+
+    // documentation, team tools removed from MCP surface.
     // Still accessible via `mira tool <name> '<json>'` CLI.
 }
 
