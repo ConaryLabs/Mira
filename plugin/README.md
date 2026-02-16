@@ -80,18 +80,20 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 6 MCP tools:
+The plugin bundles the Mira MCP server with 8 MCP tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
 | `memory` | remember, recall, forget, archive | Persistent semantic memory |
-| `code` | search, symbols, callers, callees, diff | Code intelligence + semantic diff analysis |
+| `code` | search, symbols, callers, callees | Code intelligence: semantic search + call graph |
+| `diff` | *(single purpose)* | Semantic git diff analysis with impact assessment |
 | `project` | start, get | Project/session management |
 | `session` | current_session, recap, insights, dismiss_insight | Session context and insights |
 | `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
 | `index` | project, file, status | Code indexing |
+| `recipe` | list, get | Agentic team workflow recipes |
 
-Additional actions (documentation, team, recipe, and advanced session/code/index actions) are available via `mira tool <name> '<json>'` CLI.
+Additional actions (documentation, team, and advanced session/code/index actions) are available via `mira tool <name> '<json>'` CLI.
 
 All tools return structured JSON via MCP outputSchema.
 

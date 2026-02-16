@@ -61,7 +61,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Code intelligence: semantic search, call graph, and diff analysis. Actions: search (find code by meaning), symbols (list definitions in file), callers/callees (trace call graph), diff (analyze git changes with impact assessment).",
+        description = "Code intelligence: semantic search and call graph analysis. Actions: search (find code by meaning), symbols (list definitions in file), callers/callees (trace call graph).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::CodeOutput>()
             .expect("CodeOutput schema")
     )]
@@ -69,12 +69,21 @@ impl MiraServer {
         &self,
         Parameters(req): Parameters<McpCodeRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        if matches!(req.action, McpCodeAction::Diff) {
-            return tool_result(
-                tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
-            );
-        }
         tool_result(tools::handle_code(self, req.into()).await)
+    }
+
+    #[tool(
+        description = "Analyze git changes semantically with change classification, impact assessment, and risk analysis. Compares refs, staged changes, or working tree.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DiffOutput>()
+            .expect("DiffOutput schema")
+    )]
+    async fn diff(
+        &self,
+        Parameters(req): Parameters<McpDiffRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(
+            tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
+        )
     }
 
     #[tool(

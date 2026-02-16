@@ -698,7 +698,7 @@ fn infer_activity_from_tools(tools: &[&str]) -> String {
         "running commands".to_string()
     } else if has("Read") || has("Glob") || has("Grep") {
         "code exploration".to_string()
-    } else if has("mcp__mira__code") || has("code") {
+    } else if has("mcp__mira__code") || has("code") || has("mcp__mira__diff") || has("diff") {
         "code analysis".to_string()
     } else if has("mcp__mira__memory") || has("memory") {
         "memory operations".to_string()

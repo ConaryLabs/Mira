@@ -47,6 +47,18 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                     .map(|output| output.0.message)
             }
         }
+        "diff" => {
+            #[derive(serde::Deserialize)]
+            struct DiffArgs {
+                from_ref: Option<String>,
+                to_ref: Option<String>,
+                include_impact: Option<bool>,
+            }
+            let req: DiffArgs = serde_json::from_str(&args)?;
+            mira::tools::analyze_diff_tool(&server, req.from_ref, req.to_ref, req.include_impact)
+                .await
+                .map(|output| output.0.message)
+        }
         "goal" => {
             let req: GoalRequest = serde_json::from_str(&args)?;
             mira::tools::goal(&server, req)
@@ -113,6 +125,7 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "project",
         "memory",
         "code",
+        "diff",
         "goal",
         "index",
         "session",

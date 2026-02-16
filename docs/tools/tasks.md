@@ -1,6 +1,6 @@
 # tasks (Background Task Management)
 
-Long-running MCP tools like `index(action="project")` and `code(action="diff")` auto-enqueue background tasks and return a `task_id`.
+Long-running MCP tools like `index(action="project")` and `diff(...)` auto-enqueue background tasks and return a `task_id`.
 
 ## Polling (MCP clients)
 

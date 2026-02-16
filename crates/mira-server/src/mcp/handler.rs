@@ -387,10 +387,10 @@ mod tests {
     }
 
     #[test]
-    fn extract_action_ttl_eligible_code_diff() {
-        let req = make_request("code", Some(serde_json::json!({"action": "diff"})));
+    fn extract_action_ttl_eligible_diff() {
+        let req = make_request("diff", None);
         let (action, ttl) = extract_action_ttl(&req);
-        assert_eq!(action, Some("diff".to_string()));
+        assert_eq!(action, None);
         assert_eq!(ttl, Some(300));
     }
 

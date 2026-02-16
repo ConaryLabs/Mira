@@ -5,7 +5,7 @@
 pub fn task_ttl(tool_name: &str, action: Option<&str>) -> Option<u64> {
     match (tool_name, action) {
         ("index", Some("project")) => Some(600),
-        ("code", Some("diff")) => Some(300),
+        ("diff", _) => Some(300),
         _ => None,
     }
 }
@@ -17,7 +17,7 @@ mod tests {
     #[test]
     fn test_eligible_tools() {
         assert_eq!(task_ttl("index", Some("project")), Some(600));
-        assert_eq!(task_ttl("code", Some("diff")), Some(300));
+        assert_eq!(task_ttl("diff", None), Some(300));
     }
 
     #[test]

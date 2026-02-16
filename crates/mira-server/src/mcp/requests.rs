@@ -484,8 +484,6 @@ pub enum McpCodeAction {
     Callers,
     /// Find all functions called by a given function
     Callees,
-    /// Analyze git diff semantically (change types, impact, risks)
-    Diff,
 }
 
 impl From<McpCodeAction> for CodeAction {
@@ -495,14 +493,13 @@ impl From<McpCodeAction> for CodeAction {
             McpCodeAction::Symbols => CodeAction::Symbols,
             McpCodeAction::Callers => CodeAction::Callers,
             McpCodeAction::Callees => CodeAction::Callees,
-            McpCodeAction::Diff => CodeAction::Diff,
         }
     }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpCodeRequest {
-    #[schemars(description = "Action: search, symbols, callers, callees, diff")]
+    #[schemars(description = "Action: search, symbols, callers, callees")]
     pub action: McpCodeAction,
     #[schemars(description = "Search query (required for search)")]
     pub query: Option<String>,
@@ -514,16 +511,6 @@ pub struct McpCodeRequest {
     pub symbol_type: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
-    #[schemars(
-        description = "Starting git ref for diff (commit, branch, tag). Default: HEAD~1 or staged/working changes"
-    )]
-    pub from_ref: Option<String>,
-    #[schemars(description = "Ending git ref for diff. Default: HEAD")]
-    pub to_ref: Option<String>,
-    #[schemars(
-        description = "Include impact analysis in diff (find affected callers). Default: true"
-    )]
-    pub include_impact: Option<bool>,
 }
 
 impl From<McpCodeRequest> for CodeRequest {
@@ -535,11 +522,27 @@ impl From<McpCodeRequest> for CodeRequest {
             function_name: r.function_name,
             symbol_type: r.symbol_type,
             limit: r.limit,
-            from_ref: r.from_ref,
-            to_ref: r.to_ref,
-            include_impact: r.include_impact,
+            from_ref: None,
+            to_ref: None,
+            include_impact: None,
         }
     }
+}
+
+// ── Diff (standalone tool, extracted from code) ───────────────────────────
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct McpDiffRequest {
+    #[schemars(
+        description = "Starting git ref for diff (commit, branch, tag). Default: HEAD~1 or staged/working changes"
+    )]
+    pub from_ref: Option<String>,
+    #[schemars(description = "Ending git ref for diff. Default: HEAD")]
+    pub to_ref: Option<String>,
+    #[schemars(
+        description = "Include impact analysis in diff (find affected callers). Default: true"
+    )]
+    pub include_impact: Option<bool>,
 }
 
 // ── Index (6 → 3 actions: removes Compact, Summarize, Health) ────────────
@@ -712,9 +715,9 @@ mod tests {
     }
 
     #[test]
-    fn code_action_diff() {
-        let a: McpCodeAction = serde_json::from_value(json!("diff")).unwrap();
-        assert!(matches!(a, McpCodeAction::Diff));
+    fn code_action_rejects_diff() {
+        let result = serde_json::from_value::<McpCodeAction>(json!("diff"));
+        assert!(result.is_err(), "McpCodeAction should reject 'diff' (now a standalone tool)");
     }
 
     // ── McpIndexAction deserialization ────────────────────────────────
@@ -911,9 +914,6 @@ mod tests {
             function_name: Some("login".into()),
             symbol_type: Some("function".into()),
             limit: Some(50),
-            from_ref: Some("HEAD~3".into()),
-            to_ref: Some("HEAD".into()),
-            include_impact: Some(true),
         };
 
         let full: CodeRequest = mcp.into();
@@ -924,8 +924,33 @@ mod tests {
         assert_eq!(full.function_name.as_deref(), Some("login"));
         assert_eq!(full.symbol_type.as_deref(), Some("function"));
         assert_eq!(full.limit, Some(50));
-        assert_eq!(full.from_ref.as_deref(), Some("HEAD~3"));
-        assert_eq!(full.to_ref.as_deref(), Some("HEAD"));
-        assert_eq!(full.include_impact, Some(true));
+        // Diff fields are None — they belong to the standalone diff tool now
+        assert!(full.from_ref.is_none());
+        assert!(full.to_ref.is_none());
+        assert!(full.include_impact.is_none());
+    }
+
+    // ── McpDiffRequest deserialization ──────────────────────────────────
+
+    #[test]
+    fn diff_request_deserialization() {
+        let json = json!({
+            "from_ref": "main",
+            "to_ref": "HEAD",
+            "include_impact": true
+        });
+        let req: McpDiffRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.from_ref.as_deref(), Some("main"));
+        assert_eq!(req.to_ref.as_deref(), Some("HEAD"));
+        assert_eq!(req.include_impact, Some(true));
+    }
+
+    #[test]
+    fn diff_request_all_optional() {
+        let json = json!({});
+        let req: McpDiffRequest = serde_json::from_value(json).unwrap();
+        assert!(req.from_ref.is_none());
+        assert!(req.to_ref.is_none());
+        assert!(req.include_impact.is_none());
     }
 }

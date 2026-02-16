@@ -17,9 +17,9 @@ Analyze git changes semantically with classification, impact analysis, and risk 
    - `--to REF` → Ending git ref (default: HEAD)
    - `--no-impact` → Skip impact analysis (faster)
 
-2. Use the `mcp__mira__code` tool:
+2. Use the `mcp__mira__diff` tool:
    ```
-   code(action="diff", from_ref="...", to_ref="...", include_impact=true)
+   diff(from_ref="...", to_ref="...", include_impact=true)
    ```
 
 3. Present results in sections:

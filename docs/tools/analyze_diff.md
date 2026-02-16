@@ -1,6 +1,6 @@
-# analyze_diff
+# diff
 
-> **Note:** This is not a standalone MCP tool. Access diff analysis via `code(action="diff", ...)`.
+> **Standalone MCP tool.** Call as `diff(from_ref="...", to_ref="...", include_impact=true)`.
 
 Analyze git diffs semantically. Identifies change types, impact, and risks using LLM-powered analysis with heuristic fallback.
 
@@ -8,9 +8,8 @@ Analyze git diffs semantically. Identifies change types, impact, and risks using
 
 ```json
 {
-  "name": "code",
+  "name": "diff",
   "arguments": {
-    "action": "diff",
     "from_ref": "HEAD~1",
     "to_ref": "HEAD"
   }
@@ -42,17 +41,17 @@ Analyze git diffs semantically. Identifies change types, impact, and risks using
 
 **Analyze the last commit:**
 ```json
-{ "action": "diff", "from_ref": "HEAD~1", "to_ref": "HEAD" }
+{ "from_ref": "HEAD~1", "to_ref": "HEAD" }
 ```
 
 **Analyze staged changes:**
 ```json
-{ "action": "diff" }
+{}
 ```
 
 **Compare branches without impact analysis:**
 ```json
-{ "action": "diff", "from_ref": "main", "to_ref": "feature-branch", "include_impact": false }
+{ "from_ref": "main", "to_ref": "feature-branch", "include_impact": false }
 ```
 
 ## See Also

@@ -15,6 +15,7 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
     "task", // Task completions and updates
     "goal", // Goal progress and milestones
     "code", // Code discoveries and call graph insights
+    "diff", // Diff analysis insights
 ];
 
 /// Spawn background extraction for a tool call
@@ -199,6 +200,11 @@ mod tests {
     #[test]
     fn test_extractable_tools_contains_code() {
         assert!(EXTRACTABLE_TOOLS.contains(&"code"));
+    }
+
+    #[test]
+    fn test_extractable_tools_contains_diff() {
+        assert!(EXTRACTABLE_TOOLS.contains(&"diff"));
     }
 
     #[test]
