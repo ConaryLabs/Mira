@@ -4,31 +4,51 @@
 [![Release](https://img.shields.io/github/v/release/ConaryLabs/Mira)](https://github.com/ConaryLabs/Mira/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**A persistent intelligence layer for Claude Code.**
+**The intelligence layer that makes Claude Code dangerous.**
 
-Claude Code is stateless. Every session starts from zero — your architecture decisions forgotten, your preferences lost, your codebase understood only as far as it can grep. Mira fixes that.
+Claude Code is powerful but amnesiac. Every session starts from scratch — your architecture decisions evaporated, your codebase reduced to what it can grep, your last three hours of context gone. You spend the first ten minutes of every conversation re-explaining things it knew yesterday.
 
-Mira is a Rust MCP server that gives Claude Code long-term memory and deep code understanding. It runs locally, stores everything in SQLite, and integrates through Claude Code's plugin system with 13 hooks that make context injection automatic — relevant memories recalled on every prompt, file changes tracked, session continuity preserved, and subagent context shared.
+Mira eliminates that. It's a local Rust MCP server that gives Claude Code persistent memory, deep code understanding, background analysis, and continuous learning — all running on your machine, stored in SQLite, with 13 hooks that make everything automatic.
 
-## What Mira Does
+The result: Claude Code that remembers what you decided last week, understands your codebase by meaning not just text, notices when your docs are stale, predicts which changes are risky, and gets smarter the longer you use it.
 
-**Remembers across sessions.** Decisions, preferences, architectural context — stored locally and recalled automatically when relevant. Memories are evidence-based: they start as candidates, gain confidence through repeated use, and get promoted over time. Entities (projects, technologies, people) are extracted automatically to boost recall relevance.
+## The Short Version
 
-**Understands your code semantically.** Not just text search. Mira indexes your codebase with tree-sitter and vector embeddings, enabling search by meaning, call graph traversal, symbol navigation, dependency analysis, and architectural pattern detection. Supports Rust, Python, TypeScript, JavaScript, and Go.
+```bash
+curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
+mira setup  # optional: configure API keys for enhanced features
+```
 
-**Learns from your changes.** Change intelligence tracks whether commits lead to follow-up fixes, mines co-change patterns across history, and scores risk for future changes. Over time, Mira learns which parts of your codebase are fragile and which changes tend to cause problems.
+That's it. Mira auto-configures itself, starts injecting context on every prompt, and begins indexing your codebase in the background.
 
-**Builds intelligence in the background.** A two-lane background engine (fast lane for embeddings and entities, slow lane for summaries and analysis) continuously generates module summaries, summarizes git changes since your last session, scores tech debt, runs code health scans, and surfaces insights — all without you asking.
+## What Changes
 
-**Coordinates agent teams.** Full support for Claude Code Agent Teams — automatic team detection, file ownership tracking, conflict detection across teammates, and shared memory distillation. Built-in recipes (`expert-review`, `full-cycle`) provide ready-made team blueprints with defined roles, tasks, and prompts.
+### Before Mira
+- Every session starts cold. Claude doesn't know your preferences, your patterns, your past decisions.
+- Code search is grep. "Find the authentication logic" returns nothing if nobody wrote the word "authentication."
+- Agent teams work in isolation. No shared context, no conflict detection.
+- You are the memory. Every conversation requires re-establishing context.
 
-**Distills knowledge over time.** A background system analyzes accumulated memories and surfaces cross-cutting patterns as higher-level insights, so institutional knowledge compounds rather than just accumulates.
+### With Mira
+- **Sessions have continuity.** Decisions, preferences, and architectural context persist and surface automatically when relevant. No manual `/recall` needed — the `UserPromptSubmit` hook injects context on every prompt.
+- **Search works by meaning.** "Where do we handle auth?" finds the right code even if it's called `verify_credentials` in a file named `middleware.rs`. Hybrid semantic + keyword search with tree-sitter symbol matching and call graph traversal.
+- **The codebase is always understood.** Background workers continuously generate module summaries, track code health, score tech debt, detect documentation gaps, and surface insights — without you asking.
+- **Changes are analyzed, not just diffed.** Mira classifies what changed semantically, traces impact through the call graph, scores risk based on historical patterns, and learns which parts of your codebase are fragile.
+- **Agent teams share a brain.** Automatic team detection, file ownership tracking, cross-teammate conflict detection, and shared memory distillation. Built-in recipes for expert review, full-cycle development, QA hardening, and safe refactoring.
+- **Knowledge compounds.** Memories start as candidates, gain confidence through repeated cross-session use, and get promoted over time. A background distillation system extracts cross-cutting patterns from accumulated knowledge into higher-level insights.
 
-**Tracks goals across sessions.** Weighted milestones that persist across conversations, so multi-session work doesn't lose its thread. Goals have priorities, statuses, and progress that auto-updates as milestones complete.
+## How It Works
 
-**Works without API keys.** Core features (memory, code intelligence, goals, documentation) work out of the box. Expert consultation is available via Agent Teams recipes. Add an OpenAI key for semantic search (recommended), or DeepSeek/Zhipu/Ollama for background intelligence tasks.
+```
+Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
+    |                             |
+    +--13 lifecycle hooks         +--->  OpenAI (embeddings, optional)
+    +--MCP Sampling (host LLM)   +--->  DeepSeek / Ollama (background tasks, optional)
+```
 
-**Detects documentation gaps.** Finds undocumented APIs and modules, flags stale docs when source changes, classifies impact as significant or minor, and provides writing guidelines so Claude can fill the gaps directly.
+Everything runs locally. Two SQLite databases (`~/.mira/`): one for memories, sessions, and goals; one for the code index. No cloud storage, no external databases, no accounts.
+
+**No API keys required.** Core features — memory, code intelligence, goal tracking, documentation detection — work out of the box. Search falls back to keyword/fuzzy matching, analysis uses heuristic parsers. Add OpenAI for semantic search or DeepSeek/Ollama for background intelligence when you're ready.
 
 ## Installation
 
@@ -38,15 +58,14 @@ Mira is a Rust MCP server that gives Claude Code long-term memory and deep code 
 curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
 ```
 
-This detects your OS, downloads the binary, installs the Claude Code plugin (which auto-configures all hooks and skills), and creates the `~/.mira/` config directory.
+Detects your OS, downloads the binary, installs the Claude Code plugin (auto-configures all hooks and skills), and creates `~/.mira/`.
 
-Then configure providers (optional):
+Then optionally configure providers:
 ```bash
-mira setup
+mira setup          # interactive wizard with live validation + Ollama auto-detection
+mira setup --yes    # non-interactive (CI/scripted installs)
+mira setup --check  # read-only validation
 ```
-The setup wizard walks you through configuring API keys with live validation, auto-detects local Ollama instances and their models, and merges cleanly with any existing configuration. For CI or scripted installs, `mira setup --yes` runs non-interactively (auto-detects Ollama, skips API key prompts). Use `mira setup --check` for read-only validation of your current config.
-
-> **No API keys?** Mira's core features (memory, code intelligence, goal tracking) work without any keys. Search falls back to fuzzy/keyword matching and analysis uses heuristic parsers. Add keys later with `mira setup` for enhanced capabilities: OpenAI for semantic search, DeepSeek/Zhipu/Ollama for background intelligence.
 
 ### Manual Install
 
@@ -164,8 +183,6 @@ The plugin install auto-configures hooks. For MCP-only installs, add to `~/.clau
 }
 ```
 
-Hooks enable automatic context injection — relevant memories recalled on every prompt, file changes tracked, session continuity across restarts, permission auto-approval, and subagent context awareness.
-
 ### Add Mira Instructions to Your Project
 
 See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CLAUDE.md` layout that teaches Claude Code how to use Mira's tools effectively. The modular structure uses:
@@ -177,17 +194,6 @@ See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CL
 The **plugin** (quick install) provides the full experience — hooks and skills are auto-configured, context is injected automatically on every prompt.
 
 The **MCP server** (cargo install / build from source) provides the core tools. Add hooks manually (see above) for proactive features.
-
-## How It Works
-
-```
-Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
-    |                             |
-    +--MCP Sampling (host LLM)    +--->  OpenAI (embeddings)
-                                  +--->  DeepSeek / Zhipu / Ollama (background tasks)
-```
-
-All data stored locally in `~/.mira/`. No cloud storage, no external databases. Two SQLite databases: `mira.db` for memories, sessions, and goals; `mira-code.db` for the code index. Connection pooling via deadpool-sqlite with async access throughout.
 
 ## Slash Commands
 
@@ -204,6 +210,19 @@ All data stored locally in `~/.mira/`. No cloud storage, no external databases. 
 | `/mira:qa-hardening` | Production readiness review |
 | `/mira:refactor` | Safe code restructuring with validation |
 | `/mira:status` | Quick health check: index, storage, goals |
+
+## Capabilities at a Glance
+
+| Capability | Without API Keys | With API Keys |
+|-----------|-----------------|---------------|
+| Memory & recall | Keyword/fuzzy search | Semantic search (OpenAI embeddings) |
+| Code search | FTS5 + fuzzy matching | Hybrid semantic + keyword |
+| Code intelligence | Tree-sitter symbols, call graph | Same |
+| Diff analysis | Heuristic pattern detection | LLM-powered semantic classification |
+| Module summaries | File counts, symbol names | LLM-generated descriptions |
+| Background insights | Tool usage analysis, friction detection | LLM-powered pattern extraction |
+| Goal tracking | Full | Full |
+| Agent team coordination | Full | Full |
 
 ## Troubleshooting
 
