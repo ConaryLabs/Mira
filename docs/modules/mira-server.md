@@ -11,7 +11,7 @@ Mira is a Rust MCP server that gives Claude Code persistent memory, semantic cod
 
 The crate follows a layered design: protocol handling (`mcp/`), tool implementations (`tools/`), data persistence (`db/`), and intelligence features (`search/`, `context/`, `llm/`).
 
-**Entry point:** `main.rs` implements a CLI with subcommands: `serve` (default, MCP stdio), `tool` (single tool invocation), `index` (code indexing), `hook` (Claude Code lifecycle hooks), `debug-carto`/`debug-session` (diagnostics), `config`, `setup`, `status-line`.
+**Entry point:** `main.rs` implements a CLI with subcommands: `serve` (default, MCP stdio), `tool` (single tool invocation), `index` (code indexing), `hook` (Claude Code lifecycle hooks), `debug-carto`/`debug-session` (diagnostics), `config`, `setup`, `status-line`, `cleanup`.
 
 ## Modules
 
@@ -24,7 +24,7 @@ The crate follows a layered design: protocol handling (`mcp/`), tool implementat
 | `hooks` | Claude Code lifecycle hooks (session, prompt, tool events) |
 | `search` | Semantic, keyword, and cross-reference code search |
 | `context` | Proactive context injection with budget management |
-| `llm` | LLM provider abstraction (DeepSeek, Zhipu, Ollama, MCP Sampling) |
+| `llm` | LLM provider abstraction (DeepSeek, Ollama, MCP Sampling) |
 | `embeddings` | OpenAI embedding client for vector operations |
 | `indexer` | Code indexing and symbol extraction via tree-sitter |
 | `cartographer` | Codebase mapping and module detection |
@@ -38,6 +38,7 @@ The crate follows a layered design: protocol handling (`mcp/`), tool implementat
 | `utils` | Shared utilities (path handling, JSON parsing, truncation) |
 | `http` | HTTP client utilities |
 | `tasks` | Async task management |
+| `ipc` | Unix domain socket IPC for inter-process communication |
 | `project_files` | Project file discovery and filtering |
 
 ## Key Exports

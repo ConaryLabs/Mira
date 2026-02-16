@@ -15,6 +15,8 @@ Command-line interface using clap. Defines subcommands and dispatches to handler
 | `debug-carto` | Debug cartographer module detection |
 | `debug-session` | Debug session start output |
 | `statusline` | Output status line for shell prompt integration |
+| `cleanup` | Data retention cleanup with --execute, --yes, --category flags |
+| `config` | Show/set provider configuration |
 
 ### Setup Flags
 
@@ -34,6 +36,8 @@ Command-line interface using clap. Defines subcommands and dispatches to handler
 | `clients` | Client setup utilities |
 | `debug` | Debug subcommands |
 | `statusline` | Status line output for shell prompts |
+| `cleanup` | Data retention cleanup command |
+| `config` | Provider configuration management |
 
 ## Key Export
 

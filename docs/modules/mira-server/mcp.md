@@ -30,9 +30,13 @@ The central server state holding:
 - `llm_factory` -- LLM provider factory for background tasks
 - `project` -- Current project context (`Arc<RwLock<Option<ProjectContext>>>`)
 - `session_id` / `branch` -- Session tracking
+- `watcher` -- Optional file watcher handle for incremental indexing
 - `fuzzy_cache` -- Nucleo-based fuzzy fallback when embeddings unavailable
+- `fuzzy_enabled` -- Whether fuzzy search is enabled
 - `peer` -- MCP sampling peer for zero-key LLM fallback
+- `team_membership` -- Cached team membership info
 - `processor` -- Async long-running task processor
+- `completed_cache` -- Recently completed task results (`CachedTaskResult`)
 - `tool_router` -- Routes MCP tool calls to handlers
 
 ## Tool Registration

@@ -85,7 +85,7 @@ Query unified insights digest combining pondering analysis and documentation gap
 
 **Parameters:**
 - `action` (string, required) - `"insights"`
-- `insight_source` (string, optional) - Filter by source: `pondering`, `doc_gap`
+- `insight_source` (string, optional) - Filter by source: `pondering`, `proactive`, `doc_gap`
 - `min_confidence` (float, optional) - Minimum confidence threshold 0.0-1.0 (default: 0.5)
 - `since_days` (integer, optional) - Look back period in days (default: 30)
 - `limit` (integer, optional) - Max results (default: 20)

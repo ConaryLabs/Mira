@@ -1,8 +1,6 @@
 <!-- docs/tools/recipe.md -->
 # Recipe
 
-> **This entire tool is CLI-only.** All actions are available via `mira tool recipe '<json>'` but are not exposed as MCP tools.
-
 Get reusable team recipes for common workflows. Recipes define team blueprints for Claude Code Agent Teams, including member roles, prompts, tasks, and coordination instructions.
 
 Recipes are static data (not stored in the database). They provide structured blueprints that the team lead uses to spawn and coordinate Agent Teams.

@@ -81,18 +81,18 @@ Claude Code  <--stdio/MCP-->  Mira Server
                     +--------------+--------------+
                     |              |              |
                  SQLite      Background       LLM Providers
-              (sqlite-vec)     Worker        (DeepSeek, Zhipu, Ollama)
+              (sqlite-vec)     Worker        (DeepSeek, Ollama)
 ```
 
 Key components:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| MCP Server | `mcp/router.rs` | Tool router, stdio transport, outputSchema |
+| MCP Server | `mcp/mod.rs`, `mcp/router.rs` | Tool router, stdio transport, outputSchema |
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
-| LLM Factory | `llm/factory.rs` | DeepSeek, Zhipu, and Ollama providers |
+| LLM Factory | `llm/factory.rs` | DeepSeek and Ollama providers |
 | Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small) |
 | MCP Sampling | `llm/sampling.rs` | LLM consultation via host client (awaiting Claude Code support) |
 | Elicitation | `mcp/elicitation.rs` | Interactive API key setup flow |
@@ -194,13 +194,13 @@ during indexing.
 
 ### What We Chose
 
-Mira's intelligence features use a **Provider Factory** that supports DeepSeek,
-Zhipu, and Ollama for background tasks (summaries, briefings, pondering, code health).
+Mira's intelligence features use a **Provider Factory** that supports DeepSeek
+and Ollama for background tasks (summaries, briefings, pondering, code health).
 
 ### Why This Architecture
 
 **1) Different tasks benefit from different models**
-- Background intelligence → DeepSeek, Zhipu, or Ollama
+- Background intelligence → DeepSeek or Ollama
 - Embeddings → OpenAI text-embedding-3-small
 
 **2) Resilience and extensibility**
@@ -355,7 +355,7 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira exposes 6 MCP tools (consolidated from ~20 standalone tools in v0.4.x, then trimmed from 9 to 6 by moving infrequent actions to CLI-only).
+Mira exposes 8 MCP tools (consolidated from ~20 standalone tools in v0.4.x, then trimmed to 6 core tools, with `diff` and `recipe` later re-exposed on the MCP surface).
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
 The server implements MCP Elicitation (interactive setup) and MCP Tasks (async long-running operations).
 
@@ -407,6 +407,9 @@ Mira integrates with Claude Code via hooks that trigger at key moments:
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PreToolUse` | Injects context before tool execution (suggests semantic alternatives) |
 | `PermissionRequest` | Auto-approves tools based on stored permission rules |
+| `PostToolFailure` | Tracks tool failures, recalls memories after repeated failures |
+| `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |
+| `TeammateIdle` | Logs teammate idle events for team activity tracking |
 
 Hooks are auto-configured by the installer.
 
@@ -462,7 +465,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
 | Storage | SQLite local files | Horizontal scaling |
-| Intelligence | DeepSeek / Zhipu / Ollama | Full features need at least one provider |
+| Intelligence | DeepSeek / Ollama | Full features need at least one provider |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |
 | Data | Local-first | Built-in sync |
@@ -486,7 +489,7 @@ The following were previously planned and are now complete:
 - ✓ MCP Elicitation for interactive API key setup
 - ✓ MCP Tasks for async long-running operations
 - ✓ Structured JSON responses via outputSchema
-- ✓ Tool consolidation from ~20 to 9 action-based tools, then further trimmed to 6 MCP tools (project, memory, code, goal, index, session) with documentation, team, and recipe moved to CLI-only
+- ✓ Tool consolidation from ~20 to 9 action-based tools, then trimmed to 8 MCP tools (project, memory, code, goal, index, session, diff, recipe) with documentation and team moved to CLI-only
 - ✓ Change Intelligence (outcome tracking, pattern mining, predictive risk)
 - ✓ Entity layer for memory recall boost
 - ✓ Dependency graphs, architectural pattern detection, tech debt scoring

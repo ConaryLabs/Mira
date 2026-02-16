@@ -9,7 +9,7 @@ Wraps the OpenAI text-embedding-3-small API to produce 1536-dimensional float ve
 
 ## Key Types
 
-- `EmbeddingClient` -- Top-level facade; created via `from_config()` or `from_env()`
+- `EmbeddingClient` -- Top-level facade; created via `from_config()`, `from_env()`, `from_config_with_http_client()`, or `from_env_with_http_client()`
 - `OpenAiEmbeddings` -- Low-level OpenAI API client with retry, batching, and usage recording
 - `OpenAiEmbeddingModel` -- Enum of supported models (TextEmbedding3Small, TextEmbedding3Large)
 
@@ -18,6 +18,11 @@ Wraps the OpenAI text-embedding-3-small API to produce 1536-dimensional float ve
 - `embed(text)` -- Embed a single text string
 - `embed_batch(texts)` -- Batch embed up to 256 texts per request, with parallel chunking for larger sets
 - `dimensions()` -- Returns configured embedding dimensions (default: 1536)
+- `provider_id()` -- Returns provider identifier string
+- `model_name()` -- Returns model name
+- `set_project_id()` -- Set project context for usage tracking
+- `inner()` -- Access the underlying `OpenAiEmbeddings` client
+- `EMBEDDING_PROVIDER_KEY` -- Public constant for provider identification
 
 ## Sub-modules
 

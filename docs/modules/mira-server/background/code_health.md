@@ -11,8 +11,19 @@ Background worker for detecting code health issues. Combines concrete signal det
 
 ## Key Functions
 
-- `scan_project_health_full()` - Orchestrates full health scan
-- `needs_health_scan()` - Check if a rescan is needed
+### Background entry points (called by slow lane)
+
+- `process_health_fast_scans()` - Fast pattern-based detection pass
+- `process_health_llm_complexity()` - LLM-powered complexity analysis
+- `process_health_llm_error_quality()` - LLM-powered error handling quality analysis
+- `process_health_module_analysis()` - LLM-powered module-level analysis
+
+### On-demand (called by MCP tool)
+
+- `scan_project_health_full()` - Orchestrates full health scan for MCP tool use
+
+### Utilities
+
 - `mark_health_scan_needed_sync()` - Flag for rescan (triggered by file watcher)
 
 ## Sub-modules

@@ -10,19 +10,20 @@ Provides a unified interface for chat completion across multiple providers. Used
 ## Supported Providers
 
 - **DeepSeek** -- Primary provider for background LLM tasks (deepseek-reasoner)
-- **Zhipu** -- Alternative provider (GLM-5 via coding endpoint)
 - **Ollama** -- Local LLM via Ollama (no API key needed)
-- **MCP Sampling** -- Last-resort fallback routing through the host client (Claude Code)
+- **MCP Sampling** -- Fallback provider routing through the host client (Claude Code)
 
 ## Key Types
 
 | Type | Purpose |
 |------|---------|
-| `LlmClient` | Trait defining the unified provider interface (chat, stateful chat, context budget) |
+| `LlmClient` | Trait defining the unified provider interface (chat, stateful chat, context budget, supports_stateful, provider_type, model_name, normalize_usage) |
 | `Provider` | Enum of available providers with parsing, display, and metadata |
 | `ProviderFactory` | Creates and manages provider clients with fallback chains and circuit breaking |
 | `Message` | Chat message (role + content) |
 | `ChatResult` | LLM response with content, tool calls, usage stats |
+| `ToolCall` | Tool call request from LLM |
+| `FunctionDef` | Function definition for tool use |
 | `NormalizedUsage` | Standardized token usage across providers |
 | `PromptBuilder` | Fluent API for constructing message sequences |
 | `CircuitBreaker` | Tracks provider failures and temporarily disables unhealthy providers |
@@ -34,7 +35,6 @@ Provides a unified interface for chat completion across multiple providers. Used
 | `provider` | `LlmClient` trait and `Provider` enum |
 | `factory` | `ProviderFactory` for client instantiation with fallback and circuit breaking |
 | `deepseek` | DeepSeek API client |
-| `zhipu` | Zhipu GLM-5 API client |
 | `ollama` | Ollama API client (local LLM, OpenAI-compatible) |
 | `sampling` | MCP Sampling-based provider (routes through host client) |
 | `openai_compat` | Shared OpenAI-compatible request/response format |
@@ -48,4 +48,4 @@ Provides a unified interface for chat completion across multiple providers. Used
 
 ## Architecture Notes
 
-The `openai_compat` sub-module is a shared request/response format used internally by DeepSeek, Zhipu, and Ollama -- it is not a separately selectable provider. Provider selection follows a priority chain: configured background provider > default provider > fallback order (DeepSeek > Zhipu > Ollama). Config file (`~/.mira/config.toml`) takes precedence over the `DEFAULT_LLM_PROVIDER` env var.
+The `openai_compat` sub-module is a shared request/response format used internally by DeepSeek and Ollama -- it is not a separately selectable provider. Provider selection follows a priority chain: configured background provider > default provider > fallback order (DeepSeek > Ollama). Config file (`~/.mira/config.toml`) takes precedence over the `DEFAULT_LLM_PROVIDER` env var.

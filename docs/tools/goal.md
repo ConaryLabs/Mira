@@ -20,7 +20,7 @@ Manage goals and milestones. Goals persist across sessions for tracking multi-se
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | `create`, `bulk_create`, `list`, `get`, `update`, `delete`, `add_milestone`, `complete_milestone`, `delete_milestone`, or `progress` |
+| action | String | Yes | `create`, `bulk_create`, `list`, `get`, `update`, `delete`, `add_milestone`, `complete_milestone`, `delete_milestone`, `progress`, or `sessions` |
 | goal_id | Integer | Conditional | Goal ID (required for `get`, `update`, `delete`, `add_milestone`, `progress`) |
 | title | String | Conditional | Goal title (required for `create`) |
 | description | String | No | Goal description |
@@ -97,6 +97,13 @@ Automatically updates goal progress based on weighted milestones.
 
 ```json
 { "action": "progress", "goal_id": 1, "progress_percent": 75 }
+```
+
+### `sessions` — List sessions that worked on a goal
+
+```json
+{ "action": "sessions", "goal_id": 1 }
+{ "action": "sessions", "goal_id": 1, "limit": 5 }
 ```
 
 ## See Also

@@ -6,8 +6,10 @@ Tree-sitter based code parsing framework. Provides a unified interface for extra
 ## Key Types
 
 - `LanguageParser` - Trait defining the parser interface
-- `PARSERS` - Global registry of available parsers
+- `ParserRegistry` - Registry of available parsers (with `by_extension()`, `by_language()`, `all()` methods)
 - `Symbol` / `Import` / `FunctionCall` - Parsed code elements
+- `ParsedFile` - Parsed file result
+- `ParseResult` - Type alias for parsing results
 - `ParseContext` - Unified parsing context (replaces multiple parameters)
 - `SymbolBuilder` - Fluent API for constructing symbols
 - `NodeExt` - Extension trait for tree-sitter node helpers

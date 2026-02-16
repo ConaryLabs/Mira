@@ -20,17 +20,6 @@ Initialize a session with full project context. Detects project type, imports CL
 
 **Returns:** Project ID, name, type, codebase map, recent sessions, preferences, health alerts, pending documentation count, and database path.
 
-### set (CLI-only)
-
-Change the active project without full session initialization.
-
-**Parameters:**
-- `action` (string, required) - `"set"`
-- `project_path` (string, required) - Absolute path to the project root
-- `name` (string, optional) - Project name override
-
-**Returns:** Project ID and name.
-
 ### get
 
 Show the currently active project.
@@ -58,16 +47,12 @@ Show the currently active project.
 ```
 
 ```json
-{"action": "set", "project_path": "/home/user/other-project", "name": "Other"}
-```
-
-```json
 {"action": "get"}
 ```
 
 ## Errors
 
-- **"project_path is required"** - The `start` and `set` actions need a `project_path`.
+- **"project_path is required"** - The `start` action needs a `project_path`.
 - **"No active project"** - The `get` action returns this when no project is initialized.
 
 ## Notes
@@ -80,4 +65,4 @@ Show the currently active project.
 
 - [session](./session.md) - Session management and recap
 - [index](./index.md) - Codebase indexing (uses module summaries from project start)
-- [documentation](./documentation.md) - Documentation tasks scoped to project
+- [memory](./memory.md) - Memories scoped to project

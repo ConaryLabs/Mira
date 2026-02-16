@@ -32,6 +32,8 @@ The basic unit of storage is a `MemoryFact`. Each fact has:
 | `preference` | User preferences (e.g., "Use async-trait for traits") |
 | `decision` | Architectural or design decisions |
 | `context` | Background information about the project |
+| `pattern` | Recurring patterns observed in the codebase |
+| `persona` | User persona or role information |
 
 ### Evidence-Based Confidence
 
@@ -206,6 +208,9 @@ Mira integrates with Claude Code via **hooks** that trigger at key moments durin
 | **SubagentStart** | When subagent spawns | Injects relevant context for subagent tasks |
 | **SubagentStop** | When subagent completes | Captures discoveries from subagent work |
 | **PermissionRequest** | On permission check | Auto-approve tools based on stored rules |
+| **PostToolFailure** | After tool failure | Tracks failures, recalls relevant memories after repeated failures |
+| **TaskCompleted** | When task completes | Logs completions, auto-completes matching goal milestones |
+| **TeammateIdle** | When teammate goes idle | Logs idle events for team activity tracking |
 
 ### Auto-Configuration
 
@@ -282,6 +287,8 @@ Documentation is tracked against the code it describes:
 - **Source Signatures**: Hash of normalized signatures detects API changes
 
 ### Generation Workflow
+
+Documentation management is available via CLI (`mira tool documentation '<json>'`):
 
 ```
 documentation(action="list")               → See what needs documentation

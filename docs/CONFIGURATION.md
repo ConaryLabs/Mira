@@ -13,12 +13,12 @@ Mira uses environment variables for API keys and configuration. These are set in
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Optional | Powers summaries, pondering, background intelligence |
-| `ZHIPU_API_KEY` | Optional | Alternative provider: Zhipu GLM-5 |
 | `OLLAMA_HOST` | Optional | Ollama base URL for local LLM (default: `http://localhost:11434`) |
 | `OLLAMA_MODEL` | Optional | Ollama model to use (default: `llama3.3`) |
 | `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |
 | `BRAVE_API_KEY` | Optional | Enables web search |
-| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek`, `zhipu`, or `ollama` |
+| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `ollama` |
+| `MIRA_HOOK_LOG_LEVEL` | Optional | Log level for hook execution (default: warn) |
 | `MIRA_FUZZY_SEARCH` | Optional | Enable fuzzy search in hybrid search pipeline (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |
 | `MIRA_PROJECT_PATH` | Optional | Override project path detection (useful when Claude Code hooks are not present) |
@@ -162,6 +162,9 @@ The installer adds all hooks to `~/.claude/settings.json` using `jq` for JSON ma
 | `SubagentStart` | `mira hook subagent-start` | 3s | Inject context when subagents spawn |
 | `SubagentStop` | `mira hook subagent-stop` | 3s | Capture discoveries from subagent work |
 | `PermissionRequest` | `mira hook permission` | 3s | Auto-approve tools based on stored rules |
+| `PostToolFailure` | `mira hook post-tool-failure` | 3s | Track failures, recall memories after repeated failures |
+| `TaskCompleted` | `mira hook task-completed` | 3s | Log completions, auto-complete goal milestones |
+| `TeammateIdle` | `mira hook teammate-idle` | 3s | Log teammate idle events for team tracking |
 
 ### Manual Configuration
 
@@ -178,7 +181,11 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
     "PreCompact": [{"hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000, "async": true}]}],
     "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
     "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}]
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5000}]}],
+    "PostToolFailure": [{"hooks": [{"type": "command", "command": "mira hook post-tool-failure", "timeout": 3000}]}],
+    "TaskCompleted": [{"hooks": [{"type": "command", "command": "mira hook task-completed", "timeout": 3000, "async": true}]}],
+    "TeammateIdle": [{"hooks": [{"type": "command", "command": "mira hook teammate-idle", "timeout": 3000, "async": true}]}]
   }
 }
 ```
@@ -262,10 +269,9 @@ background_provider = "deepseek"
 | Provider | Config Value | API Key / Env Var | Default Model |
 |----------|--------------|-------------------|---------------|
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
-| Zhipu | `zhipu` | `ZHIPU_API_KEY` | `glm-5` |
 | Ollama | `ollama` | `OLLAMA_HOST` (URL, no key) | `llama3.3` |
 
-If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available. All three providers are included in the background task fallback chain.
+If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available.
 
 ---
 
@@ -307,7 +313,7 @@ The syntax is similar to `.gitignore`. Mira also respects `.gitignore` patterns.
 
 ### What It Does
 
-1. Prompts for LLM provider (DeepSeek or Zhipu) with live API key validation
+1. Prompts for LLM provider (DeepSeek) with live API key validation
 2. Prompts for embeddings provider (OpenAI) with validation
 3. Optionally configures Brave Search
 4. Auto-detects Ollama and lists available models for background tasks

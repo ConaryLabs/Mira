@@ -5,7 +5,7 @@ Nucleo-based fuzzy search for code chunks and memories.
 
 ## Overview
 
-Provides fuzzy matching as part of the hybrid search pipeline alongside semantic and keyword search. Loads code chunks and memory facts into an in-memory cache from the database, then uses the `nucleo` matcher library for fast fuzzy string matching. The cache refreshes on a TTL basis (60s for code, 30s for memories). Fuzzy search runs with a 500ms timeout to avoid blocking on cold cache refresh; the cache warms in the background.
+Provides fuzzy matching as part of the hybrid search pipeline alongside semantic and keyword search. Loads code chunks and memory facts into an in-memory cache from the database, then uses the `nucleo` matcher library for fast fuzzy string matching. The cache refreshes on a TTL basis (60s for code, 30s for memories). The cache warms in the background with mutex-guarded concurrent refresh protection.
 
 ## Key Types
 
@@ -15,9 +15,11 @@ Provides fuzzy matching as part of the hybrid search pipeline alongside semantic
 
 ## Key Functions
 
-- `search_code(code_pool, project_id, query, limit)` -- Fuzzy search across indexed code chunks
-- `search_memories(pool, project_id, user_id, team_id, query, limit)` -- Fuzzy search across stored memory facts with scope-aware visibility filtering
-- `invalidate_code(project_id)` / `invalidate_memory(project_id)` -- Force cache refresh on next access
+All search and invalidation functions are methods on `FuzzyCache`:
+
+- `FuzzyCache::search_code(&self, code_pool, project_id, query, limit)` -- Fuzzy search across indexed code chunks
+- `FuzzyCache::search_memories(&self, pool, project_id, user_id, team_id, query, limit)` -- Fuzzy search across stored memory facts with scope-aware visibility filtering
+- `FuzzyCache::invalidate_code(&self, project_id)` / `FuzzyCache::invalidate_memory(&self, project_id)` -- Force cache refresh on next access
 
 ## Architecture Notes
 

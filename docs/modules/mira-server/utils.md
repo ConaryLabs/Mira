@@ -20,3 +20,6 @@ Shared utility functions used across the codebase. Organized as a directory with
 | `truncate_at_boundary()` | Truncate a `&str` at a UTF-8 char boundary (zero-alloc) |
 | `sanitize_project_path()` | Replace path separators with `-` for directory names (cross-platform) |
 | `format_period()` | Format `Option<u32>` days into human-readable period string |
+| `safe_join()` | Path traversal prevention (rejects `..` components) |
+| `redact_sensitive()` | Credential redaction for logging |
+| `parse_json_hardened()` | Hardened JSON parsing (from `json` sub-module) |

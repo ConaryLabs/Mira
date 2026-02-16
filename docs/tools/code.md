@@ -5,7 +5,7 @@ Code intelligence: semantic search, call graph tracing, and static analysis.
 
 > **MCP actions:** `search`, `symbols`, `callers`, `callees`
 > Actions marked (CLI-only) below are available via `mira tool code '<json>'`.
-> **Note:** `diff` was extracted into a standalone MCP tool. See [diff](./analyze_diff.md).
+> **Note:** `diff` was extracted into a standalone MCP tool. See [diff](./diff.md).
 
 ## Actions
 
@@ -84,7 +84,7 @@ Compute per-module tech debt scores with tier rankings (A-F).
 
 ### diff (CLI-only, backward compat)
 
-> **Prefer the standalone `diff` tool.** See [diff](./analyze_diff.md).
+> **Prefer the standalone `diff` tool.** See [diff](./diff.md).
 > The CLI still accepts `mira tool code '{"action":"diff"}'` for backward compatibility.
 
 Analyze git changes semantically with impact and risk assessment.

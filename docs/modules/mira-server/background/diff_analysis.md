@@ -15,6 +15,17 @@ Analyzes git diffs between two refs (commits, branches, tags) to produce structu
 - `calculate_risk_level()` - Compute overall risk from flags and changes
 - `build_impact_graph()` - Trace affected callers through the call graph
 - `format_diff_analysis()` - Format analysis results for display
+- `compute_historical_risk()` - Compute risk from historical change patterns
+- `map_to_symbols()` - Map diff changes to known symbols
+
+### Re-exported from `crate::git`
+
+- `derive_stats_from_unified_diff`, `get_head_commit`, `get_staged_diff`, `get_unified_diff`, `get_working_diff`
+- `parse_diff_stats`, `parse_numstat_output`, `parse_staged_stats`, `parse_working_stats`, `resolve_ref`
+
+### Additional types (re-exported from `types`)
+
+- `DiffStats`, `HistoricalRisk`, `MatchedPattern`
 
 ## Sub-modules
 
