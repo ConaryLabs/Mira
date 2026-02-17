@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.2] - 2026-02-16
+
+### Added
+- **/mira:help skill** — Tiered command listing (getting started, daily use, power user) for discoverability.
+- **Recovery hints on errors** — ~32 user-facing error messages across goals, session, diff, tasks, documentation, usage, code search, and index tools now include actionable recovery hints.
+- **Compact status line on project start** — `project(action="start")` output now includes a one-line Mira status (memories, symbols, goals).
+- **Growth-strategist recipe role** — New expert-review and full-cycle recipe member focused on public-facing presentation, onboarding friction, naming/branding consistency, and feature discoverability.
+- **Welcome message on first session** — New users see a welcome message instead of silent `{}`.
+- **Doc gap insight dismissal** — `session(action="dismiss_insight")` now supports `insight_source="doc_gap"` to dismiss documentation gap insights. `insight_source` is now required for all dismissals to prevent cross-table ID collisions.
+
+### Fixed
+- **IPC module gated with `#[cfg(unix)]`** — Fixes Windows CI compilation.
+- **Install script hook sync** — `install.sh` now matches plugin `hooks.json` (3 missing hooks, matcher patterns, timeouts).
+- **File permissions hardening** — `.env.backup` chmod 600, `~/.mira` dir chmod 700.
+- **`home_dir` fallback** — Warns instead of silently using CWD when home directory is unavailable.
+- **Mira-wrapper version mismatch** — Pinned to 0.8.1 (was stale at 0.8.0) and fixed `stat` portability.
+- **Setup wizard** — Added DeepSeek to setup steps, reordered by impact.
+- **Clippy `doc_lazy_continuation` warnings** — Resolved across codebase.
+
+### Changed
+- **README rewrite** — Repositioned from "memory for Claude" to "intelligence layer" with before/after structure and upfront install command.
+- **26 stale docs fixed** — Agentic team audit across 56 doc files: recipe.md no longer falsely marked CLI-only, DESIGN.md updated to 8 MCP tools, Zhipu references removed, analyze_diff.md renamed to diff.md, missing hooks/functions/types added.
+- **First-run welcome simplified** — Single CTA instead of verbose output.
+- **Recipe tool description** — Updated for newcomer clarity.
+
+---
+
 ## [0.8.1] - 2026-02-16
 
 ### Changed
