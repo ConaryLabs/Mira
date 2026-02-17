@@ -41,7 +41,7 @@ pub async fn list_doc_tasks(
     if tasks.is_empty() {
         return Ok(Json(DocOutput {
             action: "list".into(),
-            message: "No documentation tasks found for this project.".into(),
+            message: "No documentation tasks found. Run documentation(action=\"scan\") to discover documentation.".into(),
             data: Some(DocData::List(DocListData {
                 tasks: vec![],
                 total: 0,
@@ -149,7 +149,10 @@ pub async fn get_doc_task_details(
         .pool()
         .run(move |conn| get_doc_task(conn, task_id))
         .await?
-        .ok_or(format!("Task '{}' not found", task_id))?;
+        .ok_or(format!(
+            "Task '{}' not found. Use documentation(action=\"list\") to see available tasks.",
+            task_id
+        ))?;
 
     // Verify task belongs to current project
     let task_project_id = task.project_id.ok_or("No project_id on task")?;
@@ -286,7 +289,10 @@ pub async fn complete_doc_task(
         .pool()
         .run(move |conn| get_doc_task(conn, task_id))
         .await?
-        .ok_or(format!("Task '{}' not found", task_id))?;
+        .ok_or(format!(
+            "Task '{}' not found. Use documentation(action=\"list\") to see available tasks.",
+            task_id
+        ))?;
 
     // Verify task belongs to current project
     if task.project_id != Some(current_project_id) {
@@ -329,7 +335,10 @@ pub async fn skip_doc_task(
         .pool()
         .run(move |conn| get_doc_task(conn, task_id))
         .await?
-        .ok_or(format!("Task '{}' not found", task_id))?;
+        .ok_or(format!(
+            "Task '{}' not found. Use documentation(action=\"list\") to see available tasks.",
+            task_id
+        ))?;
 
     if task.project_id != Some(current_project_id) {
         return Err(format!("Task {} belongs to a different project.", task_id));
@@ -380,7 +389,7 @@ pub async fn batch_skip_doc_tasks(
                 .pool()
                 .run(move |conn| get_doc_task(conn, id))
                 .await?
-                .ok_or(format!("Task '{}' not found", id))?;
+                .ok_or(format!("Task '{}' not found. Use documentation(action=\"list\") to see available tasks.", id))?;
             tasks.push(task);
         }
         tasks

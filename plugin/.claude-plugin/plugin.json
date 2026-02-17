@@ -15,6 +15,7 @@
   "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
   "skills": [
+    "./skills/help",
     "./skills/goals",
     "./skills/recap",
     "./skills/search",

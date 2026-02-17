@@ -374,7 +374,7 @@ pub(crate) async fn build_startup_context(
         if previous_session.is_none() {
             // First-ever session for this user — show a welcome message
             return Some(
-                "[Mira] Ready! Try /mira:status (health check), /mira:recap (session context), or memory(action=\"remember\", content=\"...\") to store your first decision.".to_string()
+                "[Mira] Welcome! Mira is now tracking this project. Try session(action=\"recap\") for context, or memory(action=\"remember\", content=\"...\") to store your first decision.".to_string()
             );
         }
         return None;

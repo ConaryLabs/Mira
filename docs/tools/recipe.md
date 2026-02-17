@@ -30,12 +30,12 @@ Get full recipe details including member prompts, task definitions, and coordina
 
 ### expert-review
 
-Multi-expert code review with 6 roles: architect, code-reviewer, security, scope-analyst, ux-strategist, and plan-reviewer. All experts run in parallel, explore the codebase read-only, and report findings to the team lead.
+Multi-expert code review with 7 roles: architect, code-reviewer, security, scope-analyst, ux-strategist, growth-strategist, and plan-reviewer. All experts run in parallel, explore the codebase read-only, and report findings to the team lead.
 
 ### full-cycle
 
-End-to-end review, implementation, and QA cycle with 8 members across 5 phases:
-1. Discovery -- 6 experts analyze the codebase in parallel
+End-to-end review, implementation, and QA cycle with 9 members across 5 phases:
+1. Discovery -- 7 experts analyze the codebase in parallel
 2. Synthesis -- Team lead synthesizes findings
 3. Implementation -- Spawns implementation agents
 4. QA -- test-runner and ux-reviewer verify changes

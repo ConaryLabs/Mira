@@ -180,7 +180,10 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
     // Try to find the requested task in freshly completed results
     if let Some(idx) = position {
         let Some(task_result) = freshly_completed.into_iter().nth(idx) else {
-            return Err(format!("Task '{}' not found", task_id));
+            return Err(format!(
+                "Task '{}' not found. Use session(action=\"tasks_list\") to see available tasks.",
+                task_id
+            ));
         };
 
         let (status, result_text, result_structured) = extract_full_result(&task_result);
@@ -221,7 +224,10 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
         }));
     }
 
-    Err(format!("Task '{}' not found", task_id))
+    Err(format!(
+        "Task '{}' not found. Use session(action=\"tasks_list\") to see available tasks.",
+        task_id
+    ))
 }
 
 /// Extract just the text portion of a completed result (for caching).
@@ -292,6 +298,9 @@ async fn handle_cancel(server: &MiraServer, task_id: &str) -> Result<Json<TasksO
             data: None,
         }))
     } else {
-        Err(format!("Task '{}' not found or already completed", task_id))
+        Err(format!(
+            "Task '{}' not found or already completed. Use session(action=\"tasks_list\") to see current tasks.",
+            task_id
+        ))
     }
 }

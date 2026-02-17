@@ -58,7 +58,7 @@ pub async fn usage_stats<C: ToolContext>(
         .await?;
 
     if stats.is_empty() {
-        return Ok("No usage data found".to_string());
+        return Ok("No usage data found. Usage data is recorded after MCP tool calls. Try using some tools first.".to_string());
     }
 
     let period = format_period(since_days);
@@ -114,7 +114,7 @@ pub async fn usage_list<C: ToolContext>(
         .await?;
 
     if stats.is_empty() {
-        return Ok("No usage data found".to_string());
+        return Ok("No usage data found. Usage data is recorded after MCP tool calls. Try using some tools first.".to_string());
     }
 
     let period = format_period(since_days);

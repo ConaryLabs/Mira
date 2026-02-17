@@ -312,7 +312,10 @@ pub async fn list_diff_analyses<C: ToolContext>(
     if analyses.is_empty() {
         return Ok(Json(DiffOutput {
             action: "list".into(),
-            message: format!("{}No diff analyses found.", context_header),
+            message: format!(
+                "{}No diff analyses found. Run diff(from_ref=\"...\", to_ref=\"...\") to analyze changes first.",
+                context_header
+            ),
             data: None,
         }));
     }

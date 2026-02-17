@@ -376,7 +376,7 @@ async fn dismiss_insight<C: ToolContext>(
         .pool()
         .run(move |conn| {
             dismiss_insight_sync(conn, project_id, id, Some(&source_clone))
-                .map_err(|e| format!("Failed to dismiss insight: {}", e))
+                .map_err(|e| format!("Failed to dismiss insight: {}. Verify insight_id and insight_source (\"pondering\" or \"doc_gap\") with session(action=\"insights\").", e))
         })
         .await?;
 
@@ -384,7 +384,7 @@ async fn dismiss_insight<C: ToolContext>(
         format!("Insight {} ({}) dismissed.", id, source)
     } else {
         format!(
-            "Insight {} ({}) not found or already dismissed.",
+            "Insight {} ({}) not found or already dismissed. Use session(action=\"insights\") to see active insights.",
             id, source
         )
     };

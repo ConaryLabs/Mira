@@ -55,7 +55,12 @@ async fn get_authorized_goal<C: ToolContext>(ctx: &C, id: i64) -> Result<crate::
         .pool()
         .run(move |conn| get_goal_by_id_sync(conn, id))
         .await?
-        .ok_or_else(|| format!("Goal not found (id: {})", id))?;
+        .ok_or_else(|| {
+            format!(
+                "Goal not found (id: {}). Use goal(action=\"list\") to see available goals.",
+                id
+            )
+        })?;
 
     let ctx_project_id = ctx.project_id().await;
     verify_goal_project(goal.project_id, ctx_project_id)?;
@@ -72,7 +77,7 @@ async fn verify_milestone_project<C: ToolContext>(
         .pool()
         .run(move |conn| get_milestone_by_id_sync(conn, milestone_id))
         .await?
-        .ok_or_else(|| format!("Milestone not found (id: {})", milestone_id))?;
+        .ok_or_else(|| format!("Milestone not found (id: {}). Use goal(action=\"get\", goal_id=N) to see milestones for a goal.", milestone_id))?;
 
     let goal_id = milestone
         .goal_id
@@ -82,7 +87,12 @@ async fn verify_milestone_project<C: ToolContext>(
         .pool()
         .run(move |conn| get_goal_by_id_sync(conn, goal_id))
         .await?
-        .ok_or_else(|| format!("Goal not found (id: {})", goal_id))?;
+        .ok_or_else(|| {
+            format!(
+                "Goal not found (id: {}). Use goal(action=\"list\") to see available goals.",
+                goal_id
+            )
+        })?;
 
     let ctx_project_id = ctx.project_id().await;
     verify_goal_project(goal.project_id, ctx_project_id)?;
@@ -239,7 +249,7 @@ async fn action_create<C: ToolContext>(
             )
         })
         .await
-        .map_err(|e| format!("Failed to create goal: {}", e))?;
+        .map_err(|e| format!("Failed to create goal: {}. Check database connectivity.", e))?;
 
     // Record session-goal link
     record_goal_interaction(ctx, id, "created").await;
@@ -353,7 +363,7 @@ async fn action_list<C: ToolContext>(
             .pool()
             .run(move |conn| get_goals_sync(conn, project_id, None))
             .await
-            .map_err(|e| format!("Failed to list goals: {}", e))?;
+            .map_err(|e| format!("Failed to list goals: {}. Try again or check /mira:status for database health.", e))?;
         if limit_usize > 0 {
             all.truncate(limit_usize);
         }
@@ -362,7 +372,7 @@ async fn action_list<C: ToolContext>(
         ctx.pool()
             .run(move |conn| get_active_goals_sync(conn, project_id, limit_usize))
             .await
-            .map_err(|e| format!("Failed to list active goals: {}", e))?
+            .map_err(|e| format!("Failed to list active goals: {}. Try again or check /mira:status for database health.", e))?
     };
 
     if goals.is_empty() {
@@ -653,13 +663,18 @@ async fn action_sessions<C: ToolContext>(
         .pool()
         .run(move |conn| get_sessions_for_goal_sync(conn, goal_id, lim))
         .await
-        .map_err(|e| format!("Failed to get sessions for goal: {}", e))?;
+        .map_err(|e| format!("Failed to get sessions for goal: {}. Verify the goal_id exists with goal(action=\"list\").", e))?;
 
     let total = ctx
         .pool()
         .run(move |conn| count_sessions_for_goal_sync(conn, goal_id))
         .await
-        .map_err(|e| format!("Failed to count sessions: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to count sessions: {}. Try again or check /mira:status.",
+                e
+            )
+        })?;
 
     let mut response = format!("Goal {} — {} distinct session(s):\n", goal_id, total);
     let entries: Vec<GoalSessionEntry> = links

@@ -444,6 +444,10 @@ pub async fn session_start<C: ToolContext>(
     let recent_session_data = load_recent_sessions(ctx, project_id, &sid).await?;
     if !recent_session_data.is_empty() {
         response.push_str(&format_recent_sessions(&recent_session_data));
+    } else {
+        response.push_str(
+            "\nFirst session for this project. Tip: use session(action=\"recap\") for context, or memory(action=\"remember\", content=\"...\") to store a decision.\n",
+        );
     }
 
     let (preferences, memories, health_alerts, doc_task_counts, pending_interventions) =
@@ -507,6 +511,51 @@ pub async fn session_start<C: ToolContext>(
     if let Some(db_path) = ctx.pool().path() {
         response.push_str(&format!("\nDatabase: {}\n", db_path.display()));
     }
+
+    // Status line: memory count, symbol count, active goal count
+    let memory_count: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?",
+                rusqlite::params![project_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or(0);
+
+    let symbol_count: i64 = ctx
+        .code_pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM code_symbols WHERE project_id = ?",
+                rusqlite::params![project_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or(0);
+
+    let goal_count: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM goals WHERE project_id = ? AND status NOT IN ('completed', 'abandoned')",
+                rusqlite::params![project_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or(0);
+
+    response.push_str(&format!(
+        "\nMira: {} memories | {} symbols indexed | {} active goals\n",
+        memory_count, symbol_count, goal_count
+    ));
 
     response.push_str("\nReady.");
     Ok(Json(ProjectOutput {

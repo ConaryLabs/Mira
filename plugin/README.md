@@ -1,6 +1,6 @@
-# Mira Plugin for Claude Code
+# Mira — The Intelligence Layer for Claude Code
 
-Semantic memory and code intelligence for Claude Code. Provides persistent memory across sessions, goal tracking, and proactive context injection.
+Claude Code is powerful but amnesiac. Mira gives it persistent memory, semantic code understanding, and background intelligence — all running locally.
 
 ## Features
 
@@ -66,6 +66,7 @@ claude --plugin-dir /path/to/Mira/plugin
 
 | Skill | Description |
 |-------|-------------|
+| `/mira:help` | List all available commands |
 | `/mira:search <query>` | Semantic code search |
 | `/mira:recap` | Get session recap |
 | `/mira:goals [command]` | Manage goals and milestones |

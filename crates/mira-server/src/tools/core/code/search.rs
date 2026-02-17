@@ -35,7 +35,7 @@ pub async fn search_code<C: ToolContext>(
         .code_pool()
         .run(move |conn| Ok::<_, String>(crossref_search(conn, &query_clone, project_id, limit)))
         .await
-        .map_err(|e| format!("Failed to search code cross-references: {}", e))?;
+        .map_err(|e| format!("Failed to search code cross-references: {}. Try re-indexing with index(action=\"project\").", e))?;
 
     if let Some((target, ref_type, results)) = crossref_result {
         let direction = match ref_type {
@@ -73,7 +73,10 @@ pub async fn search_code<C: ToolContext>(
     if result.results.is_empty() {
         return Ok(Json(CodeOutput {
             action: "search".into(),
-            message: format!("{}No code matches found.", context_header),
+            message: format!(
+                "{}No code matches found. Ensure the project is indexed with index(action=\"project\").",
+                context_header
+            ),
             data: Some(CodeData::Search(SearchResultsData {
                 results: vec![],
                 search_type: result.search_type.to_string(),
@@ -117,7 +120,7 @@ pub async fn search_code<C: ToolContext>(
                 .collect())
         })
         .await
-        .map_err(|e| format!("Failed to expand code search results: {}", e))?;
+        .map_err(|e| format!("Failed to expand code search results: {}. Try re-indexing with index(action=\"project\").", e))?;
 
     let items: Vec<CodeSearchResult> = expanded_results
         .iter()
@@ -182,7 +185,7 @@ pub async fn find_function_callers<C: ToolContext>(
         return Ok(Json(CodeOutput {
             action: "callers".into(),
             message: format!(
-                "{}No callers found for `{}`.",
+                "{}No callers found for `{}`. The function may have no callers, or try re-indexing with index(action=\"project\").",
                 context_header, function_name
             ),
             data: Some(CodeData::CallGraph(CallGraphData {
@@ -237,7 +240,7 @@ pub async fn find_function_callees<C: ToolContext>(
         return Ok(Json(CodeOutput {
             action: "callees".into(),
             message: format!(
-                "{}No callees found for `{}`.",
+                "{}No callees found for `{}`. The function may have no callees, or try re-indexing with index(action=\"project\").",
                 context_header, function_name
             ),
             data: Some(CodeData::CallGraph(CallGraphData {
@@ -281,14 +284,17 @@ pub fn get_symbols(
     #[cfg(not(feature = "parsers"))]
     {
         let _ = (file_path, symbol_type);
-        return Err("Symbol extraction requires the 'parsers' feature".to_string());
+        return Err("Symbol extraction requires the 'parsers' feature. Reinstall with: cargo install --git https://github.com/ConaryLabs/Mira.git --features parsers".to_string());
     }
     #[cfg(feature = "parsers")]
     {
         let path = Path::new(&file_path);
 
         if !path.exists() {
-            return Err(format!("File not found: {}", file_path));
+            return Err(format!(
+                "File not found: {}. Check the path exists and is within the project directory.",
+                file_path
+            ));
         }
 
         // Parse file for symbols
@@ -297,7 +303,7 @@ pub fn get_symbols(
         if symbols.is_empty() {
             return Ok(Json(CodeOutput {
                 action: "symbols".into(),
-                message: "No symbols found.".to_string(),
+                message: "No symbols found. The file may not contain recognizable definitions, or the language may not be supported.".to_string(),
                 data: Some(CodeData::Symbols(SymbolsData {
                     symbols: vec![],
                     total: 0,

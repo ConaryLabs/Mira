@@ -41,7 +41,10 @@ pub async fn index<C: ToolContext>(
 
                 let path = Path::new(&project_path);
                 if !path.exists() {
-                    return Err(format!("Path not found: {}", project_path));
+                    return Err(format!(
+                        "Path not found: {}. Ensure project_path is an absolute path to an existing directory.",
+                        project_path
+                    ));
                 }
 
                 // Index code (skip embeddings if requested for faster indexing)
@@ -199,7 +202,7 @@ async fn auto_summarize_modules(
     let result = llm_client
         .chat(messages, None)
         .await
-        .map_err(|e| format!("LLM request failed: {}", e))?;
+        .map_err(|e| format!("LLM request failed: {}. Check API key configuration in ~/.mira/.env or run mira setup.", e))?;
 
     // Record usage (main DB)
     record_llm_usage(
@@ -218,7 +221,7 @@ async fn auto_summarize_modules(
     // Parse and update (code DB)
     let summaries = cartographer::parse_summary_response(&content);
     if summaries.is_empty() {
-        return Err("Failed to parse summaries".to_string());
+        return Err("Failed to parse summaries. The LLM response was malformed. Try re-indexing or check LLM provider configuration.".to_string());
     }
 
     let updated = code_pool
@@ -276,7 +279,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
         let result = llm_client
             .chat(messages, None)
             .await
-            .map_err(|e| format!("LLM request failed: {}", e))?;
+            .map_err(|e| format!("LLM request failed: {}. Check API key configuration in ~/.mira/.env or run mira setup.", e))?;
 
         record_llm_usage(
             ctx.pool(),
@@ -293,7 +296,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
         let parsed = cartographer::parse_summary_response(&content);
         if parsed.is_empty() {
             return Err(format!(
-                "Failed to parse summaries from LLM response:\n{}",
+                "Failed to parse summaries from LLM response. The LLM response was malformed. Try re-indexing or check LLM provider configuration.\n{}",
                 content
             ));
         }
