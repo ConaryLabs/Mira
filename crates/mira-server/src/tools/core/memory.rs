@@ -1,9 +1,12 @@
-//! Unified memory tools (recall, remember, forget)
+// crates/mira-server/src/tools/core/memory.rs
+//! Unified memory tools (recall, remember, forget, list)
 
 use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::error::MiraError;
 use crate::mcp::responses::Json;
-use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
+use crate::mcp::responses::{
+    ListData, ListMemoryItem, MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData,
+};
 use crate::search::embedding_to_bytes;
 use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::truncate;
@@ -272,6 +275,9 @@ pub async fn handle_memory<C: ToolContext>(
                 MiraError::InvalidInput("query is required for memory(action=recall)".to_string())
             })?;
             recall(ctx, query, req.limit, req.category, req.fact_type).await
+        }
+        MemoryAction::List => {
+            list_memories(ctx, req.limit, req.offset, req.category, req.fact_type).await
         }
         MemoryAction::Forget => {
             let id = req.id.ok_or_else(|| {
@@ -726,6 +732,129 @@ pub async fn recall<C: ToolContext>(
         &session_id,
         ctx.pool(),
     ))
+}
+
+/// List all memories for the current project with pagination and optional filtering
+pub async fn list_memories<C: ToolContext>(
+    ctx: &C,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    category: Option<String>,
+    fact_type: Option<String>,
+) -> Result<Json<MemoryOutput>, MiraError> {
+    let project_id = ctx.project_id().await;
+    let user_id = ctx.get_user_identity();
+    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
+
+    let limit = (limit.unwrap_or(20).clamp(1, 100)) as usize;
+    let offset = (offset.unwrap_or(0).max(0)) as usize;
+
+    let cat = category.clone();
+    let ft = fact_type.clone();
+    let uid = user_id.clone();
+
+    let (rows, total): (Vec<ListMemoryItem>, usize) = ctx
+        .pool()
+        .run(move |conn| {
+            // Count total matching rows
+            let total: usize = conn.query_row(
+                "SELECT COUNT(*) FROM memory_facts
+                 WHERE project_id IS ?1
+                   AND COALESCE(suspicious, 0) = 0
+                   AND COALESCE(status, 'active') != 'archived'
+                   AND (
+                     COALESCE(scope, 'project') = 'project'
+                     OR (scope = 'personal' AND COALESCE(user_id, '') = COALESCE(?2, ''))
+                     OR (scope = 'team' AND COALESCE(team_id, 0) = COALESCE(?3, 0))
+                   )
+                   AND (?4 IS NULL OR category = ?4)
+                   AND (?5 IS NULL OR fact_type = ?5)",
+                rusqlite::params![project_id, uid.as_deref(), team_id, cat, ft],
+                |row| row.get::<_, usize>(0),
+            )?;
+
+            // Fetch paginated results
+            let mut stmt = conn.prepare(
+                "SELECT id, content, fact_type, category,
+                        COALESCE(scope, 'project') as scope, key, created_at
+                 FROM memory_facts
+                 WHERE project_id IS ?1
+                   AND COALESCE(suspicious, 0) = 0
+                   AND COALESCE(status, 'active') != 'archived'
+                   AND (
+                     COALESCE(scope, 'project') = 'project'
+                     OR (scope = 'personal' AND COALESCE(user_id, '') = COALESCE(?2, ''))
+                     OR (scope = 'team' AND COALESCE(team_id, 0) = COALESCE(?3, 0))
+                   )
+                   AND (?4 IS NULL OR category = ?4)
+                   AND (?5 IS NULL OR fact_type = ?5)
+                 ORDER BY created_at DESC
+                 LIMIT ?6 OFFSET ?7",
+            )?;
+
+            let rows = stmt
+                .query_map(
+                    rusqlite::params![project_id, uid.as_deref(), team_id, cat, ft, limit, offset],
+                    |row| {
+                        Ok(ListMemoryItem {
+                            id: row.get(0)?,
+                            content: row.get(1)?,
+                            fact_type: row.get(2)?,
+                            category: row.get(3)?,
+                            scope: row.get(4)?,
+                            key: row.get(5)?,
+                            created_at: row.get(6)?,
+                        })
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok::<(Vec<ListMemoryItem>, usize), rusqlite::Error>((rows, total))
+        })
+        .await?;
+
+    let shown = rows.len();
+    let has_more = offset + shown < total;
+
+    let mut response = format!(
+        "Found {} memories (showing {}-{}):\n",
+        total,
+        offset + 1,
+        offset + shown
+    );
+    for item in &rows {
+        let preview = truncate(&item.content, 80);
+        let cat_tag = item
+            .category
+            .as_ref()
+            .map(|c| format!(" [{}]", c))
+            .unwrap_or_default();
+        response.push_str(&format!(
+            "  [{}] ({}){} {}\n",
+            item.id,
+            item.fact_type.as_deref().unwrap_or("general"),
+            cat_tag,
+            preview
+        ));
+    }
+    if has_more {
+        response.push_str(&format!(
+            "\n{} more -- use offset={} to see next page",
+            total - offset - shown,
+            offset + shown
+        ));
+    }
+
+    Ok(Json(MemoryOutput {
+        action: "list".into(),
+        message: response,
+        data: Some(MemoryData::List(ListData {
+            memories: rows,
+            total,
+            offset,
+            has_more,
+        })),
+    }))
 }
 
 /// Verify the caller has access to a memory based on scope rules.

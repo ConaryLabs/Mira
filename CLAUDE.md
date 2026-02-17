@@ -99,6 +99,7 @@ See `.env.example` for all options.
 | `/mira:full-cycle` | End-to-end expert review with implementation and QA |
 | `/mira:qa-hardening` | Production readiness review and hardening backlog |
 | `/mira:refactor` | Safe code restructuring with architect + reviewer validation |
+| `/mira:help` | Show all available Mira commands and tools |
 | `/mira:status` | Quick health check: index stats, storage, active goals |
 
 ## Hook Integration

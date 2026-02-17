@@ -14,6 +14,8 @@ pub enum CodeData {
     Dependencies(DependenciesData),
     Patterns(PatternsData),
     TechDebt(TechDebtData),
+    DeadCode(DeadCodeData),
+    Conventions(ConventionsData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -131,4 +133,29 @@ pub struct TechDebtTier {
     pub tier: String,
     pub label: String,
     pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DeadCodeData {
+    pub unreferenced: Vec<UnreferencedSymbol>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UnreferencedSymbol {
+    pub name: String,
+    pub symbol_type: String,
+    pub file_path: String,
+    pub start_line: i64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ConventionsData {
+    pub module_id: String,
+    pub module_name: String,
+    pub error_handling: Option<String>,
+    pub test_pattern: Option<String>,
+    pub naming: Option<String>,
+    pub key_imports: Option<String>,
+    pub detected_patterns: Option<String>,
 }

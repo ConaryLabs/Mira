@@ -1,4 +1,4 @@
-// tools/core/usage.rs
+// crates/mira-server/src/tools/core/usage.rs
 // LLM usage analytics tool
 
 use super::ToolContext;
@@ -10,11 +10,9 @@ use crate::utils::{format_period, truncate};
 pub async fn usage_summary<C: ToolContext>(
     ctx: &C,
     since_days: Option<u32>,
-    limit: Option<i64>,
 ) -> Result<String, MiraError> {
     let project_id = ctx.project_id().await;
     let since_days = since_days.or(Some(30));
-    let _ = limit; // unused for summary but kept for consistent API
 
     let stats = ctx
         .pool()
@@ -48,23 +46,24 @@ pub async fn usage_stats<C: ToolContext>(
 ) -> Result<String, MiraError> {
     let project_id = ctx.project_id().await;
     let since_days = since_days.or(Some(30));
-    let _ = limit; // unused for stats but kept for consistent API
+    let limit = limit.unwrap_or(50).max(0) as usize;
 
     let group_by = group_by.unwrap_or_else(|| "role".to_string());
     let group_by_clone = group_by.clone();
 
-    let stats = ctx
+    let all_stats = ctx
         .pool()
         .run(move |conn| query_llm_usage_stats(conn, &group_by_clone, project_id, since_days))
         .await?;
 
-    if stats.is_empty() {
+    if all_stats.is_empty() {
         return Ok("No usage data found. Usage data is recorded after MCP tool calls. Try using some tools first.".to_string());
     }
 
+    let stats: Vec<_> = all_stats.into_iter().take(limit).collect();
     let period = format_period(since_days);
 
-    let mut output = format!("LLM Usage by {} ({})\n\n", group_by, period);
+    let mut output = format!("LLM Usage by {} ({}, limit {})\n\n", group_by, period, limit);
     output.push_str(&format!(
         "{:<30} {:>8} {:>12} {:>10}\n",
         group_by.to_uppercase(),

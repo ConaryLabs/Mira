@@ -107,6 +107,8 @@ pub enum MemoryAction {
     Remember,
     /// Search memories using semantic similarity
     Recall,
+    /// List all memories with pagination
+    List,
     /// Delete a memory by ID
     Forget,
     /// Archive a memory (exclude from auto-export, keep for history)
@@ -117,7 +119,9 @@ pub enum MemoryAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MemoryRequest {
-    #[schemars(description = "Action: remember, recall, forget, archive, export_claude_local")]
+    #[schemars(
+        description = "Action: remember, recall, list, forget, archive, export_claude_local"
+    )]
     pub action: MemoryAction,
     #[schemars(description = "Content to remember (required for remember)")]
     pub content: Option<String>,
@@ -139,6 +143,8 @@ pub struct MemoryRequest {
     pub scope: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+    #[schemars(description = "Number of results to skip (for pagination)")]
+    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -160,12 +166,16 @@ pub enum CodeAction {
     TechDebt,
     /// Analyze git diff semantically (change types, impact, risks)
     Diff,
+    /// Find unreferenced symbols (dead code candidates)
+    DeadCode,
+    /// Show detected conventions for a module
+    Conventions,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CodeRequest {
     #[schemars(
-        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff"
+        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff, dead_code, conventions"
     )]
     pub action: CodeAction,
     #[schemars(description = "Search query (required for search)")]
@@ -265,12 +275,14 @@ pub enum SessionAction {
     StorageStatus,
     /// Run data cleanup (dry_run by default)
     Cleanup,
+    /// Show learned error patterns and fixes
+    ErrorPatterns,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview)"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes)"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]
@@ -411,6 +423,8 @@ pub enum McpMemoryAction {
     Remember,
     /// Search memories using semantic similarity
     Recall,
+    /// List all memories with pagination
+    List,
     /// Delete a memory by ID
     Forget,
     /// Archive a memory (exclude from auto-export, keep for history)
@@ -422,6 +436,7 @@ impl From<McpMemoryAction> for MemoryAction {
         match a {
             McpMemoryAction::Remember => MemoryAction::Remember,
             McpMemoryAction::Recall => MemoryAction::Recall,
+            McpMemoryAction::List => MemoryAction::List,
             McpMemoryAction::Forget => MemoryAction::Forget,
             McpMemoryAction::Archive => MemoryAction::Archive,
         }
@@ -430,7 +445,7 @@ impl From<McpMemoryAction> for MemoryAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpMemoryRequest {
-    #[schemars(description = "Action: remember, recall, forget, archive")]
+    #[schemars(description = "Action: remember, recall, list, forget, archive")]
     pub action: McpMemoryAction,
     #[schemars(description = "Content to remember (required for remember)")]
     pub content: Option<String>,
@@ -452,6 +467,8 @@ pub struct McpMemoryRequest {
     pub scope: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+    #[schemars(description = "Number of results to skip (for pagination)")]
+    pub offset: Option<i64>,
 }
 
 impl From<McpMemoryRequest> for MemoryRequest {
@@ -467,6 +484,7 @@ impl From<McpMemoryRequest> for MemoryRequest {
             confidence: r.confidence,
             scope: r.scope,
             limit: r.limit,
+            offset: r.offset,
         }
     }
 }
@@ -776,6 +794,24 @@ mod tests {
     }
 
     #[test]
+    fn code_action_rejects_dead_code() {
+        let result = serde_json::from_value::<McpCodeAction>(json!("dead_code"));
+        assert!(
+            result.is_err(),
+            "McpCodeAction should reject 'dead_code'"
+        );
+    }
+
+    #[test]
+    fn code_action_rejects_conventions() {
+        let result = serde_json::from_value::<McpCodeAction>(json!("conventions"));
+        assert!(
+            result.is_err(),
+            "McpCodeAction should reject 'conventions'"
+        );
+    }
+
+    #[test]
     fn index_action_rejects_compact() {
         let result = serde_json::from_value::<McpIndexAction>(json!("compact"));
         assert!(result.is_err(), "McpIndexAction should reject 'compact'");
@@ -844,6 +880,15 @@ mod tests {
         assert!(result.is_err(), "McpSessionAction should reject 'cleanup'");
     }
 
+    #[test]
+    fn session_action_rejects_error_patterns() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("error_patterns"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'error_patterns'"
+        );
+    }
+
     // ── From<McpSessionRequest> for SessionRequest ───────────────────
 
     #[test]
@@ -890,6 +935,7 @@ mod tests {
             confidence: Some(0.95),
             scope: Some("project".into()),
             limit: Some(25),
+            offset: Some(10),
         };
 
         let full: MemoryRequest = mcp.into();
@@ -904,6 +950,13 @@ mod tests {
         assert_eq!(full.confidence, Some(0.95));
         assert_eq!(full.scope.as_deref(), Some("project"));
         assert_eq!(full.limit, Some(25));
+        assert_eq!(full.offset, Some(10));
+    }
+
+    #[test]
+    fn memory_action_list() {
+        let a: McpMemoryAction = serde_json::from_value(json!("list")).unwrap();
+        assert!(matches!(a, McpMemoryAction::List));
     }
 
     // ── From<McpCodeRequest> for CodeRequest ─────────────────────────

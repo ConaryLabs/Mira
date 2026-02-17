@@ -5,14 +5,16 @@ use crate::config::file::{MiraConfig, RetentionConfig};
 use crate::db::retention::{cleanup_orphans, count_retention_candidates, run_data_retention_sync};
 use crate::db::{
     build_session_recap_sync, compute_age_days, create_session_ext_sync, dismiss_insight_sync,
-    get_recent_sessions_sync, get_session_history_sync, get_unified_insights_sync,
+    get_error_patterns_sync, get_recent_sessions_sync, get_session_history_sync,
+    get_unified_insights_sync,
 };
 use crate::error::MiraError;
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    HistoryEntry, InsightItem, InsightsData, SessionCurrentData, SessionData, SessionHistoryData,
-    SessionListData, SessionOutput, SessionSummary,
+    ErrorPatternItem, ErrorPatternsData, HistoryEntry, InsightItem, InsightsData,
+    SessionCurrentData, SessionData, SessionHistoryData, SessionListData, SessionOutput,
+    SessionSummary,
 };
 use crate::tools::core::session_notes;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
@@ -44,7 +46,7 @@ pub async fn handle_session<C: ToolContext>(
             }))
         }
         SessionAction::UsageSummary => {
-            let message = super::usage_summary(ctx, req.since_days, req.limit).await?;
+            let message = super::usage_summary(ctx, req.since_days).await?;
             Ok(Json(SessionOutput {
                 action: "usage_summary".into(),
                 message,
@@ -82,6 +84,7 @@ pub async fn handle_session<C: ToolContext>(
         }
         SessionAction::StorageStatus => storage_status(ctx).await,
         SessionAction::Cleanup => cleanup(ctx, req.dry_run, req.category).await,
+        SessionAction::ErrorPatterns => get_error_patterns(ctx, req.limit).await,
         SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
             // Tasks actions need MiraServer directly, not ToolContext
             // This branch is unreachable in MCP (router intercepts) but needed for CLI
@@ -988,6 +991,68 @@ async fn cleanup<C: ToolContext>(
             data: None,
         }))
     }
+}
+
+/// Query error patterns for the active project.
+async fn get_error_patterns<C: ToolContext>(
+    ctx: &C,
+    limit: Option<i64>,
+) -> Result<Json<SessionOutput>, MiraError> {
+    let project = ctx.get_project().await;
+    let project_id = project
+        .as_ref()
+        .map(|p| p.id)
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+
+    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+
+    let rows = ctx
+        .pool()
+        .run(move |conn| Ok::<_, String>(get_error_patterns_sync(conn, project_id, limit)))
+        .await?;
+
+    if rows.is_empty() {
+        return Ok(Json(SessionOutput {
+            action: "error_patterns".into(),
+            message: "No error patterns recorded yet.".to_string(),
+            data: Some(SessionData::ErrorPatterns(ErrorPatternsData {
+                patterns: vec![],
+                total: 0,
+            })),
+        }));
+    }
+
+    let total = rows.len();
+    let mut output = format!("Learned error patterns ({} total):\n\n", total);
+    let items: Vec<ErrorPatternItem> = rows
+        .into_iter()
+        .map(|row| {
+            output.push_str(&format!(
+                "  [{}] (seen {}x) {}\n",
+                row.tool_name, row.occurrence_count, row.error_fingerprint
+            ));
+            if let Some(ref fix) = row.fix_description {
+                output.push_str(&format!("    Fix: {}\n", fix));
+            }
+            output.push('\n');
+            ErrorPatternItem {
+                tool_name: row.tool_name,
+                error_fingerprint: row.error_fingerprint,
+                fix_description: row.fix_description,
+                occurrence_count: row.occurrence_count,
+                last_seen: row.last_seen,
+            }
+        })
+        .collect();
+
+    Ok(Json(SessionOutput {
+        action: "error_patterns".into(),
+        message: output,
+        data: Some(SessionData::ErrorPatterns(ErrorPatternsData {
+            patterns: items,
+            total,
+        })),
+    }))
 }
 
 /// Format an insight timestamp as a human-readable age suffix.

@@ -209,6 +209,7 @@ The **MCP server** (cargo install / build from source) provides the core tools. 
 | `/mira:full-cycle` | End-to-end review, implementation, and QA |
 | `/mira:qa-hardening` | Production readiness review |
 | `/mira:refactor` | Safe code restructuring with validation |
+| `/mira:help` | Show all available Mira commands and tools |
 | `/mira:status` | Quick health check: index, storage, goals |
 
 ## Capabilities at a Glance

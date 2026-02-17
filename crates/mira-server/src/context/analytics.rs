@@ -174,13 +174,6 @@ impl InjectionAnalytics {
         )
     }
 
-    /// Mark that injected context was useful (e.g., user acted on it)
-    /// This can be used for learning which contexts are valuable
-    pub async fn mark_useful(&self, session_id: &str) {
-        // For now, just log - future: update weights for injection strategies
-        tracing::debug!("Context injection marked useful for session {}", session_id);
-    }
-
     /// Get recent events for debugging
     pub async fn recent_events(&self, limit: usize) -> Vec<InjectionEvent> {
         let events = self.events.lock().await;

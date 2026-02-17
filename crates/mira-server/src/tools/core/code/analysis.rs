@@ -1,11 +1,14 @@
 // crates/mira-server/src/tools/core/code/analysis.rs
 // Dependencies, patterns, and tech debt analysis
 
+use rusqlite::OptionalExtension;
+
 use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    CodeData, CodeOutput, DebtFactor, DependenciesData, DependencyEdge, ModulePatterns,
-    PatternEntry, PatternsData, TechDebtData, TechDebtModule, TechDebtTier,
+    CodeData, CodeOutput, ConventionsData, DeadCodeData, DebtFactor, DependenciesData,
+    DependencyEdge, ModulePatterns, PatternEntry, PatternsData, TechDebtData, TechDebtModule,
+    TechDebtTier, UnreferencedSymbol,
 };
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 
@@ -349,4 +352,186 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
             total,
         })),
     }))
+}
+
+/// Find unreferenced symbols (dead code candidates)
+pub async fn get_dead_code<C: ToolContext>(
+    ctx: &C,
+    limit: Option<i64>,
+) -> Result<Json<CodeOutput>, MiraError> {
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+
+    let limit = limit.unwrap_or(50).min(200) as usize;
+
+    let symbols = ctx
+        .code_pool()
+        .run(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT s.name, s.symbol_type, s.file_path, s.start_line
+                 FROM code_symbols s
+                 WHERE s.project_id = ?1
+                   AND s.symbol_type IN ('function', 'method')
+                   AND s.name NOT IN ('main', 'new', 'default', 'from', 'into', 'drop', 'fmt', 'clone', 'eq', 'hash', 'deref')
+                   AND NOT EXISTS (
+                     SELECT 1 FROM call_graph cg
+                     WHERE cg.callee = s.name AND cg.project_id = ?1
+                   )
+                 ORDER BY s.file_path, s.start_line
+                 LIMIT ?2",
+            )?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![project_id, limit], |row| {
+                    Ok(UnreferencedSymbol {
+                        name: row.get(0)?,
+                        symbol_type: row.get(1)?,
+                        file_path: row.get(2)?,
+                        start_line: row.get(3)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok::<_, MiraError>(rows)
+        })
+        .await?;
+
+    if symbols.is_empty() {
+        let message =
+            maybe_queue_health_scan(ctx, project_id, "unreferenced symbols (dead code)").await;
+        return Ok(Json(CodeOutput {
+            action: "dead_code".into(),
+            message,
+            data: Some(CodeData::DeadCode(DeadCodeData {
+                unreferenced: vec![],
+                total: 0,
+            })),
+        }));
+    }
+
+    let mut response = format!(
+        "Dead code candidates ({} unreferenced symbols):\n\n",
+        symbols.len()
+    );
+
+    for sym in &symbols {
+        response.push_str(&format!(
+            "  {} [{}] {}:{}\n",
+            sym.name, sym.symbol_type, sym.file_path, sym.start_line,
+        ));
+    }
+
+    if symbols.len() == limit {
+        response.push_str(&format!(
+            "\n(Showing first {} results -- increase limit for more)\n",
+            limit
+        ));
+    }
+
+    let total = symbols.len();
+    Ok(Json(CodeOutput {
+        action: "dead_code".into(),
+        message: response,
+        data: Some(CodeData::DeadCode(DeadCodeData {
+            unreferenced: symbols,
+            total,
+        })),
+    }))
+}
+
+/// Show detected conventions for the module containing a file
+pub async fn get_conventions<C: ToolContext>(
+    ctx: &C,
+    file_path: String,
+) -> Result<Json<CodeOutput>, MiraError> {
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+
+    let fp = file_path.clone();
+    let result = ctx
+        .code_pool()
+        .run(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT cm.module_id, m.name, cm.error_handling, cm.test_pattern,
+                        cm.naming, cm.key_imports, cm.detected_patterns
+                 FROM module_conventions cm
+                 JOIN codebase_modules m ON cm.module_id = m.module_id AND cm.project_id = m.project_id
+                 WHERE cm.project_id = ?1
+                   AND ?2 LIKE m.module_id || '%'
+                 ORDER BY LENGTH(m.module_id) DESC
+                 LIMIT 1",
+            )?;
+
+            let row = stmt
+                .query_row(rusqlite::params![project_id, fp], |row| {
+                    Ok(ConventionsData {
+                        module_id: row.get(0)?,
+                        module_name: row.get(1)?,
+                        error_handling: row.get(2)?,
+                        test_pattern: row.get(3)?,
+                        naming: row.get(4)?,
+                        key_imports: row.get(5)?,
+                        detected_patterns: row.get(6)?,
+                    })
+                })
+                .optional()?;
+
+            Ok::<_, MiraError>(row)
+        })
+        .await?;
+
+    match result {
+        Some(conv) => {
+            let mut response = format!(
+                "Conventions for module {} ({}):\n\n",
+                conv.module_id, conv.module_name
+            );
+
+            if let Some(ref eh) = conv.error_handling {
+                response.push_str(&format!("  Error handling: {}\n", eh));
+            }
+            if let Some(ref tp) = conv.test_pattern {
+                response.push_str(&format!("  Test pattern: {}\n", tp));
+            }
+            if let Some(ref n) = conv.naming {
+                response.push_str(&format!("  Naming: {}\n", n));
+            }
+            if let Some(ref ki) = conv.key_imports {
+                response.push_str(&format!("  Key imports: {}\n", ki));
+            }
+            if let Some(ref dp) = conv.detected_patterns {
+                response.push_str(&format!("  Detected patterns: {}\n", dp));
+            }
+
+            Ok(Json(CodeOutput {
+                action: "conventions".into(),
+                message: response,
+                data: Some(CodeData::Conventions(conv)),
+            }))
+        }
+        None => {
+            let message =
+                maybe_queue_health_scan(ctx, project_id, "module conventions").await;
+            Ok(Json(CodeOutput {
+                action: "conventions".into(),
+                message: format!(
+                    "No conventions found for file '{}'. {}",
+                    file_path, message
+                ),
+                data: Some(CodeData::Conventions(ConventionsData {
+                    module_id: String::new(),
+                    module_name: String::new(),
+                    error_handling: None,
+                    test_pattern: None,
+                    naming: None,
+                    key_imports: None,
+                    detected_patterns: None,
+                })),
+            }))
+        }
+    }
 }

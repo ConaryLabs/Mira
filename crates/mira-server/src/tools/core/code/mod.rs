@@ -135,5 +135,14 @@ pub async fn handle_code<C: ToolContext>(
                     .to_string(),
             ))
         }
+        CodeAction::DeadCode => get_dead_code(ctx, req.limit).await,
+        CodeAction::Conventions => {
+            let file_path = req.file_path.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "file_path is required for code(action=conventions)".to_string(),
+                )
+            })?;
+            get_conventions(ctx, file_path).await
+        }
     }
 }

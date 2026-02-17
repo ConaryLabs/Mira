@@ -87,3 +87,4 @@ Get expert opinions on code, architecture, security, or plans using a team of AI
 | scope-analyst | Missing requirements, edge cases |
 | ux-strategist | UX, developer experience, API ergonomics |
 | plan-reviewer | Plan completeness, risks, gaps |
+| growth-strategist | Growth opportunities, adoption, market positioning |

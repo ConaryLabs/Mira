@@ -12,6 +12,7 @@ pub enum SessionData {
     ListSessions(SessionListData),
     History(SessionHistoryData),
     Insights(InsightsData),
+    ErrorPatterns(ErrorPatternsData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -81,4 +82,20 @@ pub struct InsightItem {
     /// Dashboard category for grouping
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ErrorPatternsData {
+    pub patterns: Vec<ErrorPatternItem>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ErrorPatternItem {
+    pub tool_name: String,
+    pub error_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_description: Option<String>,
+    pub occurrence_count: i64,
+    pub last_seen: String,
 }

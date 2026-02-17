@@ -140,6 +140,44 @@ pub fn get_unresolved_patterns_for_tool_sync(
     .unwrap_or_default()
 }
 
+/// Row returned by `get_error_patterns_sync`.
+pub struct ErrorPatternRow {
+    pub tool_name: String,
+    pub error_fingerprint: String,
+    pub fix_description: Option<String>,
+    pub occurrence_count: i64,
+    pub last_seen: String,
+}
+
+/// List error patterns for a project, ordered by occurrence count descending.
+pub fn get_error_patterns_sync(
+    conn: &Connection,
+    project_id: i64,
+    limit: usize,
+) -> Vec<ErrorPatternRow> {
+    let mut stmt = match conn.prepare(
+        "SELECT tool_name, error_fingerprint, fix_description, occurrence_count, updated_at
+         FROM error_patterns
+         WHERE project_id = ?1
+         ORDER BY occurrence_count DESC
+         LIMIT ?2",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map(params![project_id, limit as i64], |row| {
+        Ok(ErrorPatternRow {
+            tool_name: row.get(0)?,
+            error_fingerprint: row.get(1)?,
+            fix_description: row.get(2)?,
+            occurrence_count: row.get(3)?,
+            last_seen: row.get(4)?,
+        })
+    })
+    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default()
+}
+
 /// Generate a fingerprint for an error message by normalizing dynamic content.
 ///
 /// Strips: absolute paths, line:col numbers, UUIDs/hex hashes, long quoted strings, timestamps.
