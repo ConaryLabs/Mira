@@ -187,7 +187,25 @@ pub async fn run_mcp_server() -> Result<()> {
     let env_config = ctx.env_config;
 
     if let Some(ref emb) = server.embeddings {
-        info!("Semantic search enabled (OpenAI embeddings)");
+        info!(
+            provider = emb.provider_id(),
+            model = %emb.model_name(),
+            dims = emb.dimensions(),
+            "Semantic search enabled"
+        );
+
+        // Ensure vec_memory dimensions match the active provider
+        let dims = emb.dimensions();
+        let dim_pool = pool.clone();
+        if let Err(e) = dim_pool
+            .interact(move |conn| {
+                mira::db::ensure_vec_table_dimensions(conn, dims)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            warn!("Failed to ensure vec_memory dimensions: {}", e);
+        }
 
         // Check for embedding provider change and invalidate stale vectors
         let provider_id = emb.provider_id().to_string();
@@ -202,7 +220,7 @@ pub async fn run_mcp_server() -> Result<()> {
             warn!("Failed to check embedding provider change: {}", e);
         }
     } else {
-        info!("Semantic search disabled (no OPENAI_API_KEY)");
+        info!("Semantic search disabled (no OPENAI_API_KEY or OLLAMA_HOST)");
     }
 
     // Initialize LLM provider factory from centralized config

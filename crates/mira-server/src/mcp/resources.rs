@@ -155,8 +155,9 @@ impl MiraServer {
         })
     }
 
-    /// Read a single goal with its milestones as JSON.
+    /// Read a single goal with its milestones as JSON (scoped to active project).
     async fn read_goal_detail(&self, id: i64) -> Result<ReadResourceResult, rmcp::ErrorData> {
+        let project_id = self.project.read().await.as_ref().map(|p| p.id);
         let pool = self.pool.clone();
 
         let result = pool
@@ -166,6 +167,12 @@ impl MiraServer {
                     Some(g) => g,
                     None => return Ok(None),
                 };
+
+                // Scope check: goal must belong to the active project
+                if goal.project_id != project_id {
+                    return Ok(None);
+                }
+
                 let milestones = crate::db::get_milestones_for_goal_sync(conn, id)
                     .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -217,9 +224,21 @@ impl MiraServer {
         })
     }
 
-    /// Read recent memories as JSON.
+    /// Read recent memories as JSON (scoped to active project, project-scope only).
     async fn read_recent_memories(&self) -> Result<ReadResourceResult, rmcp::ErrorData> {
         let project_id = self.project.read().await.as_ref().map(|p| p.id);
+
+        let Some(pid) = project_id else {
+            // No active project — return empty to avoid cross-project data leak
+            return Ok(ReadResourceResult {
+                contents: vec![ResourceContents::TextResourceContents {
+                    uri: "mira://memories/recent".into(),
+                    mime_type: Some("application/json".into()),
+                    text: "[]".into(),
+                    meta: None,
+                }],
+            });
+        };
 
         let memories = self
             .pool
@@ -227,13 +246,14 @@ impl MiraServer {
                 let sql = "SELECT id, content, fact_type, category, confidence, \
                            created_at, status, scope
                     FROM memory_facts
-                    WHERE (?1 IS NULL OR project_id = ?1 OR project_id IS NULL)
+                    WHERE project_id = ?1
+                      AND scope = 'project'
                       AND status != 'archived'
                       AND COALESCE(suspicious, 0) = 0
                     ORDER BY updated_at DESC, id DESC
                     LIMIT 20";
                 let mut stmt = conn.prepare(sql)?;
-                let rows = stmt.query_map(rusqlite::params![project_id], |row| {
+                let rows = stmt.query_map(rusqlite::params![pid], |row| {
                     Ok(serde_json::json!({
                         "id": row.get::<_, i64>(0)?,
                         "content": row.get::<_, String>(1)?,
