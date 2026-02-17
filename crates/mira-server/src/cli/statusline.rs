@@ -249,49 +249,47 @@ pub fn run() -> Result<()> {
         .map(|c| query_pending(c, project_id))
         .unwrap_or(0);
 
-    // Build output: Mira project: Name · background: deepseek-reasoner · 3 goals · ...
+    // Build output: Mira Name · ⚡model · 🎯 goals · 💡 insights · ...
     let mut parts = Vec::new();
 
-    // 1. Stable context
+    // 1. Project name (no label)
     if !project_name.is_empty() {
-        parts.push(format!("{DIM}project:{RESET} {project_name}"));
+        parts.push(project_name.clone());
     }
 
     // 2. LLM model info
     if let Some((_provider, model)) = get_llm_info() {
-        parts.push(format!("{DIM}background:{RESET} {DIM}{model}{RESET}"));
+        parts.push(format!("⚡{DIM}{model}{RESET}"));
     }
 
     // 3. Active workload
     if goals > 0 {
-        parts.push(format!("{GREEN}{goals}{RESET} goals"));
+        parts.push(format!("🎯 {GREEN}{goals}{RESET} goals"));
     }
 
     // 4. Actionable items
     if total_insights > 0 {
         if new_insights > 0 {
             parts.push(format!(
-                "{MAGENTA}{total_insights}\u{00a0}insights{RESET} ({MAGENTA}{new_insights}\u{00a0}new{RESET})"
+                "💡 {MAGENTA}{total_insights}\u{00a0}insights{RESET} ({MAGENTA}{new_insights}\u{00a0}new{RESET})"
             ));
         } else {
-            parts.push(format!("{DIM}{total_insights}\u{00a0}insights{RESET}"));
+            parts.push(format!("💡 {DIM}{total_insights}\u{00a0}insights{RESET}"));
         }
     }
 
     if stale_docs > 0 {
-        parts.push(format!(
-            "{YELLOW}{stale_docs} stale docs{RESET} {DIM}(/mira:insights){RESET}"
-        ));
+        parts.push(format!("📝 {YELLOW}{stale_docs} stale docs{RESET}"));
     }
 
-    // 6. Alerts
+    // 5. Alerts
     if bg_stalled {
-        parts.push(format!("{YELLOW}background processing stopped{RESET}"));
+        parts.push(format!("⚠️  {YELLOW}bg stopped{RESET}"));
     }
 
-    // 7. Transient activity
+    // 6. Transient activity
     if pending > 0 {
-        parts.push(format!("{YELLOW}indexing ({pending} pending){RESET}"));
+        parts.push(format!("⏳ {YELLOW}{pending} pending{RESET}"));
     }
 
     let joined = parts.join(DOT);
