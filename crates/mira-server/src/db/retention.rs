@@ -1,11 +1,10 @@
 //! Data retention — periodic cleanup for unbounded tables.
 //!
 //! Retention policy (configurable via `[retention]` in config.toml):
-//! - tool_history_days (default 30): tool_history, chat_messages, chat_summaries,
+//! - tool_history_days (default 30): tool_history,
 //!   session_behavior_log, proactive_interventions, injection_feedback, proactive_suggestions
-//! - chat_days (default 30): chat_messages, chat_summaries
 //! - sessions_days (default 90): sessions (completed only), session_snapshots, session_tasks,
-//!   session_task_iterations, session_goals
+//!   session_goals
 //! - analytics_days (default 180): llm_usage, embeddings_usage
 //! - behavior_days (default 365): behavior_patterns (non-insight)
 //! - observations_days (default 90): system_observations
@@ -31,12 +30,6 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
         // ── Children of sessions (must delete before sessions) ──
         RetentionRule {
             table: "session_snapshots",
-            time_column: "created_at",
-            days: config.sessions_days,
-            extra_filter: "",
-        },
-        RetentionRule {
-            table: "session_task_iterations",
             time_column: "created_at",
             days: config.sessions_days,
             extra_filter: "",
@@ -70,19 +63,6 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             table: "diff_analyses",
             time_column: "created_at",
             days: config.tool_history_days,
-            extra_filter: "",
-        },
-        // ── Chat ──
-        RetentionRule {
-            table: "chat_messages",
-            time_column: "created_at",
-            days: config.chat_days,
-            extra_filter: "",
-        },
-        RetentionRule {
-            table: "chat_summaries",
-            time_column: "created_at",
-            days: config.chat_days,
             extra_filter: "",
         },
         // ── Tool-history-cadence tables ──
@@ -156,13 +136,6 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             table: "health_snapshots",
             time_column: "snapshot_at",
             days: config.observations_days,
-            extra_filter: "",
-        },
-        // ── Short-lived operational data (hardcoded 7 days) ──
-        RetentionRule {
-            table: "background_batches",
-            time_column: "created_at",
-            days: 7,
             extra_filter: "",
         },
     ]
@@ -249,11 +222,6 @@ pub fn cleanup_orphans(conn: &Connection) -> Result<usize, String> {
         conn,
         "DELETE FROM tool_history WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)",
     );
-    // session_task_iterations without parent session
-    total += try_execute(
-        conn,
-        "DELETE FROM session_task_iterations WHERE session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)",
-    );
     // session_goals without parent session
     total += try_execute(
         conn,
@@ -330,57 +298,12 @@ mod tests {
             CREATE TABLE vec_memory (fact_id INTEGER);
             CREATE TABLE session_snapshots (id INTEGER PRIMARY KEY, session_id TEXT);
             CREATE TABLE tool_history (id INTEGER PRIMARY KEY, session_id TEXT, created_at TEXT);
-            CREATE TABLE session_task_iterations (
-                id INTEGER PRIMARY KEY, project_id INTEGER, session_id TEXT,
-                iteration INTEGER, tasks_completed INTEGER, tasks_remaining INTEGER,
-                summary TEXT, created_at TEXT
-            );
             CREATE TABLE memory_entities (id INTEGER PRIMARY KEY);
             CREATE TABLE memory_entity_links (entity_id INTEGER);
             ",
         )
         .unwrap();
         conn
-    }
-
-    #[test]
-    fn test_cleanup_orphans_session_task_iterations() {
-        let conn = setup_orphan_test_db();
-
-        // Insert a valid session
-        conn.execute("INSERT INTO sessions (id) VALUES ('s1')", [])
-            .unwrap();
-
-        // Insert iteration linked to valid session — should survive
-        conn.execute(
-            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, 's1', 1)",
-            [],
-        )
-        .unwrap();
-
-        // Insert iteration linked to non-existent session — should be cleaned
-        conn.execute(
-            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, 'gone', 2)",
-            [],
-        )
-        .unwrap();
-
-        // Insert iteration with NULL session_id — should survive (NULL is allowed)
-        conn.execute(
-            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, NULL, 3)",
-            [],
-        )
-        .unwrap();
-
-        let cleaned = cleanup_orphans(&conn).unwrap();
-        assert_eq!(cleaned, 1, "should clean exactly the orphaned iteration");
-
-        let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM session_task_iterations", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(remaining, 2, "valid + NULL session rows should remain");
     }
 
     #[test]
@@ -397,11 +320,6 @@ mod tests {
         .unwrap();
         conn.execute(
             "INSERT INTO tool_history (session_id, created_at) VALUES ('s1', datetime('now'))",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO session_task_iterations (project_id, session_id, iteration) VALUES (1, 's1', 1)",
             [],
         )
         .unwrap();

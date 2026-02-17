@@ -206,6 +206,126 @@ pub fn query_llm_usage_stats(
     Ok(stats)
 }
 
+// ============================================================================
+// Embedding Usage Statistics Queries
+// ============================================================================
+
+/// Embedding usage statistics grouped by a dimension
+#[derive(Debug, Clone)]
+pub struct EmbeddingUsageStats {
+    pub group_key: String,
+    pub total_requests: u64,
+    pub total_tokens: u64,
+    pub total_texts: u64,
+    pub total_cost: f64,
+}
+
+/// Query embedding usage stats grouped by a dimension
+pub fn query_embedding_usage_stats(
+    conn: &Connection,
+    group_by: &str,
+    project_id: Option<i64>,
+    since_days: Option<u32>,
+) -> Result<Vec<EmbeddingUsageStats>> {
+    let group_column = match group_by {
+        "provider" => "provider",
+        "model" => "model",
+        "provider_model" => "provider || '/' || model",
+        _ => "provider",
+    };
+
+    let mut sql = format!(
+        "SELECT
+            {group_column} as group_key,
+            COUNT(*) as total_requests,
+            COALESCE(SUM(tokens), 0) as total_tokens,
+            COALESCE(SUM(text_count), 0) as total_texts,
+            COALESCE(SUM(cost_estimate), 0) as total_cost
+        FROM embeddings_usage
+        WHERE 1=1"
+    );
+
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(pid) = project_id {
+        sql.push_str(" AND project_id = ?");
+        params_vec.push(Box::new(pid));
+    }
+
+    if let Some(days) = since_days {
+        sql.push_str(" AND created_at >= datetime('now', ? || ' days')");
+        params_vec.push(Box::new(-(days as i32)));
+    }
+
+    sql.push_str(&format!(
+        " GROUP BY {group_column} ORDER BY total_cost DESC"
+    ));
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
+        Ok(EmbeddingUsageStats {
+            group_key: row.get(0)?,
+            total_requests: row.get::<_, i64>(1)? as u64,
+            total_tokens: row.get::<_, i64>(2)? as u64,
+            total_texts: row.get::<_, i64>(3)? as u64,
+            total_cost: row.get(4)?,
+        })
+    })?;
+
+    let mut stats = Vec::new();
+    for row in rows {
+        stats.push(row?);
+    }
+    Ok(stats)
+}
+
+/// Get total embedding usage summary
+pub fn get_embedding_usage_summary(
+    conn: &Connection,
+    project_id: Option<i64>,
+    since_days: Option<u32>,
+) -> Result<EmbeddingUsageStats> {
+    let mut sql = String::from(
+        "SELECT
+            'total' as group_key,
+            COUNT(*) as total_requests,
+            COALESCE(SUM(tokens), 0) as total_tokens,
+            COALESCE(SUM(text_count), 0) as total_texts,
+            COALESCE(SUM(cost_estimate), 0) as total_cost
+        FROM embeddings_usage
+        WHERE 1=1",
+    );
+
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(pid) = project_id {
+        sql.push_str(" AND project_id = ?");
+        params_vec.push(Box::new(pid));
+    }
+
+    if let Some(days) = since_days {
+        sql.push_str(" AND created_at >= datetime('now', ? || ' days')");
+        params_vec.push(Box::new(-(days as i32)));
+    }
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let stats = stmt.query_row(params_refs.as_slice(), |row| {
+        Ok(EmbeddingUsageStats {
+            group_key: row.get(0)?,
+            total_requests: row.get::<_, i64>(1)? as u64,
+            total_tokens: row.get::<_, i64>(2)? as u64,
+            total_texts: row.get::<_, i64>(3)? as u64,
+            total_cost: row.get(4)?,
+        })
+    })?;
+
+    Ok(stats)
+}
+
 /// Get total LLM usage summary
 pub fn get_llm_usage_summary(
     conn: &Connection,

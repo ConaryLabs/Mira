@@ -36,7 +36,7 @@ pub(crate) async fn log_behavior(
     .await;
 }
 
-/// Get proactive context from pondering-based insights
+/// Get proactive context from pondering-based insights and pre-generated suggestions
 pub(crate) async fn get_proactive_context(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -45,8 +45,7 @@ pub(crate) async fn get_proactive_context(
 ) -> Option<String> {
     let session_id_owned = session_id.map(|s| s.to_string());
     pool.interact(move |conn| {
-        let config =
-            crate::proactive::get_proactive_config(conn, None, project_id).unwrap_or_default();
+        let config = crate::proactive::get_proactive_config(conn, None, project_id);
 
         if !config.enabled {
             return Ok::<Option<String>, anyhow::Error>(None);
@@ -69,6 +68,29 @@ pub(crate) async fn get_proactive_context(
                 session_id_owned.as_deref(),
                 intervention,
             );
+        }
+
+        // Pre-generated proactive suggestions (from background pattern mining / LLM)
+        // Budget: surface up to 2 suggestions if we have room (max 4 total proactive lines)
+        let suggestion_budget = 4_usize.saturating_sub(context_lines.len()).min(2);
+        if suggestion_budget > 0 {
+            // Use empty trigger_key for general/session-level suggestions
+            if let Ok(suggestions) =
+                crate::proactive::background::get_pre_generated_suggestions(conn, project_id, "")
+            {
+                for (text, confidence) in suggestions.iter().take(suggestion_budget) {
+                    context_lines.push(format!(
+                        "[Mira/suggestion] ({:.0}%) {}",
+                        confidence * 100.0,
+                        text
+                    ));
+                }
+                // Mark shown for feedback tracking
+                if !suggestions.is_empty() {
+                    let _ =
+                        crate::proactive::background::mark_suggestion_shown(conn, project_id, "");
+                }
+            }
         }
 
         if context_lines.is_empty() {

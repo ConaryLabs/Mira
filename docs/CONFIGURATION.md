@@ -236,29 +236,7 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 
 **PermissionRequest**
 - Fires when Claude Code asks the user to approve a tool invocation
-- Checks the `permission_rules` table in `~/.mira/mira.db` for a matching rule
-- If a rule matches, auto-approves the tool without prompting the user
-
-#### Permission Rule Mechanics
-
-Rules are stored in the `permission_rules` SQLite table (`~/.mira/mira.db`). There is currently no CLI or MCP tool for managing rules — they must be added via direct SQLite manipulation:
-
-```sql
--- Example: auto-approve all Read tool calls
-INSERT INTO permission_rules (tool_name, pattern, match_type)
-VALUES ('Read', '*', 'glob');
-```
-
-**Schema:** `id`, `tool_name`, `pattern`, `match_type` (default `'prefix'`), `scope` (default `'global'`), `created_at`.
-
-**Match types:**
-- `exact` — pattern must match the tool input exactly
-- `prefix` — tool input must start with the pattern
-- `glob` — supports `*` (matches everything) and `prefix*` (prefix matching)
-
-Matching is performed against both the canonical JSON serialization of the tool input and each individual field value (e.g., a `file_path` or `command` string).
-
-> **Security warning:** A broad rule like `tool_name='Bash', pattern='*', match_type='glob'` would auto-approve **all** Bash commands, including destructive ones (`rm -rf /`, `git push --force`, etc.). Always use narrow, specific patterns.
+- Pass-through: delegates to Claude Code's native permission handling
 
 ---
 

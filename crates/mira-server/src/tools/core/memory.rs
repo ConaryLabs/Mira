@@ -1200,14 +1200,18 @@ pub async fn list_entities<C: ToolContext>(
         .run(move |conn| {
             let (sql, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ref q) = query
             {
-                let pattern = format!("%{}%", q);
+                let escaped = q
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
+                let pattern = format!("%{}%", escaped);
                 (
                     "SELECT me.id, me.canonical_name, me.entity_type, me.display_name,
                             COUNT(mel.fact_id) as linked_facts
                      FROM memory_entities me
                      JOIN memory_entity_links mel ON mel.entity_id = me.id
                      WHERE me.project_id IS ?1
-                       AND me.canonical_name LIKE ?2
+                       AND me.canonical_name LIKE ?2 ESCAPE '\\'
                      GROUP BY me.id
                      ORDER BY linked_facts DESC
                      LIMIT ?3"

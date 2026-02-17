@@ -20,7 +20,7 @@ fn auto_dismiss_stale_insights(conn: &Connection, project_id: i64) -> rusqlite::
 }
 
 /// Query-time merge of insight sources into a single ranked list.
-/// Proactive suggestions are excluded from the digest (available via their own API).
+/// Proactive suggestions are surfaced separately via the UserPromptSubmit hook.
 pub fn get_unified_insights_sync(
     conn: &Connection,
     project_id: i64,
@@ -44,6 +44,9 @@ pub fn get_unified_insights_sync(
     }
     if include("health_trend") {
         all.extend(fetch_health_trend_insights(conn, project_id)?);
+    }
+    if include("injection_feedback") {
+        all.extend(fetch_injection_feedback_insights(conn, project_id)?);
     }
 
     // Filter by min_confidence, sort by priority_score desc then timestamp desc
@@ -412,6 +415,93 @@ fn fetch_health_trend_insights(
         trend: Some(trend),
         change_summary: Some(change_summary),
         category: Some("health".to_string()),
+    }])
+}
+
+/// Injection feedback insights from the injection_feedback table.
+/// Aggregates 7-day stats and emits an insight when context reference rate is low.
+fn fetch_injection_feedback_insights(
+    conn: &Connection,
+    project_id: i64,
+) -> rusqlite::Result<Vec<UnifiedInsight>> {
+    let row = conn.query_row(
+        "SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN was_referenced = 1 THEN 1 ELSE 0 END) AS referenced,
+            AVG(overlap_ratio) AS avg_overlap
+         FROM injection_feedback
+         WHERE project_id = ?1
+           AND created_at > datetime('now', '-7 days')
+           AND was_referenced IS NOT NULL",
+        params![project_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                row.get::<_, Option<f64>>(2)?,
+            ))
+        },
+    );
+
+    let (total, referenced, avg_overlap) = match row {
+        Ok(v) => v,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(vec![]),
+        Err(e) => return Err(e),
+    };
+
+    // Need a meaningful sample size before generating insights
+    if total < 5 {
+        return Ok(vec![]);
+    }
+
+    let reference_rate = referenced as f64 / total as f64;
+    let avg_overlap = avg_overlap.unwrap_or(0.0);
+
+    // Only emit insight when reference rate is below 50%
+    if reference_rate >= 0.5 {
+        return Ok(vec![]);
+    }
+
+    let description = format!(
+        "Context injection quality is low: {:.0}% reference rate ({}/{} injections used, avg overlap {:.0}%) over the last 7 days",
+        reference_rate * 100.0,
+        referenced,
+        total,
+        avg_overlap * 100.0,
+    );
+
+    let evidence = format!(
+        "{} injections evaluated, {} referenced by assistant, avg keyword overlap {:.1}%",
+        total,
+        referenced,
+        avg_overlap * 100.0,
+    );
+
+    // Lower reference rate = higher confidence that something is wrong
+    let confidence = (1.0 - reference_rate).min(0.95);
+    let priority_score = confidence * 0.8; // Slightly below recurring_error weight
+
+    let timestamp = conn
+        .query_row(
+            "SELECT MAX(checked_at) FROM injection_feedback
+             WHERE project_id = ?1 AND was_referenced IS NOT NULL",
+            params![project_id],
+            |row| row.get::<_, Option<String>>(0),
+        )?
+        .unwrap_or_default();
+
+    Ok(vec![UnifiedInsight {
+        source: "injection_feedback".to_string(),
+        source_type: "Injection Quality".to_string(),
+        description,
+        priority_score,
+        confidence,
+        timestamp,
+        evidence: Some(evidence),
+        row_id: None,
+        trend: Some("degraded".to_string()),
+        change_summary: Some(format!("{:.0}% referenced", reference_rate * 100.0)),
+        category: Some("quality".to_string()),
     }])
 }
 

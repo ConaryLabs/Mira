@@ -3,7 +3,6 @@
 
 mod background;
 mod cartographer;
-mod chat;
 mod config;
 pub mod cross_project;
 pub mod dependencies;
@@ -65,8 +64,6 @@ pub use background::{
     get_large_functions_sync,
     get_lib_symbols_sync,
     get_modules_for_doc_gaps_sync,
-    // Permission hooks
-    get_permission_rules_sync,
     // Summaries processor
     get_project_ids_needing_summaries_sync,
     get_projects_with_pending_summaries_sync,
@@ -87,7 +84,6 @@ pub use cartographer::{
     get_external_deps_sync, get_module_dependencies_sync, get_module_exports_sync,
     get_modules_needing_summaries_sync, update_module_purposes_sync, upsert_module_sync,
 };
-pub use chat::get_last_chat_time_sync;
 pub use cross_project::{
     CrossProjectMemory, CrossProjectPreference, find_solved_in_other_project_sync,
     format_cross_project_context, format_cross_project_preferences,
@@ -209,8 +205,9 @@ pub use team::{
 };
 pub use types::*;
 pub use usage::{
-    EmbeddingUsageRecord, LlmUsageRecord, UsageStats, get_llm_usage_summary,
-    insert_embedding_usage_sync, insert_llm_usage_sync, query_llm_usage_stats,
+    EmbeddingUsageRecord, EmbeddingUsageStats, LlmUsageRecord, UsageStats,
+    get_embedding_usage_summary, get_llm_usage_summary, insert_embedding_usage_sync,
+    insert_llm_usage_sync, query_embedding_usage_stats, query_llm_usage_stats,
 };
 
 // All database access goes through DatabasePool (db::pool).

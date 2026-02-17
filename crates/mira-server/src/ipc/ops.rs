@@ -45,28 +45,6 @@ pub async fn recall_memories(server: &MiraServer, params: Value) -> Result<Value
     Ok(json!({"memories": memories}))
 }
 
-/// Get permission rules matching a tool name.
-pub async fn get_permission_rules(server: &MiraServer, params: Value) -> Result<Value> {
-    let tool_name = params
-        .get("tool_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let rules: Vec<(String, String)> = server
-        .pool
-        .interact(move |conn| {
-            Ok::<_, anyhow::Error>(crate::db::get_permission_rules_sync(conn, &tool_name))
-        })
-        .await?;
-
-    let rules_json: Vec<Value> = rules
-        .into_iter()
-        .map(|(pattern, match_type)| json!({"pattern": pattern, "match_type": match_type}))
-        .collect();
-    Ok(json!({"rules": rules_json}))
-}
-
 /// Log a behavior event to session_behavior_log.
 pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
     let session_id = params

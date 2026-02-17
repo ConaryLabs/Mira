@@ -110,8 +110,8 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 
 | Hook | What It Injects |
 |------|-----------------|
-| `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info |
-| `UserPromptSubmit` | Pending tasks, relevant memories, proactive predictions, team context |
+| `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info, incomplete tasks from previous session |
+| `UserPromptSubmit` | Pending tasks, relevant memories, proactive predictions, pre-generated suggestions, team context |
 | `PreToolUse` | Relevant memories before Grep/Glob/Read (semantic search with keyword fallback from search pattern) |
 | `PostToolUse` | Tracks file modifications, team conflict detection |
 | `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |

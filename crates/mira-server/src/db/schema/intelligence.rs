@@ -79,24 +79,6 @@ pub fn migrate_proactive_intelligence_tables(conn: &Connection) -> Result<()> {
     "#,
     )?;
 
-    // User preferences for proactive features
-    create_table_if_missing(
-        conn,
-        "proactive_preferences",
-        r#"
-        CREATE TABLE IF NOT EXISTS proactive_preferences (
-            id INTEGER PRIMARY KEY,
-            user_id TEXT,
-            project_id INTEGER REFERENCES projects(id),
-            preference_key TEXT NOT NULL,     -- 'proactivity_level', 'max_alerts_per_hour', 'min_confidence'
-            preference_value TEXT NOT NULL,   -- JSON value
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, project_id, preference_key)
-        );
-        CREATE INDEX IF NOT EXISTS idx_proactive_prefs_user ON proactive_preferences(user_id, project_id);
-    "#,
-    )?;
-
     // Pre-generated proactive suggestions table - for fast O(1) lookup
     create_table_if_missing(
         conn,

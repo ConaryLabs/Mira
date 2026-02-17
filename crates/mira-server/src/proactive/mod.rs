@@ -8,8 +8,6 @@ pub mod interventions;
 pub mod patterns;
 pub mod predictor;
 
-use anyhow::Result;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 /// Event types tracked in the behavior log
@@ -124,54 +122,16 @@ impl Default for ProactiveConfig {
     }
 }
 
-/// Get proactive config for a user/project
+/// Get proactive config for a user/project.
+///
+/// The proactive_preferences table was dropped (unused). This now returns
+/// defaults directly.
 pub fn get_proactive_config(
-    conn: &Connection,
-    user_id: Option<&str>,
-    project_id: i64,
-) -> Result<ProactiveConfig> {
-    let mut config = ProactiveConfig::default();
-
-    // Load user preferences if set
-    let sql = r#"
-        SELECT preference_key, preference_value
-        FROM proactive_preferences
-        WHERE (user_id = ? OR user_id IS NULL)
-          AND (project_id = ? OR project_id IS NULL)
-        ORDER BY user_id DESC, project_id DESC
-    "#;
-
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params![user_id, project_id], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-
-    for row in rows.filter_map(crate::db::log_and_discard) {
-        let (key, value) = row;
-        match key.as_str() {
-            "min_confidence" => {
-                if let Ok(v) = value.parse::<f64>() {
-                    config.min_confidence = v;
-                }
-            }
-            "max_interventions_per_hour" => {
-                if let Ok(v) = value.parse::<u32>() {
-                    config.max_interventions_per_hour = v;
-                }
-            }
-            "enabled" => {
-                config.enabled = value == "true" || value == "1";
-            }
-            "cooldown_seconds" => {
-                if let Ok(v) = value.parse::<u32>() {
-                    config.cooldown_seconds = v;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(config)
+    _conn: &rusqlite::Connection,
+    _user_id: Option<&str>,
+    _project_id: i64,
+) -> ProactiveConfig {
+    ProactiveConfig::default()
 }
 
 #[cfg(test)]

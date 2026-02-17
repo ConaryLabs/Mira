@@ -346,10 +346,19 @@ mod tests {
             make_memory(&content, "decision", Some("decision"), 8.0),
         ];
         let result = build_budgeted_export(&memories);
-        assert!(result.contains("## Preferences"), "Preference entry should be present");
-        assert!(result.contains("## Decisions"), "Decision entry should be present");
+        assert!(
+            result.contains("## Preferences"),
+            "Preference entry should be present"
+        );
+        assert!(
+            result.contains("## Decisions"),
+            "Decision entry should be present"
+        );
         let entry_count = result.lines().filter(|l| l.starts_with("- ")).count();
-        assert_eq!(entry_count, 2, "Same content in different sections should not be deduped");
+        assert_eq!(
+            entry_count, 2,
+            "Same content in different sections should not be deduped"
+        );
     }
 
     #[test]

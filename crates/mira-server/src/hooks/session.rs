@@ -540,6 +540,31 @@ pub(crate) async fn build_resume_context(
                 context_parts.push(compaction_summary);
             }
         }
+
+        // Fetch incomplete tasks from previous session
+        let pool_clone = pool.clone();
+        let prev_id = prev_session.id.clone();
+        let incomplete_tasks: Vec<crate::db::session_tasks::IncompleteTask> = pool_clone
+            .interact(move |conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::session_tasks::get_incomplete_tasks_for_session_sync(conn, &prev_id),
+                )
+            })
+            .await
+            .unwrap_or_default();
+
+        if !incomplete_tasks.is_empty() {
+            let subjects: Vec<&str> = incomplete_tasks
+                .iter()
+                .map(|t| t.subject.as_str())
+                .take(10)
+                .collect();
+            context_parts.push(format!(
+                "**Previous session had {} incomplete task(s):** {}",
+                incomplete_tasks.len(),
+                subjects.join(", ")
+            ));
+        }
     }
 
     // Get incomplete goals

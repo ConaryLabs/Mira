@@ -1,7 +1,6 @@
 // db/session.rs
 // Session and tool history operations
 
-use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 
 use crate::utils::{truncate, truncate_at_boundary};
@@ -152,7 +151,6 @@ pub fn get_session_history_scoped_sync(
 
 /// Build session recap - sync version for pool.interact()
 pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> String {
-    use super::chat::get_last_chat_time_sync;
     use super::project::get_project_info_sync;
     use super::tasks::{get_active_goals_sync, get_pending_tasks_sync};
 
@@ -173,22 +171,6 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
         "Welcome back!".to_string()
     };
     recap_parts.push(format!("--- {} ---", welcome));
-
-    // Time since last chat
-    if let Ok(Some(last_chat_time)) = get_last_chat_time_sync(conn)
-        && let Ok(parsed) = DateTime::parse_from_rfc3339(&last_chat_time)
-    {
-        let now = Utc::now();
-        let duration = now.signed_duration_since(parsed);
-        let hours = duration.num_hours();
-        let minutes = duration.num_minutes() % 60;
-        let time_ago = if hours > 0 {
-            format!("{} hours, {} minutes ago", hours, minutes)
-        } else {
-            format!("{} minutes ago", minutes)
-        };
-        recap_parts.push(format!("Last chat: {}", time_ago));
-    }
 
     // Recent sessions (excluding current)
     if let Some(pid) = project_id

@@ -46,16 +46,7 @@ fn migration_registry() -> Vec<Migration> {
             name: "tool_history_full_result",
             func: session::migrate_tool_history_full_result,
         },
-        Migration {
-            version: 3,
-            name: "chat_summaries_project_id",
-            func: session::migrate_chat_summaries_project_id,
-        },
-        Migration {
-            version: 4,
-            name: "chat_messages_summary_id",
-            func: session::migrate_chat_messages_summary_id,
-        },
+        // Migrations v3-v4 removed (migrated dead chat tables, now dropped in v43)
         Migration {
             version: 5,
             name: "memory_facts_has_embedding",
@@ -245,6 +236,16 @@ fn migration_registry() -> Vec<Migration> {
             version: 42,
             name: "session_goals_table",
             func: session::migrate_session_goals_table,
+        },
+        Migration {
+            version: 43,
+            name: "drop_dead_tables_v2",
+            func: drop_dead_tables_v2,
+        },
+        Migration {
+            version: 44,
+            name: "drop_dead_tables_v3",
+            func: drop_dead_tables_v3,
         },
     ]
 }
@@ -466,6 +467,31 @@ fn drop_dead_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Drop tables confirmed dead by audit: background_batches, chat_messages,
+/// chat_summaries, session_task_iterations.
+fn drop_dead_tables_v2(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS background_batches;
+         DROP TABLE IF EXISTS chat_messages;
+         DROP TABLE IF EXISTS chat_summaries;
+         DROP TABLE IF EXISTS session_task_iterations;
+         DROP INDEX IF EXISTS idx_chat_messages_created;
+         DROP INDEX IF EXISTS idx_chat_messages_summary;
+         DROP INDEX IF EXISTS idx_chat_summaries_level;
+         DROP INDEX IF EXISTS idx_chat_summaries_project;",
+    )?;
+    Ok(())
+}
+
+/// Drop tables confirmed dead by audit: permission_rules, proactive_preferences.
+fn drop_dead_tables_v3(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS permission_rules;
+         DROP TABLE IF EXISTS proactive_preferences;",
+    )?;
+    Ok(())
+}
+
 /// Add health_snapshots table for codebase evolution tracking
 fn migrate_health_snapshots_table(conn: &Connection) -> Result<()> {
     use crate::db::migration_helpers::create_table_if_missing;
@@ -615,18 +641,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status_created ON tasks(project_id, status, created_at DESC, id DESC);
 
 -- =======================================
--- PERMISSIONS
--- =======================================
-CREATE TABLE IF NOT EXISTS permission_rules (
-    id INTEGER PRIMARY KEY,
-    tool_name TEXT NOT NULL,
-    pattern TEXT NOT NULL,
-    match_type TEXT DEFAULT 'prefix',
-    scope TEXT DEFAULT 'global',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
--- =======================================
 -- PROJECT BRIEFINGS (What's New)
 -- =======================================
 CREATE TABLE IF NOT EXISTS project_briefings (
@@ -639,14 +653,6 @@ CREATE TABLE IF NOT EXISTS project_briefings (
 );
 CREATE INDEX IF NOT EXISTS idx_briefings_project ON project_briefings(project_id);
 
-CREATE TABLE IF NOT EXISTS background_batches (
-    id INTEGER PRIMARY KEY,
-    batch_id TEXT NOT NULL,
-    item_ids TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
 -- =======================================
 -- SERVER STATE (for restart recovery)
 -- =======================================
@@ -655,34 +661,6 @@ CREATE TABLE IF NOT EXISTS server_state (
     value TEXT,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
-
--- =======================================
--- CHAT MESSAGES (conversation history)
--- =======================================
-CREATE TABLE IF NOT EXISTS chat_messages (
-    id INTEGER PRIMARY KEY,
-    role TEXT NOT NULL,  -- 'user', 'assistant'
-    content TEXT NOT NULL,
-    reasoning_content TEXT,  -- for deepseek reasoner responses
-    summarized INTEGER DEFAULT 0,  -- 1 if included in a summary
-    summary_id INTEGER REFERENCES chat_summaries(id) ON DELETE SET NULL,  -- links to the summary for reversibility
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_summary ON chat_messages(summary_id);
-
-CREATE TABLE IF NOT EXISTS chat_summaries (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER,  -- NULL for global summaries
-    summary TEXT NOT NULL,
-    message_range_start INTEGER,  -- first message id covered
-    message_range_end INTEGER,    -- last message id covered
-    summary_level INTEGER DEFAULT 1,  -- 1=session, 2=daily, 3=weekly
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_chat_summaries_level ON chat_summaries(summary_level, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_chat_summaries_project ON chat_summaries(project_id, summary_level, created_at DESC);
 
 -- =======================================
 -- VECTOR TABLES (sqlite-vec)

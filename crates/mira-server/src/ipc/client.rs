@@ -266,43 +266,6 @@ impl HookClient {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Permission
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /// Get permission rules matching a tool name.
-    pub async fn get_permission_rules(&mut self, tool_name: &str) -> Vec<(String, String)> {
-        if self.is_ipc() {
-            let params = json!({"tool_name": tool_name});
-            if let Ok(result) = self.call("get_permission_rules", params).await {
-                return result
-                    .get("rules")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|r| {
-                                let pattern = r.get("pattern")?.as_str()?.to_string();
-                                let match_type = r.get("match_type")?.as_str()?.to_string();
-                                Some((pattern, match_type))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-            }
-        }
-        if let Backend::Direct { pool } = &self.inner {
-            let pool = pool.clone();
-            let tool_name = tool_name.to_string();
-            return pool
-                .interact(move |conn| {
-                    Ok::<_, anyhow::Error>(crate::db::get_permission_rules_sync(conn, &tool_name))
-                })
-                .await
-                .unwrap_or_default();
-        }
-        Vec::new()
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
     // Behavior Tracking
     // ═══════════════════════════════════════════════════════════════════════
 

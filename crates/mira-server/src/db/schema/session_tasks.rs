@@ -37,22 +37,5 @@ pub fn migrate_session_tasks_tables(conn: &Connection) -> Result<()> {
     "#,
     )?;
 
-    create_table_if_missing(
-        conn,
-        "session_task_iterations",
-        r#"
-        CREATE TABLE IF NOT EXISTS session_task_iterations (
-            id INTEGER PRIMARY KEY,
-            project_id INTEGER NOT NULL,
-            session_id TEXT,
-            iteration INTEGER,
-            tasks_completed INTEGER DEFAULT 0,
-            tasks_remaining INTEGER DEFAULT 0,
-            summary TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-    "#,
-    )?;
-
     Ok(())
 }

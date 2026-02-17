@@ -376,7 +376,6 @@ fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
         "memory_facts",
         "sessions",
         "tool_history",
-        "chat_messages",
         "llm_usage",
         "embeddings_usage",
         "behavior_patterns",
@@ -426,7 +425,6 @@ async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, 
             let memories = count_table(conn, "memory_facts");
             let sessions = count_table(conn, "sessions");
             let tool_history = count_table(conn, "tool_history");
-            let chat = count_table(conn, "chat_messages");
             let llm_usage = count_table(conn, "llm_usage");
             let embed_usage = count_table(conn, "embeddings_usage");
             let behavior = count_table(conn, "behavior_patterns");
@@ -437,7 +435,6 @@ async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, 
                 memories,
                 sessions,
                 tool_history,
-                chat,
                 llm_usage,
                 embed_usage,
                 behavior,
@@ -447,17 +444,8 @@ async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, 
         })
         .await?;
 
-    let (
-        memories,
-        sessions,
-        tool_history,
-        chat,
-        llm_usage,
-        embed_usage,
-        behavior,
-        goals,
-        observations,
-    ) = counts;
+    let (memories, sessions, tool_history, llm_usage, embed_usage, behavior, goals, observations) =
+        counts;
 
     // Load retention config and count candidates
     let config = MiraConfig::load();
@@ -486,7 +474,6 @@ async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, 
     report.push_str(&format!("- Memories: {}\n", memories));
     report.push_str(&format!("- Sessions: {}\n", sessions));
     report.push_str(&format!("- Tool history: {}\n", tool_history));
-    report.push_str(&format!("- Chat messages: {}\n", chat));
     report.push_str(&format!(
         "- Analytics: {} (LLM) + {} (embeddings)\n",
         llm_usage, embed_usage
@@ -507,7 +494,6 @@ async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, 
         "- Tool history: {} days\n",
         retention.tool_history_days
     ));
-    report.push_str(&format!("- Chat: {} days\n", retention.chat_days));
     report.push_str(&format!("- Sessions: {} days\n", retention.sessions_days));
     report.push_str(&format!("- Analytics: {} days\n", retention.analytics_days));
     report.push_str(&format!("- Behavior: {} days\n", retention.behavior_days));
@@ -570,16 +556,11 @@ async fn cleanup<C: ToolContext>(
                 .filter(|(table, _)| match filter {
                     "sessions" => matches!(
                         table.as_str(),
-                        "sessions"
-                            | "session_snapshots"
-                            | "session_tasks"
-                            | "session_task_iterations"
-                            | "tool_history"
+                        "sessions" | "session_snapshots" | "session_tasks" | "tool_history"
                     ),
                     "analytics" => {
                         matches!(table.as_str(), "llm_usage" | "embeddings_usage")
                     }
-                    "chat" => matches!(table.as_str(), "chat_messages" | "chat_summaries"),
                     "behavior" => {
                         matches!(table.as_str(), "behavior_patterns" | "system_observations")
                     }

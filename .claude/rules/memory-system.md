@@ -1,6 +1,10 @@
-# Memory System: Remember, Recall, Forget & Archive
+# Memory System
 
-Use `memory(action="remember", ...)` to store decisions and context. Use `memory(action="recall", ...)` to retrieve them. Use `memory(action="forget", id=N)` to delete by ID. Use `memory(action="archive", id=N)` to exclude from auto-export while keeping history.
+**Core actions:** `remember`, `recall`, `list`, `forget`, `archive`, `entities`
+
+Use `memory(action="remember", ...)` to store decisions and context. Use `memory(action="recall", ...)` to retrieve them. Use `memory(action="list")` to browse with pagination. Use `memory(action="forget", id=N)` to delete by ID. Use `memory(action="archive", id=N)` to exclude from auto-export while keeping history. Use `memory(action="entities")` to explore the auto-extracted entity graph (technologies, concepts, people linked to memories).
+
+**CLI-only actions:** `export` (structured JSON dump), `purge` (delete all project memories, requires `confirm=true`), `export_claude_local` (write CLAUDE.local.md).
 
 ## Evidence Threshold
 

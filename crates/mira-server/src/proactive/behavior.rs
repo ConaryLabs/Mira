@@ -3,20 +3,11 @@
 
 use anyhow::Result;
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 use crate::utils::truncate;
 
 use super::EventType;
-
-/// A single behavior event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BehaviorEvent {
-    pub event_type: EventType,
-    pub data: serde_json::Value,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-}
 
 /// Session-level behavior tracker
 pub struct BehaviorTracker {
@@ -148,98 +139,6 @@ impl BehaviorTracker {
         });
         self.log_event(conn, EventType::ContextSwitch, data)
     }
-}
-
-/// Get recent events for a session
-pub fn get_session_events(
-    conn: &Connection,
-    session_id: &str,
-    limit: i64,
-) -> Result<Vec<BehaviorEvent>> {
-    let sql = r#"
-        SELECT event_type, event_data, created_at
-        FROM session_behavior_log
-        WHERE session_id = ?
-        ORDER BY sequence_position DESC
-        LIMIT ?
-    "#;
-
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params![session_id, limit], |row| {
-        let event_type_str: String = row.get(0)?;
-        let event_data_str: String = row.get(1)?;
-        let created_at_str: String = row.get(2)?;
-
-        Ok((event_type_str, event_data_str, created_at_str))
-    })?;
-
-    let mut events = Vec::new();
-    for row in rows.filter_map(crate::db::log_and_discard) {
-        let (event_type_str, event_data_str, created_at_str) = row;
-
-        if let Ok(event_type) = event_type_str.parse::<EventType>() {
-            let data: serde_json::Value = serde_json::from_str(&event_data_str).unwrap_or_default();
-            let timestamp = chrono::DateTime::parse_from_rfc3339(&created_at_str)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now());
-
-            events.push(BehaviorEvent {
-                event_type,
-                data,
-                timestamp,
-            });
-        }
-    }
-
-    // Reverse to get chronological order
-    events.reverse();
-    Ok(events)
-}
-
-/// Get recent file access sequence for a project
-pub fn get_recent_file_sequence(
-    conn: &Connection,
-    project_id: i64,
-    limit: i64,
-) -> Result<Vec<String>> {
-    let sql = r#"
-        SELECT DISTINCT json_extract(event_data, '$.file_path') as file_path
-        FROM session_behavior_log
-        WHERE project_id = ?
-          AND event_type = 'file_access'
-          AND json_extract(event_data, '$.file_path') IS NOT NULL
-        ORDER BY created_at DESC
-        LIMIT ?
-    "#;
-
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([project_id, limit], |row| row.get::<_, String>(0))?;
-
-    let files: Vec<String> = rows.filter_map(crate::db::log_and_discard).collect();
-    Ok(files)
-}
-
-/// Get tool usage frequency for a project
-pub fn get_tool_usage_stats(conn: &Connection, project_id: i64) -> Result<Vec<(String, i64)>> {
-    let sql = r#"
-        SELECT json_extract(event_data, '$.tool_name') as tool_name,
-               COUNT(*) as usage_count
-        FROM session_behavior_log
-        WHERE project_id = ?
-          AND event_type = 'tool_use'
-          AND json_extract(event_data, '$.tool_name') IS NOT NULL
-        GROUP BY tool_name
-        ORDER BY usage_count DESC
-        LIMIT 20
-    "#;
-
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([project_id], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
-
-    let stats: Vec<(String, i64)> = rows.filter_map(crate::db::log_and_discard).collect();
-    Ok(stats)
 }
 
 /// Clean up old behavior logs (keep last N days)

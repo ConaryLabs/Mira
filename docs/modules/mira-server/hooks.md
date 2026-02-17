@@ -25,7 +25,7 @@ Hooks are invoked by Claude Code at specific events during a session. Each hook 
 | `post_tool` | PostToolUse | Track file modifications, queue re-indexing, detect team conflicts |
 | `precompact` | PreCompact | Extract decisions, TODOs, and errors from transcript before summarization |
 | `stop` | Stop / SessionEnd | Session snapshot, task export, goal progress check, auto-export to CLAUDE.local.md |
-| `permission` | PermissionRequest | Auto-approve tools based on stored permission rules |
+| `permission` | PermissionRequest | Pass-through to Claude Code's native permission handling |
 | `recall` | (shared) | Memory recall utilities used by other hooks |
 | `subagent` | SubagentStart/Stop | Inject context for subagents, capture discoveries from subagent work |
 | `post_tool_failure` | PostToolFailure | Track tool failures, recall relevant memories after repeated failures |

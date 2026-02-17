@@ -65,70 +65,36 @@ pub fn snapshot_native_tasks_sync(
     Ok(count)
 }
 
-/// Get pending/in_progress session tasks for a project.
-pub fn get_pending_session_tasks_sync(
-    conn: &Connection,
-    project_id: i64,
-    limit: usize,
-) -> anyhow::Result<Vec<SessionTask>> {
-    let sql = r#"
-        SELECT id, project_id, session_id, native_task_list_id, native_task_id,
-               subject, description, status, goal_id, milestone_id, created_at
-        FROM session_tasks
-        WHERE project_id = ? AND status IN ('pending', 'in_progress')
-        ORDER BY id ASC
-        LIMIT ?
-    "#;
-
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![project_id, limit as i64], parse_session_task_row)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+/// A lightweight snapshot of an incomplete task for resume context.
+pub struct IncompleteTask {
+    pub subject: String,
+    pub status: String,
 }
 
-/// Count completed vs remaining session tasks for a project.
-/// Returns (completed, remaining).
-pub fn count_session_tasks_sync(
+/// Fetch incomplete (non-completed) tasks for a given session.
+/// Used by session resume to show what was in progress.
+pub fn get_incomplete_tasks_for_session_sync(
     conn: &Connection,
-    project_id: i64,
-) -> anyhow::Result<(usize, usize)> {
-    let sql = r#"
-        SELECT
-            COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END), 0)
-        FROM session_tasks
-        WHERE project_id = ?
-    "#;
+    session_id: &str,
+) -> Vec<IncompleteTask> {
+    let mut stmt = match conn.prepare(
+        "SELECT subject, status FROM session_tasks \
+         WHERE session_id = ? AND status != 'completed' \
+         ORDER BY id",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
 
-    let (completed, remaining): (i64, i64) =
-        conn.query_row(sql, [project_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
-
-    Ok((completed as usize, remaining as usize))
-}
-
-/// Log an iteration snapshot for audit trail.
-pub fn log_iteration_sync(
-    conn: &Connection,
-    project_id: i64,
-    session_id: Option<&str>,
-    iteration: i32,
-    completed: usize,
-    remaining: usize,
-    summary: Option<&str>,
-) -> anyhow::Result<i64> {
-    conn.execute(
-        r#"INSERT INTO session_task_iterations
-            (project_id, session_id, iteration, tasks_completed, tasks_remaining, summary)
-           VALUES (?, ?, ?, ?, ?, ?)"#,
-        params![
-            project_id,
-            session_id,
-            iteration,
-            completed as i64,
-            remaining as i64,
-            summary,
-        ],
-    )?;
-    Ok(conn.last_insert_rowid())
+    stmt.query_map(params![session_id], |row| {
+        Ok(IncompleteTask {
+            subject: row.get(0)?,
+            status: row.get(1)?,
+        })
+    })
+    .ok()
+    .map(|rows| rows.flatten().collect())
+    .unwrap_or_default()
 }
 
 /// Parse `[goal:ID]` and `[milestone:ID]` tags from task subject text.
@@ -145,38 +111,6 @@ fn parse_tag(text: &str, tag: &str) -> Option<i64> {
     let after = &text[start + prefix.len()..];
     let end = after.find(']')?;
     after[..end].trim().parse().ok()
-}
-
-/// Lightweight session task representation for query results.
-#[derive(Debug, Clone)]
-pub struct SessionTask {
-    pub id: i64,
-    pub project_id: i64,
-    pub session_id: Option<String>,
-    pub native_task_list_id: Option<String>,
-    pub native_task_id: Option<String>,
-    pub subject: String,
-    pub description: Option<String>,
-    pub status: String,
-    pub goal_id: Option<i64>,
-    pub milestone_id: Option<i64>,
-    pub created_at: Option<String>,
-}
-
-fn parse_session_task_row(row: &rusqlite::Row) -> rusqlite::Result<SessionTask> {
-    Ok(SessionTask {
-        id: row.get(0)?,
-        project_id: row.get(1)?,
-        session_id: row.get(2)?,
-        native_task_list_id: row.get(3)?,
-        native_task_id: row.get(4)?,
-        subject: row.get(5)?,
-        description: row.get(6)?,
-        status: row.get(7)?,
-        goal_id: row.get(8)?,
-        milestone_id: row.get(9)?,
-        created_at: row.get(10)?,
-    })
 }
 
 #[cfg(test)]

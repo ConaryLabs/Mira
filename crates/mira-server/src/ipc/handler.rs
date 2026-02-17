@@ -97,7 +97,6 @@ async fn dispatch(
     match op {
         "resolve_project" => super::ops::resolve_project(server, params).await,
         "recall_memories" => super::ops::recall_memories(server, params).await,
-        "get_permission_rules" => super::ops::get_permission_rules(server, params).await,
         "log_behavior" => super::ops::log_behavior(server, params).await,
         "store_observation" => super::ops::store_observation(server, params).await,
         "get_active_goals" => super::ops::get_active_goals(server, params).await,

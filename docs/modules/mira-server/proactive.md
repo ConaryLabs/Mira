@@ -9,7 +9,7 @@ Proactive intelligence engine for anticipating developer needs through pattern r
 - `PatternType` - Recognized behavioral patterns
 - `InterventionType` - Types of proactive suggestions
 - `UserResponse` - Feedback with effectiveness multipliers
-- `ProactiveConfig` - User/project preferences for proactive behavior
+- `ProactiveConfig` - Proactive behavior configuration (returns defaults; not user-configurable)
 
 ## Sub-modules
 
@@ -24,4 +24,4 @@ Proactive intelligence engine for anticipating developer needs through pattern r
 
 ## Key Export
 
-`get_proactive_config()` - Loads user/project preferences for proactive analysis.
+`get_proactive_config()` - Returns default proactive configuration values.

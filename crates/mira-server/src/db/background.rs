@@ -591,22 +591,3 @@ pub fn get_project_ids_needing_summaries_sync(conn: &Connection) -> rusqlite::Re
         .collect();
     Ok(ids)
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Permission hooks
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Get permission rules for a tool
-pub fn get_permission_rules_sync(conn: &Connection, tool_name: &str) -> Vec<(String, String)> {
-    let mut stmt = match conn
-        .prepare("SELECT pattern, match_type FROM permission_rules WHERE tool_name = ?")
-    {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-
-    stmt.query_map([tool_name], |row| Ok((row.get(0)?, row.get(1)?)))
-        .ok()
-        .map(|rows| rows.filter_map(log_and_discard).collect())
-        .unwrap_or_default()
-}

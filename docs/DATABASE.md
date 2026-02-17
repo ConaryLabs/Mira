@@ -332,19 +332,6 @@ Raw events for pattern mining.
 | time_since_last_event_ms | INTEGER | Milliseconds since previous event |
 | created_at | TEXT | Timestamp |
 
-### proactive_preferences
-
-User preferences for proactive features.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| user_id | TEXT | User reference |
-| project_id | INTEGER FK | Project reference |
-| preference_key | TEXT | `proactivity_level`, `max_alerts_per_hour`, `min_confidence` |
-| preference_value | TEXT | JSON value |
-| updated_at | TEXT | Last update |
-
 ### proactive_suggestions
 
 Pre-generated suggestions for fast lookup during UserPromptSubmit hook.
@@ -559,19 +546,6 @@ Key-value storage for server state persistence.
 Used to persist:
 - `active_project_path`: Last active project, restored on MCP server startup
 - `last_claude_session_id`: Claude Code session ID from hooks
-
-### permission_rules
-
-Auto-approved tool patterns (for permission hook).
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| tool_name | TEXT | Tool name pattern |
-| pattern | TEXT | Argument pattern |
-| match_type | TEXT | `prefix`, `exact`, `glob` |
-| scope | TEXT | `global` or project-specific |
-| created_at | TEXT | Timestamp |
 
 ---
 

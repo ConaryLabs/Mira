@@ -10,13 +10,8 @@ use std::sync::Arc;
 /// Map a table name to its category for filtering.
 fn table_category(table: &str) -> &'static str {
     match table {
-        "sessions"
-        | "session_snapshots"
-        | "session_tasks"
-        | "session_task_iterations"
-        | "tool_history" => "sessions",
+        "sessions" | "session_snapshots" | "session_tasks" | "tool_history" => "sessions",
         "llm_usage" | "embeddings_usage" => "analytics",
-        "chat_messages" | "chat_summaries" => "chat",
         "behavior_patterns" | "system_observations" | "error_patterns" => "behavior",
         _ => "other",
     }
@@ -38,7 +33,6 @@ pub async fn run_cleanup(dry_run: bool, yes: bool, category: Option<String>) -> 
     if config.is_enabled() {
         println!("  Status: enabled");
         println!("  Tool history: {} days", config.tool_history_days);
-        println!("  Chat messages: {} days", config.chat_days);
         println!("  Sessions: {} days", config.sessions_days);
         println!("  Analytics: {} days", config.analytics_days);
         println!("  Behavior: {} days", config.behavior_days);
