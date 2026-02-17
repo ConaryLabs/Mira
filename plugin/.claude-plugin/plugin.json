@@ -12,7 +12,6 @@
     "memory", "context", "code-intelligence", "semantic-search", "goals",
     "persistent", "cross-session", "recall", "knowledge-base", "productivity", "mcp"
   ],
-  "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
   "skills": [
     "./skills/help",
