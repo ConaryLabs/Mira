@@ -15,7 +15,10 @@ use crate::db::pool::DatabasePool;
 use crate::llm::LlmClient;
 use std::sync::Arc;
 
-pub use lookup::{get_pre_generated_suggestions, mark_suggestion_accepted, mark_suggestion_shown};
+pub use lookup::{
+    get_pre_generated_suggestions, get_top_pre_generated_suggestions, mark_suggestion_accepted,
+    mark_suggestion_shown,
+};
 pub use storage::cleanup_expired_suggestions;
 
 /// Confidence multiplier for template suggestions vs LLM quality

@@ -247,6 +247,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "drop_dead_tables_v3",
             func: drop_dead_tables_v3,
         },
+        Migration {
+            version: 45,
+            name: "milestones_temporal_tracking",
+            func: migrate_milestones_temporal_tracking,
+        },
     ]
 }
 
@@ -528,6 +533,20 @@ fn migrate_goals_updated_at(conn: &Connection) -> Result<()> {
         "UPDATE goals SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL",
         [],
     )?;
+    Ok(())
+}
+
+/// Add temporal tracking columns to milestones table
+fn migrate_milestones_temporal_tracking(conn: &Connection) -> Result<()> {
+    use crate::db::migration_helpers::add_column_if_missing;
+    add_column_if_missing(
+        conn,
+        "milestones",
+        "created_at",
+        "TEXT DEFAULT (datetime('now'))",
+    )?;
+    add_column_if_missing(conn, "milestones", "completed_at", "TEXT")?;
+    add_column_if_missing(conn, "milestones", "completed_in_session_id", "TEXT")?;
     Ok(())
 }
 

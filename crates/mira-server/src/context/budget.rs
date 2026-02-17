@@ -27,6 +27,15 @@ pub const PRIORITY_PROACTIVE: f32 = 0.5;
 /// Priority for file-aware context
 pub const PRIORITY_FILE_AWARE: f32 = 0.4;
 
+/// Result of applying a budget to prioritized entries.
+/// Tracks which sources were kept and which were dropped.
+#[derive(Debug, Clone)]
+pub struct BudgetResult {
+    pub content: String,
+    pub kept_sources: Vec<String>,
+    pub dropped_sources: Vec<String>,
+}
+
 /// A single context entry with priority metadata for budget allocation.
 /// Higher priority entries are kept when the budget is tight.
 #[derive(Debug, Clone)]
@@ -74,7 +83,7 @@ impl BudgetManager {
     /// Apply token budget to prioritized context entries.
     /// Entries are sorted by priority descending before applying the char limit,
     /// so the most important context is kept when truncation is needed.
-    pub fn apply_budget_prioritized(&self, entries: Vec<BudgetEntry>) -> String {
+    pub fn apply_budget_prioritized(&self, entries: Vec<BudgetEntry>) -> BudgetResult {
         // Filter out empty entries and sort by priority descending
         let mut entries: Vec<BudgetEntry> = entries
             .into_iter()
@@ -87,26 +96,44 @@ impl BudgetManager {
         });
 
         if entries.is_empty() {
-            return String::new();
+            return BudgetResult {
+                content: String::new(),
+                kept_sources: Vec::new(),
+                dropped_sources: Vec::new(),
+            };
         }
 
         let mut result = String::new();
+        let mut kept_sources: Vec<String> = Vec::new();
+        let mut dropped_sources: Vec<String> = Vec::new();
+        let mut truncated = false;
+
         for entry in entries {
             if result.len() + entry.content.len() + 2 > self.max_chars {
-                // Truncate and add ellipsis
-                let remaining = self.max_chars.saturating_sub(result.len());
-                if remaining >= 40 {
-                    result.push_str("\n\n[Context truncated due to token limit]");
-                }
-                break;
+                dropped_sources.push(entry.source.clone());
+                truncated = true;
+                continue;
             }
             if !result.is_empty() {
                 result.push_str("\n\n");
             }
             result.push_str(&entry.content);
+            kept_sources.push(entry.source.clone());
         }
 
-        result
+        // Always append a truncation notice when any entries were dropped
+        if truncated && !dropped_sources.is_empty() {
+            result.push_str(&format!(
+                "\n\n[Context truncated: dropped {}]",
+                dropped_sources.join(", ")
+            ));
+        }
+
+        BudgetResult {
+            content: result,
+            kept_sources,
+            dropped_sources,
+        }
     }
 
     /// Apply token budget to plain string contexts (insertion-order, no sorting).
@@ -122,7 +149,7 @@ impl BudgetManager {
                 source: String::new(),
             })
             .collect();
-        self.apply_budget_prioritized(entries)
+        self.apply_budget_prioritized(entries).content
     }
 }
 
@@ -190,9 +217,9 @@ mod tests {
         assert!(result.contains("Short"));
         assert!(result.contains("Medium length text"));
         assert!(result.contains("This won't fit"));
-        // remaining = 80 - 63 = 17, NOT > 40, so no truncation message
-        assert!(!result.contains("[Context truncated due to token limit]"));
-        assert!(!result.contains("This definitely exceeds"));
+        // Truncation notice is always appended when entries are dropped
+        assert!(result.contains("[Context truncated: dropped"));
+        assert!(!result.contains("This definitely exceeds the budget"));
     }
 
     #[test]
@@ -207,8 +234,7 @@ mod tests {
 
     #[test]
     fn test_apply_budget_truncation_with_message() {
-        // Truncation message is only added if remaining > 40 (enough room for the message)
-        // "Short" = 5 chars. Next entry won't fit. remaining = 100 - 5 = 95, > 40, message added.
+        // Truncation message is always added when entries are dropped
         let manager = BudgetManager::with_limit(100);
         let contexts = vec![
             "Short".to_string(),
@@ -216,12 +242,12 @@ mod tests {
         ];
         let result = manager.apply_budget(contexts);
         assert!(result.contains("Short"));
-        assert!(result.contains("[Context truncated due to token limit]"));
+        assert!(result.contains("[Context truncated: dropped"));
     }
 
     #[test]
-    fn test_apply_budget_truncation_no_message_if_tight() {
-        // If remaining <= 40 after the last context that fits, no truncation message
+    fn test_apply_budget_truncation_always_shows_message() {
+        // Truncation message is always shown when entries are dropped
         let manager = BudgetManager::with_limit(50);
         let contexts = vec![
             "This is a forty char long context!!!".to_string(), // 36 chars
@@ -231,9 +257,9 @@ mod tests {
         let result = manager.apply_budget(contexts);
         assert!(result.contains("forty char"));
         assert!(result.contains("Second"));
-        // remaining = 50 - 44 = 6, which is NOT > 40, so no message
-        assert!(!result.contains("[Context truncated"));
-        assert!(!result.contains("Third"));
+        assert!(!result.contains("Third exceeds"));
+        // Truncation notice is always appended when entries are dropped
+        assert!(result.contains("[Context truncated: dropped"));
     }
 
     // --- Priority-based tests ---
@@ -242,7 +268,9 @@ mod tests {
     fn test_prioritized_empty() {
         let manager = BudgetManager::new();
         let result = manager.apply_budget_prioritized(vec![]);
-        assert!(result.is_empty());
+        assert!(result.content.is_empty());
+        assert!(result.kept_sources.is_empty());
+        assert!(result.dropped_sources.is_empty());
     }
 
     #[test]
@@ -253,7 +281,8 @@ mod tests {
             BudgetEntry::new(0.5, "valid".to_string(), "test"),
         ];
         let result = manager.apply_budget_prioritized(entries);
-        assert_eq!(result, "valid");
+        assert_eq!(result.content, "valid");
+        assert_eq!(result.kept_sources, vec!["test"]);
     }
 
     #[test]
@@ -266,11 +295,12 @@ mod tests {
         ];
         let result = manager.apply_budget_prioritized(entries);
         // High priority should come first
-        let high_pos = result.find("high priority").unwrap();
-        let mid_pos = result.find("mid priority").unwrap();
-        let low_pos = result.find("low priority").unwrap();
+        let high_pos = result.content.find("high priority").unwrap();
+        let mid_pos = result.content.find("mid priority").unwrap();
+        let low_pos = result.content.find("low priority").unwrap();
         assert!(high_pos < mid_pos);
         assert!(mid_pos < low_pos);
+        assert_eq!(result.kept_sources, vec!["high", "mid", "low"]);
     }
 
     #[test]
@@ -282,7 +312,7 @@ mod tests {
         ];
         let result = manager.apply_budget_prioritized(entries);
         // High priority should be included
-        assert!(result.contains("high priority content"));
+        assert!(result.content.contains("high priority content"));
         // Low priority should be truncated (21 + 2 + 25 = 48 <= 60, actually fits)
         // Let's adjust: make budget tighter
         let manager = BudgetManager::with_limit(30);
@@ -291,20 +321,23 @@ mod tests {
             BudgetEntry::new(0.9, "high priority content".to_string(), "high"),
         ];
         let result = manager.apply_budget_prioritized(entries);
-        assert!(result.contains("high priority content"));
-        assert!(!result.contains("low priority content"));
+        assert!(result.content.contains("high priority content"));
+        assert!(!result.content.contains("low priority content"));
+        assert_eq!(result.dropped_sources, vec!["low"]);
     }
 
     #[test]
     fn test_prioritized_truncation_message() {
-        // "important" = 9 chars. remaining = 100 - 9 = 91, > 40, so message IS added.
+        // "important" = 9 chars. The long entry won't fit, so it gets dropped.
         let manager = BudgetManager::with_limit(100);
         let entries = vec![
             BudgetEntry::new(0.9, "important".to_string(), "high"),
             BudgetEntry::new(0.1, "this is definitely too long to fit and it keeps going and going until it exceeds our budget".to_string(), "low"),
         ];
         let result = manager.apply_budget_prioritized(entries);
-        assert!(result.contains("important"));
-        assert!(result.contains("[Context truncated due to token limit]"));
+        assert!(result.content.contains("important"));
+        assert!(result.content.contains("[Context truncated: dropped low]"));
+        assert_eq!(result.kept_sources, vec!["high"]);
+        assert_eq!(result.dropped_sources, vec!["low"]);
     }
 }

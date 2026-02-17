@@ -149,6 +149,68 @@ pub fn get_session_history_scoped_sync(
     }
 }
 
+/// Get hours since last completed session for a project.
+/// Returns `None` if no previous completed session exists.
+pub fn get_absence_duration_sync(conn: &Connection, project_id: i64) -> Option<i64> {
+    conn.query_row(
+        "SELECT (strftime('%s', 'now') - strftime('%s', last_activity)) / 3600
+         FROM sessions
+         WHERE project_id = ? AND status = 'completed'
+         ORDER BY last_activity DESC
+         LIMIT 1",
+        params![project_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .ok()
+}
+
+/// Get recent decisions from memory_facts.
+/// Returns `(content, created_at)` tuples ordered newest first.
+pub fn get_recent_decisions_sync(
+    conn: &Connection,
+    project_id: i64,
+    limit: i64,
+) -> Vec<(String, String)> {
+    let mut stmt = match conn.prepare(
+        "SELECT content, created_at FROM memory_facts
+         WHERE project_id = ? AND fact_type = 'decision'
+         ORDER BY created_at DESC
+         LIMIT ?",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map(params![project_id, limit], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })
+    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default()
+}
+
+/// Get recently accessed file paths from session_behavior_log.
+/// Extracts unique file paths from `file_access` events in the most recent sessions.
+pub fn get_recent_file_activity_sync(
+    conn: &Connection,
+    project_id: i64,
+    limit: i64,
+) -> Vec<String> {
+    // Get file_access events from recent sessions, extract unique file paths
+    let mut stmt = match conn.prepare(
+        "SELECT DISTINCT json_extract(event_data, '$.file_path') AS fp
+         FROM session_behavior_log
+         WHERE project_id = ? AND event_type = 'file_access'
+           AND json_extract(event_data, '$.file_path') IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT ?",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map(params![project_id, limit], |row| row.get::<_, String>(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
 /// Build session recap - sync version for pool.interact()
 pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> String {
     use super::project::get_project_info_sync;
@@ -164,13 +226,38 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
             .and_then(|(name, _path)| name)
     });
 
-    // Welcome header
-    let welcome = if let Some(name) = project_name {
-        format!("Welcome back to {} project!", name)
-    } else {
-        "Welcome back!".to_string()
+    // Absence-aware header
+    let header = match (project_id, &project_name) {
+        (Some(pid), Some(name)) => match get_absence_duration_sync(conn, pid) {
+            None | Some(0) => format!("--- {} ---", name),
+            Some(h) if h < 1 => format!("--- {} ---", name),
+            Some(h) if h < 24 => {
+                format!(
+                    "--- Welcome back to {}! (last session {}h ago) ---",
+                    name, h
+                )
+            }
+            Some(h) if h < 168 => {
+                let days = h / 24;
+                format!(
+                    "--- Welcome back to {}! (last session {} day{} ago) ---",
+                    name,
+                    days,
+                    if days == 1 { "" } else { "s" }
+                )
+            }
+            Some(h) => {
+                let days = h / 24;
+                format!(
+                    "--- It's been {} days! Here's your {} context ---",
+                    days, name
+                )
+            }
+        },
+        (_, Some(name)) => format!("--- {} ---", name),
+        _ => "--- Session Recap ---".to_string(),
     };
-    recap_parts.push(format!("--- {} ---", welcome));
+    recap_parts.push(header);
 
     // Recent sessions (excluding current)
     if let Some(pid) = project_id
@@ -212,6 +299,26 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
             .map(|g| format!("• {} ({}%) - {}", g.title, g.progress_percent, g.status))
             .collect();
         recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
+    }
+
+    // Recent decisions
+    if let Some(pid) = project_id {
+        let decisions = get_recent_decisions_sync(conn, pid, 5);
+        if !decisions.is_empty() {
+            let decision_lines: Vec<String> = decisions
+                .iter()
+                .map(|(content, _created_at)| format!("* {}", truncate(content, 120)))
+                .collect();
+            recap_parts.push(format!("Recent decisions:\n{}", decision_lines.join("\n")));
+        }
+    }
+
+    // Recently active files
+    if let Some(pid) = project_id {
+        let files = get_recent_file_activity_sync(conn, pid, 10);
+        if !files.is_empty() {
+            recap_parts.push(format!("Recently active files:\n* {}", files.join(", ")));
+        }
     }
 
     // Cross-project preferences (patterns used across multiple projects)

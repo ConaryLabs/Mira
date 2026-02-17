@@ -29,19 +29,48 @@ pub fn get_pre_generated_suggestions(
     rows.collect()
 }
 
+/// Get top pre-generated suggestions regardless of trigger key (for general context injection)
+pub fn get_top_pre_generated_suggestions(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    limit: usize,
+) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
+    let mut stmt = conn.prepare_cached(
+        r#"
+        SELECT id, suggestion_text, confidence
+        FROM proactive_suggestions
+        WHERE project_id = ?
+          AND (expires_at IS NULL OR expires_at > datetime('now'))
+          AND created_at > datetime('now', '-4 hours')
+        ORDER BY confidence DESC
+        LIMIT ?
+    "#,
+    )?;
+
+    let rows = stmt.query_map(params![project_id, limit as i64], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
+    })?;
+
+    rows.collect()
+}
+
 /// Mark a suggestion as shown (for feedback tracking)
 pub fn mark_suggestion_shown(
     conn: &rusqlite::Connection,
     project_id: i64,
-    trigger_key: &str,
+    suggestion_id: i64,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         r#"
         UPDATE proactive_suggestions
         SET shown_count = shown_count + 1
-        WHERE project_id = ? AND trigger_key = ?
+        WHERE id = ? AND project_id = ?
     "#,
-        params![project_id, trigger_key],
+        params![suggestion_id, project_id],
     )?;
     Ok(())
 }
@@ -50,15 +79,15 @@ pub fn mark_suggestion_shown(
 pub fn mark_suggestion_accepted(
     conn: &rusqlite::Connection,
     project_id: i64,
-    trigger_key: &str,
+    suggestion_id: i64,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         r#"
         UPDATE proactive_suggestions
         SET accepted_count = accepted_count + 1
-        WHERE project_id = ? AND trigger_key = ?
+        WHERE id = ? AND project_id = ?
     "#,
-        params![project_id, trigger_key],
+        params![suggestion_id, project_id],
     )?;
     Ok(())
 }

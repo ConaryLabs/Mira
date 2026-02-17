@@ -74,21 +74,25 @@ pub(crate) async fn get_proactive_context(
         // Budget: surface up to 2 suggestions if we have room (max 4 total proactive lines)
         let suggestion_budget = 4_usize.saturating_sub(context_lines.len()).min(2);
         if suggestion_budget > 0 {
-            // Use empty trigger_key for general/session-level suggestions
+            // Fetch top suggestions by confidence regardless of trigger key;
+            // suggestions are stored with file/tool trigger keys by producers so
+            // an empty-key lookup would always return nothing.
             if let Ok(suggestions) =
-                crate::proactive::background::get_pre_generated_suggestions(conn, project_id, "")
+                crate::proactive::background::get_top_pre_generated_suggestions(
+                    conn,
+                    project_id,
+                    suggestion_budget,
+                )
             {
-                for (text, confidence) in suggestions.iter().take(suggestion_budget) {
+                for (id, text, confidence) in &suggestions {
                     context_lines.push(format!(
                         "[Mira/suggestion] ({:.0}%) {}",
                         confidence * 100.0,
                         text
                     ));
-                }
-                // Mark shown for feedback tracking
-                if !suggestions.is_empty() {
-                    let _ =
-                        crate::proactive::background::mark_suggestion_shown(conn, project_id, "");
+                    let _ = crate::proactive::background::mark_suggestion_shown(
+                        conn, project_id, *id,
+                    );
                 }
             }
         }
@@ -235,7 +239,8 @@ fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) ->
     }
 
     let hook_budget = BudgetManager::with_limit(ctx.config_max_chars.saturating_mul(2).max(3000));
-    let final_context = hook_budget.apply_budget_prioritized(budget_entries);
+    let budget_result = hook_budget.apply_budget_prioritized(budget_entries);
+    let final_context = budget_result.content;
 
     if !final_context.is_empty() {
         let mut output = serde_json::json!({});
@@ -408,7 +413,8 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     let hook_budget = crate::context::BudgetManager::with_limit(
         manager.config().max_chars.saturating_mul(2).max(3000),
     );
-    let final_context = hook_budget.apply_budget_prioritized(budget_entries);
+    let budget_result = hook_budget.apply_budget_prioritized(budget_entries);
+    let final_context = budget_result.content;
 
     if !final_context.is_empty() {
         let mut output = serde_json::json!({});

@@ -20,9 +20,9 @@ mod working_context;
 
 pub use analytics::{InjectionAnalytics, InjectionEvent, extract_key_terms};
 pub use budget::{
-    BudgetEntry, BudgetManager, PRIORITY_CONVENTION, PRIORITY_CROSS_PROJECT, PRIORITY_FILE_AWARE,
-    PRIORITY_GOALS, PRIORITY_MEMORY, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_SEMANTIC,
-    PRIORITY_TASKS, PRIORITY_TEAM,
+    BudgetEntry, BudgetManager, BudgetResult, PRIORITY_CONVENTION, PRIORITY_CROSS_PROJECT,
+    PRIORITY_FILE_AWARE, PRIORITY_GOALS, PRIORITY_MEMORY, PRIORITY_PROACTIVE, PRIORITY_REACTIVE,
+    PRIORITY_SEMANTIC, PRIORITY_TASKS, PRIORITY_TEAM,
 };
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;
@@ -470,7 +470,8 @@ impl ContextInjectionManager {
         }
 
         // Apply priority-based budget management
-        let final_context = self.budget_manager.apply_budget_prioritized(entries);
+        let budget_result = self.budget_manager.apply_budget_prioritized(entries);
+        let final_context = budget_result.content;
 
         // Cache the result
         self.cache.put(user_message, final_context.clone()).await;

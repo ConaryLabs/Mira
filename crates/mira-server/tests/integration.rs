@@ -783,9 +783,9 @@ async fn test_get_session_recap() {
         result.err()
     );
     let output = result.unwrap();
-    // Should contain welcome message or say no recap available
+    // Should contain project name or say no recap available
     assert!(
-        output.contains("Welcome back") || output.contains("No session recap"),
+        output.contains("Recap Test") || output.contains("No session recap"),
         "Output: {}",
         output
     );

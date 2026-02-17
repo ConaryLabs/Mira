@@ -166,6 +166,9 @@ trait RecallResult {
     fn content(&self) -> &str;
     fn fact_type(&self) -> &str;
     fn category(&self) -> Option<&str>;
+    fn score(&self) -> Option<f32> {
+        None
+    }
 }
 
 impl RecallResult for MemoryFact {
@@ -196,6 +199,9 @@ impl RecallResult for crate::fuzzy::FuzzyMemoryResult {
     fn category(&self) -> Option<&str> {
         self.category.as_deref()
     }
+    fn score(&self) -> Option<f32> {
+        Some(self.score)
+    }
 }
 
 /// Filter recall results by category and fact_type, applying limit
@@ -223,13 +229,18 @@ fn filter_results<T: RecallResult>(
         .collect()
 }
 
-/// Record access, format response, and build MemoryOutput from any RecallResult type
+/// Record access, format response, and build MemoryOutput from any RecallResult type.
+///
+/// `override_scores` allows callers to supply synthetic scores (e.g. for keyword results
+/// that have no inherent relevance score). When provided, these take precedence over
+/// `RecallResult::score()`.
 fn build_recall_output<T: RecallResult>(
     results: &[T],
     context_header: &str,
     label: &str,
     session_id: &Option<String>,
     pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
+    override_scores: Option<&[f32]>,
 ) -> Json<MemoryOutput> {
     // Record access
     if let Some(sid) = session_id {
@@ -239,24 +250,43 @@ fn build_recall_output<T: RecallResult>(
 
     let items: Vec<MemoryItem> = results
         .iter()
-        .map(|mem| MemoryItem {
-            id: mem.id(),
-            content: mem.content().to_string(),
-            score: None,
-            fact_type: Some(mem.fact_type().to_string()),
-            branch: None,
+        .enumerate()
+        .map(|(i, mem)| {
+            let score = override_scores
+                .and_then(|s| s.get(i).copied())
+                .or_else(|| mem.score());
+            MemoryItem {
+                id: mem.id(),
+                content: mem.content().to_string(),
+                score,
+                fact_type: Some(mem.fact_type().to_string()),
+                branch: None,
+            }
         })
         .collect();
     let total = items.len();
     let mut response = format!("{}Found {} memories{}:\n", context_header, total, label);
-    for mem in results {
+    for (i, mem) in results.iter().enumerate() {
+        let score = override_scores
+            .and_then(|s| s.get(i).copied())
+            .or_else(|| mem.score());
         let preview = truncate(mem.content(), 100);
-        response.push_str(&format!(
-            "  [{}] ({}) {}\n",
-            mem.id(),
-            mem.fact_type(),
-            preview
-        ));
+        if let Some(s) = score {
+            response.push_str(&format!(
+                "  [{}] (score: {:.2}) ({}) {}\n",
+                mem.id(),
+                s,
+                mem.fact_type(),
+                preview
+            ));
+        } else {
+            response.push_str(&format!(
+                "  [{}] ({}) {}\n",
+                mem.id(),
+                mem.fact_type(),
+                preview
+            ));
+        }
     }
 
     Json(MemoryOutput {
@@ -697,7 +727,7 @@ pub async fn recall<C: ToolContext>(
 
     // Fall back to fuzzy search if enabled
     if let Some(cache) = ctx.fuzzy_cache()
-        && let Ok(results) = cache
+        && let Ok(mut results) = cache
             .search_memories(
                 ctx.pool(),
                 project_id,
@@ -709,6 +739,36 @@ pub async fn recall<C: ToolContext>(
             .await
         && !results.is_empty()
     {
+        // Apply entity boost to fuzzy results
+        if !query_entity_names.is_empty() {
+            let fact_ids: Vec<i64> = results.iter().map(|r| r.id).collect();
+            if !fact_ids.is_empty() {
+                let entity_names_for_fuzzy = query_entity_names.clone();
+                if let Ok(entity_counts) = ctx
+                    .pool()
+                    .run(move |conn| {
+                        crate::db::entities::get_entity_match_counts_sync(
+                            conn,
+                            project_id,
+                            &entity_names_for_fuzzy,
+                        )
+                    })
+                    .await
+                {
+                    for r in &mut results {
+                        let count = entity_counts.get(&r.id).copied().unwrap_or(0);
+                        if count > 0 {
+                            r.score *= (1.0 + 0.15 * count as f32).min(1.27);
+                        }
+                    }
+                    results.sort_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+            }
+        }
         let results = filter_results(results, &category, &fact_type, limit);
         if !results.is_empty() {
             return Ok(build_recall_output(
@@ -717,6 +777,7 @@ pub async fn recall<C: ToolContext>(
                 " (fuzzy)",
                 &session_id,
                 ctx.pool(),
+                None,
             ));
         }
     }
@@ -724,7 +785,7 @@ pub async fn recall<C: ToolContext>(
     // Fall back to SQL search via connection pool
     let query_clone = query.clone();
     let user_id_clone = user_id.clone();
-    let results: Vec<MemoryFact> = ctx
+    let mut results: Vec<MemoryFact> = ctx
         .pool()
         .run(move |conn| {
             search_memories_sync(
@@ -737,6 +798,29 @@ pub async fn recall<C: ToolContext>(
             )
         })
         .await?;
+
+    // Apply entity boost to keyword results: reorder by entity match count,
+    // preserving original order for equal counts (stable sort)
+    if !query_entity_names.is_empty() && !results.is_empty() {
+        let entity_names_for_kw = query_entity_names.clone();
+        if let Ok(entity_counts) = ctx
+            .pool()
+            .run(move |conn| {
+                crate::db::entities::get_entity_match_counts_sync(
+                    conn,
+                    project_id,
+                    &entity_names_for_kw,
+                )
+            })
+            .await
+        {
+            results.sort_by(|a, b| {
+                let ca = entity_counts.get(&a.id).copied().unwrap_or(0);
+                let cb = entity_counts.get(&b.id).copied().unwrap_or(0);
+                cb.cmp(&ca)
+            });
+        }
+    }
 
     let results = filter_results(results, &category, &fact_type, limit);
 
@@ -751,12 +835,18 @@ pub async fn recall<C: ToolContext>(
         }));
     }
 
+    // Synthetic position-based scores for keyword results
+    let keyword_scores: Vec<f32> = (0..results.len())
+        .map(|i| 0.8_f32 - (i as f32 * 0.08).min(0.5))
+        .collect();
+
     Ok(build_recall_output(
         &results,
         &context_header,
         " (keyword fallback)",
         &session_id,
         ctx.pool(),
+        Some(&keyword_scores),
     ))
 }
 

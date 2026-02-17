@@ -68,6 +68,10 @@ pub struct MilestoneInfo {
     pub title: String,
     pub weight: i32,
     pub completed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_in_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

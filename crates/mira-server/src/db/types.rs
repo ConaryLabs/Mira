@@ -96,6 +96,9 @@ pub struct Milestone {
     pub title: String,
     pub completed: bool,
     pub weight: i32,
+    pub created_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub completed_in_session_id: Option<String>,
 }
 
 /// Unified insight from pondering, proactive suggestions, or doc gaps

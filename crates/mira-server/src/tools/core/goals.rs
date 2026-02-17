@@ -209,6 +209,8 @@ async fn action_get<C: ToolContext>(ctx: &C, goal_id: i64) -> Result<Json<GoalOu
                 title: m.title.clone(),
                 weight: m.weight,
                 completed: m.completed,
+                completed_at: m.completed_at.clone(),
+                completed_in_session_id: m.completed_in_session_id.clone(),
             });
         }
     }
@@ -426,6 +428,8 @@ async fn action_list<C: ToolContext>(
                                 .map(|m| MilestoneInfo {
                                     id: m.id,
                                     title: m.title,
+                                    completed_at: m.completed_at,
+                                    completed_in_session_id: m.completed_in_session_id,
                                     weight: m.weight,
                                     completed: m.completed,
                                 })
@@ -589,9 +593,10 @@ async fn action_complete_milestone<C: ToolContext>(
 ) -> Result<Json<GoalOutput>, MiraError> {
     verify_milestone_project(ctx, milestone_id).await?;
 
+    let session_id = ctx.get_session_id().await;
     let goal_id_result = ctx
         .pool()
-        .run(move |conn| complete_milestone_sync(conn, milestone_id))
+        .run(move |conn| complete_milestone_sync(conn, milestone_id, session_id.as_deref()))
         .await?;
 
     if let Some(gid) = goal_id_result {
@@ -701,9 +706,10 @@ async fn action_sessions<C: ToolContext>(
     let entries: Vec<GoalSessionEntry> = links
         .into_iter()
         .map(|link| {
+            let short_id = crate::utils::truncate_at_boundary(&link.session_id, 8);
             response.push_str(&format!(
                 "  {} — {} (last: {})\n",
-                link.session_id, link.interaction_type, link.created_at
+                short_id, link.interaction_type, link.created_at
             ));
             GoalSessionEntry {
                 session_id: link.session_id,

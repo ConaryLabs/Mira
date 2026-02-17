@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use super::types::Milestone;
 
 /// Parse Milestone from a rusqlite Row with standard column order:
-/// (id, goal_id, title, completed, weight)
+/// (id, goal_id, title, completed, weight, created_at, completed_at, completed_in_session_id)
 pub fn parse_milestone_row(row: &rusqlite::Row) -> rusqlite::Result<Milestone> {
     Ok(Milestone {
         id: row.get(0)?,
@@ -14,6 +14,9 @@ pub fn parse_milestone_row(row: &rusqlite::Row) -> rusqlite::Result<Milestone> {
         title: row.get(2)?,
         completed: row.get::<_, i32>(3)? != 0,
         weight: row.get(4)?,
+        created_at: row.get(5)?,
+        completed_at: row.get(6)?,
+        completed_in_session_id: row.get(7)?,
     })
 }
 
@@ -37,7 +40,7 @@ pub fn get_milestones_for_goal_sync(
     conn: &Connection,
     goal_id: i64,
 ) -> rusqlite::Result<Vec<Milestone>> {
-    let sql = "SELECT id, goal_id, title, completed, weight
+    let sql = "SELECT id, goal_id, title, completed, weight, created_at, completed_at, completed_in_session_id
                FROM milestones WHERE goal_id = ?
                ORDER BY id ASC";
     let mut stmt = conn.prepare(sql)?;
@@ -47,7 +50,7 @@ pub fn get_milestones_for_goal_sync(
 
 /// Get a milestone by ID
 pub fn get_milestone_by_id_sync(conn: &Connection, id: i64) -> rusqlite::Result<Option<Milestone>> {
-    let sql = "SELECT id, goal_id, title, completed, weight
+    let sql = "SELECT id, goal_id, title, completed, weight, created_at, completed_at, completed_in_session_id
                FROM milestones WHERE id = ?";
     conn.query_row(sql, [id], parse_milestone_row).optional()
 }
@@ -75,8 +78,15 @@ pub fn update_milestone_sync(
 }
 
 /// Mark a milestone as completed and return the goal_id for progress update
-pub fn complete_milestone_sync(conn: &Connection, id: i64) -> rusqlite::Result<Option<i64>> {
-    conn.execute("UPDATE milestones SET completed = 1 WHERE id = ?", [id])?;
+pub fn complete_milestone_sync(
+    conn: &Connection,
+    id: i64,
+    session_id: Option<&str>,
+) -> rusqlite::Result<Option<i64>> {
+    conn.execute(
+        "UPDATE milestones SET completed = 1, completed_at = datetime('now'), completed_in_session_id = ?2 WHERE id = ?1",
+        params![id, session_id],
+    )?;
     // Return the goal_id so caller can update progress
     conn.query_row("SELECT goal_id FROM milestones WHERE id = ?", [id], |row| {
         row.get(0)
