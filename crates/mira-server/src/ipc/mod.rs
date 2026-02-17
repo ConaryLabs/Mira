@@ -15,7 +15,12 @@ use std::path::PathBuf;
 /// Returns the path to the Mira IPC socket (~/.mira/mira.sock).
 pub fn socket_path() -> PathBuf {
     dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                "HOME directory not set — using /tmp for Mira IPC socket. Consider setting $HOME."
+            );
+            PathBuf::from("/tmp")
+        })
         .join(".mira")
         .join("mira.sock")
 }

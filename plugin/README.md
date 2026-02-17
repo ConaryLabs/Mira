@@ -81,7 +81,7 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 8 MCP tools:
+The plugin bundles the Mira MCP server with 9 MCP tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
@@ -89,7 +89,8 @@ The plugin bundles the Mira MCP server with 8 MCP tools:
 | `code` | search, symbols, callers, callees | Code intelligence: semantic search + call graph |
 | `diff` | *(single purpose)* | Semantic git diff analysis with impact assessment |
 | `project` | start, get | Project/session management |
-| `session` | current_session, recap, insights, dismiss_insight | Session context and insights |
+| `session` | current_session, recap | Session context and management |
+| `insights` | insights, dismiss_insight | Background analysis digest and health dashboard |
 | `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
 | `index` | project, file, status | Code indexing |
 | `recipe` | list, get | Agentic team workflow recipes |
@@ -114,6 +115,9 @@ The plugin uses Claude Code hooks for bidirectional communication:
 | `SubagentStart` | Inject context when subagents spawn |
 | `SubagentStop` | Capture discoveries from subagent work |
 | `PermissionRequest` | Handle permission checks |
+| `PostToolUseFailure` | Track failures, recall memories after repeated failures |
+| `TaskCompleted` | Log task completions, auto-complete goal milestones |
+| `TeammateIdle` | Log teammate idle events for team tracking |
 
 ## Testing
 

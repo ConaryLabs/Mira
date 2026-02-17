@@ -181,9 +181,9 @@ mod tests {
         for _ in 0..FAILURE_THRESHOLD {
             cb.record_failure(Provider::DeepSeek);
         }
-        // DeepSeek tripped, but Zhipu should be fine
+        // DeepSeek tripped, but Ollama should be fine
         assert!(!cb.is_available(Provider::DeepSeek));
-        assert!(cb.is_available(Provider::Zhipu));
+        assert!(cb.is_available(Provider::Ollama));
     }
 
     #[test]

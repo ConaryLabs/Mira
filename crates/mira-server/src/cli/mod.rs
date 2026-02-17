@@ -121,12 +121,12 @@ pub enum Commands {
 pub enum ConfigAction {
     /// Show current provider configuration
     Show,
-    /// Set a config value (e.g. `mira config set background_provider zhipu`)
+    /// Set a config value (e.g. `mira config set background_provider deepseek`)
     Set {
         /// Config key (background_provider, default_provider)
         #[arg(index = 1)]
         key: String,
-        /// Value to set (deepseek, zhipu, ollama)
+        /// Value to set (deepseek, ollama)
         #[arg(index = 2)]
         value: String,
     },

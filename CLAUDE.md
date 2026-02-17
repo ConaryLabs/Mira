@@ -93,6 +93,7 @@ See `.env.example` for all options.
 | `/mira:recap` | Get session context, preferences, and active goals |
 | `/mira:search <query>` | Semantic code search by concept |
 | `/mira:remember <content>` | Quick memory storage |
+| `/mira:recall [query]` | Browse or search stored memories |
 | `/mira:insights` | Surface background analysis and predictions |
 | `/mira:diff` | Semantic analysis of code changes |
 | `/mira:experts` | Expert consultation via Agent Teams |

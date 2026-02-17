@@ -168,7 +168,13 @@ fn enrich_and_store_modules_sync(
         );
 
         // Get exports (pub symbols in this module's path)
-        let pattern = format!("{}%", module.path);
+        // Escape SQL LIKE wildcards in module path
+        let escaped_path = module
+            .path
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("{}%", escaped_path);
         module.exports = get_module_exports_sync(conn, project_id, &pattern, 20)?;
         tracing::debug!("  found {} exports", module.exports.len());
 

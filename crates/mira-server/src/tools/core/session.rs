@@ -206,7 +206,12 @@ pub(crate) async fn session_history<C: ToolContext>(
             let history = ctx
                 .pool()
                 .run(move |conn| {
-                    get_session_history_scoped_sync(conn, &session_id_clone, Some(project_id), limit)
+                    get_session_history_scoped_sync(
+                        conn,
+                        &session_id_clone,
+                        Some(project_id),
+                        limit,
+                    )
                 })
                 .await?;
 

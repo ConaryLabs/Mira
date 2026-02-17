@@ -14,7 +14,6 @@ mod prompt;
 mod provider;
 pub mod sampling;
 mod types;
-mod zhipu;
 
 pub use circuit_breaker::CircuitBreaker;
 pub use context_budget::{
@@ -29,4 +28,3 @@ pub use pricing::{ModelPricing, chat_with_usage, get_pricing, record_llm_usage};
 pub use prompt::PromptBuilder;
 pub use provider::{LlmClient, NormalizedUsage, Provider};
 pub use types::{ChatResult, FunctionCall, FunctionDef, Message, Tool, ToolCall, Usage};
-pub use zhipu::ZhipuClient;

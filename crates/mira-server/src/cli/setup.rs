@@ -22,7 +22,6 @@ const BANNER: &str = r#"
 /// Known provider keys that indicate a configured provider
 const PROVIDER_KEYS: &[&str] = &[
     "DEEPSEEK_API_KEY",
-    "ZHIPU_API_KEY",
     "OPENAI_API_KEY",
     "BRAVE_API_KEY",
     "OLLAMA_HOST",
@@ -589,21 +588,6 @@ async fn validate_api_key(env_var: &str, key: &str) -> ValidationResult {
                 .header("Content-Type", "application/json")
                 .json(&serde_json::json!({
                     "model": "deepseek-chat",
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "max_tokens": 1
-                }))
-                .timeout(Duration::from_secs(10))
-                .send()
-                .await;
-            check_response(resp).await
-        }
-        "ZHIPU_API_KEY" => {
-            let resp = client
-                .post("https://api.z.ai/api/coding/paas/v4/chat/completions")
-                .header("Authorization", format!("Bearer {}", key))
-                .header("Content-Type", "application/json")
-                .json(&serde_json::json!({
-                    "model": "glm-5",
                     "messages": [{"role": "user", "content": "hi"}],
                     "max_tokens": 1
                 }))

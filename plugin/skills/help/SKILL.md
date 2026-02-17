@@ -18,6 +18,7 @@ description: This skill should be used when the user asks "help", "what commands
 | Command | Description |
 |---------|-------------|
 | `/mira:search <query>` | Semantic code search — find code by meaning, not just text |
+| `/mira:recall [query]` | Browse or search stored memories across sessions |
 | `/mira:goals` | Track cross-session objectives with milestones |
 | `/mira:diff` | Semantic analysis of git changes with impact assessment |
 | `/mira:insights` | Surface background analysis and predictions |
@@ -33,9 +34,9 @@ description: This skill should be used when the user asks "help", "what commands
 
 ## MCP Tools
 
-Beyond slash commands, Mira provides 8 MCP tools that Claude uses automatically:
+Beyond slash commands, Mira provides 9 MCP tools that Claude uses automatically:
 
-`memory`, `code`, `diff`, `project`, `session`, `goal`, `index`, `recipe`
+`memory`, `code`, `diff`, `project`, `session`, `insights`, `goal`, `index`, `recipe`
 
 These power semantic search, call graph analysis, persistent memory, and more — no slash command needed.
 

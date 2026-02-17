@@ -138,7 +138,10 @@ impl MiraConfig {
     /// Get the config file path (public for CLI config commands)
     pub fn config_path() -> PathBuf {
         dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+            .unwrap_or_else(|| {
+                warn!("HOME directory not set — using current directory for Mira config. This may cause config files to be created in your project directory. Consider setting $HOME.");
+                PathBuf::from(".")
+            })
             .join(".mira")
             .join("config.toml")
     }
@@ -168,21 +171,21 @@ background_provider = "deepseek"
     fn test_parse_default_provider() {
         let toml = r#"
 [llm]
-default_provider = "zhipu"
+default_provider = "ollama"
 "#;
         let config: MiraConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.default_provider(), Some(Provider::Zhipu));
+        assert_eq!(config.default_provider(), Some(Provider::Ollama));
     }
 
     #[test]
     fn test_parse_both_providers() {
         let toml = r#"
 [llm]
-background_provider = "zhipu"
+background_provider = "ollama"
 default_provider = "deepseek"
 "#;
         let config: MiraConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.background_provider(), Some(Provider::Zhipu));
+        assert_eq!(config.background_provider(), Some(Provider::Ollama));
         assert_eq!(config.default_provider(), Some(Provider::DeepSeek));
     }
 
@@ -226,13 +229,13 @@ typo_provider = "zhipu"
     fn test_unknown_sections_ignored() {
         let toml = r#"
 [llm]
-background_provider = "zhipu"
+background_provider = "ollama"
 
 [database]
 path = "/tmp/test.db"
 "#;
         let config: MiraConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.background_provider(), Some(Provider::Zhipu));
+        assert_eq!(config.background_provider(), Some(Provider::Ollama));
     }
 
     #[test]
@@ -249,13 +252,14 @@ default_provider = "claude"
     }
 
     #[test]
-    fn test_provider_aliases_work() {
+    fn test_removed_provider_alias_returns_none() {
+        // "glm" was an alias for the removed Zhipu provider — now invalid
         let toml = r#"
 [llm]
 background_provider = "glm"
 "#;
         let config: MiraConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.background_provider(), Some(Provider::Zhipu));
+        assert_eq!(config.background_provider(), None);
     }
 
     #[test]

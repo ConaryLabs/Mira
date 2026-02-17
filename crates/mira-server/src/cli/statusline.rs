@@ -133,10 +133,6 @@ fn provider_has_key(provider: Provider) -> bool {
             .ok()
             .filter(|k| !k.trim().is_empty())
             .is_some(),
-        Provider::Zhipu => std::env::var("ZHIPU_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .is_some(),
         Provider::Ollama => std::env::var("OLLAMA_HOST")
             .ok()
             .filter(|k| !k.trim().is_empty())
@@ -147,7 +143,7 @@ fn provider_has_key(provider: Provider) -> bool {
 
 /// Determine the active background LLM provider and its model name.
 /// Mirrors the runtime fallback chain in ProviderFactory::client_for_background():
-/// background_provider -> default_provider -> DeepSeek -> Zhipu -> Ollama
+/// background_provider -> default_provider -> DeepSeek -> Ollama
 fn get_llm_info() -> Option<(String, String)> {
     let config = MiraConfig::load();
 
@@ -159,7 +155,7 @@ fn get_llm_info() -> Option<(String, String)> {
 
     // Build candidate list matching ProviderFactory::client_for_background()
     // Exclude Sampling — it has no LlmClient impl, so the factory can't use it.
-    let fallback_chain = [Provider::DeepSeek, Provider::Zhipu, Provider::Ollama];
+    let fallback_chain = [Provider::DeepSeek, Provider::Ollama];
     let candidates: Vec<Provider> = config
         .background_provider()
         .into_iter()

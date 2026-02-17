@@ -23,7 +23,10 @@ pub mod pool;
 mod project;
 pub mod retention;
 mod schema;
-pub use schema::vectors::{check_embedding_provider_change, ensure_vec_table_dimensions};
+pub use schema::vectors::{
+    check_embedding_provider_change, ensure_code_embeddings_queued, ensure_vec_table_dimensions,
+    invalidate_code_embeddings,
+};
 mod search;
 mod session;
 mod session_goals;

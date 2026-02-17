@@ -355,7 +355,7 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira exposes 8 MCP tools (consolidated from ~20 standalone tools in v0.4.x, then trimmed to 6 core tools, with `diff` and `recipe` later re-exposed on the MCP surface).
+Mira exposes 9 MCP tools (consolidated from ~20 standalone tools in v0.4.x, then trimmed to 6 core tools, with `diff`, `recipe`, and `insights` later re-exposed on the MCP surface).
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
 The server implements MCP Elicitation (interactive setup) and MCP Tasks (async long-running operations).
 
@@ -375,7 +375,6 @@ The schema is "product-shaped," not purely technical:
 | Background | `pending_embeddings`, `project_briefings` | Work queues |
 | Workflow | `goals`, `milestones` | Goal and milestone tracking |
 | Proactive | `behavior_patterns`, `proactive_suggestions` | Behavior mining and predictions |
-| Cross-Project | `cross_project_patterns`, `cross_project_preferences` | Privacy-preserving pattern sharing (removed in v0.6.6; tables retained for future use) |
 
 ### Embeddings and Search
 
@@ -489,7 +488,7 @@ The following were previously planned and are now complete:
 - ✓ MCP Elicitation for interactive API key setup
 - ✓ MCP Tasks for async long-running operations
 - ✓ Structured JSON responses via outputSchema
-- ✓ Tool consolidation from ~20 to 9 action-based tools, then trimmed to 8 MCP tools (project, memory, code, goal, index, session, diff, recipe) with documentation and team moved to CLI-only
+- ✓ Tool consolidation from ~20 to 9 action-based tools, then trimmed to 9 MCP tools (project, memory, code, goal, index, session, insights, diff, recipe) with documentation and team moved to CLI-only
 - ✓ Change Intelligence (outcome tracking, pattern mining, predictive risk)
 - ✓ Entity layer for memory recall boost
 - ✓ Dependency graphs, architectural pattern detection, tech debt scoring

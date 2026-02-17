@@ -4,7 +4,7 @@
 use crate::llm::{Message, Tool};
 use serde::Serialize;
 
-/// Thinking mode configuration (GLM-specific, ignored by DeepSeek)
+/// Thinking mode configuration (provider-specific)
 #[derive(Debug, Clone, Serialize)]
 pub struct ThinkingConfig {
     pub enable_thinking: bool,
@@ -25,7 +25,7 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<ThinkingConfig>, // GLM-specific
+    pub thinking: Option<ThinkingConfig>,
 }
 
 impl ChatRequest {
@@ -63,7 +63,7 @@ impl ChatRequest {
         self
     }
 
-    /// Enable GLM thinking mode
+    /// Enable thinking mode
     pub fn with_thinking(mut self, enabled: bool, budget_tokens: u32) -> Self {
         if enabled {
             self.thinking = Some(ThinkingConfig {

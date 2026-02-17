@@ -25,7 +25,7 @@ use std::time::Instant;
 /// Get the Mira database path (~/.mira/mira.db)
 pub fn get_db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| {
-        eprintln!("[Mira] WARNING: HOME directory not set, using '.' as fallback for DB path");
+        tracing::warn!("HOME directory not set — using current directory for Mira data. This may cause data to be created in your project directory. Consider setting $HOME.");
         PathBuf::from(".")
     });
     home.join(".mira/mira.db")

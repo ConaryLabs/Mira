@@ -45,7 +45,7 @@ crates/
       git/           # Git operations (branch via git2, commits/diffs via CLI)
       hooks/         # Claude Code lifecycle hooks (session, prompt, tool)
       indexer/       # Code parsing and symbol extraction (tree-sitter)
-      llm/           # LLM provider clients (DeepSeek, Zhipu, Ollama, MCP Sampling)
+      llm/           # LLM provider clients (DeepSeek, Ollama, MCP Sampling)
       mcp/           # MCP protocol server (rmcp-based)
       proactive/     # Proactive intelligence (behavior mining, predictions)
       search/        # Semantic, keyword, and cross-reference search

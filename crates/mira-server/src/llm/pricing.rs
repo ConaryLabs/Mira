@@ -69,7 +69,6 @@ impl ModelPricing {
 pub fn get_pricing(provider: Provider, model: &str) -> Option<ModelPricing> {
     match provider {
         Provider::DeepSeek => get_deepseek_pricing(model),
-        Provider::Zhipu => get_zhipu_pricing(model),
         Provider::Ollama => Some(ModelPricing::new(0.0, 0.0)), // Local, no cost
         Provider::Sampling => Some(ModelPricing::new(0.0, 0.0)), // Host-provided, no direct cost
     }
@@ -84,13 +83,6 @@ fn get_deepseek_pricing(model: &str) -> Option<ModelPricing> {
         _ if model.starts_with("deepseek") => Some(ModelPricing::with_cache(0.28, 0.42, 0.028)),
         _ => None,
     }
-}
-
-/// Zhipu GLM pricing (coding plan — bundled quota, approximate per-token cost)
-/// GLM-5 coding plan: ~¥0.5/1M tokens input, ~¥0.5/1M tokens output
-fn get_zhipu_pricing(_model: &str) -> Option<ModelPricing> {
-    // Coding plan uses bundled quota; these are approximate per-token rates
-    Some(ModelPricing::new(0.07, 0.07))
 }
 
 // ============================================================================

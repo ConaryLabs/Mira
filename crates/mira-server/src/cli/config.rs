@@ -55,7 +55,7 @@ pub fn run_config_set(key: &str, value: &str) -> Result<()> {
     let provider = match Provider::from_str(value) {
         Some(p) => p,
         None => bail!(
-            "Unknown provider '{}'. Valid providers: deepseek, zhipu (or glm), ollama",
+            "Unknown provider '{}'. Valid providers: deepseek, ollama",
             value
         ),
     };
@@ -180,7 +180,7 @@ mod tests {
     fn test_valid_providers_are_accepted() {
         // Verify valid providers parse correctly and aren't Sampling
         // (i.e. they'd pass the validation gates in run_config_set without touching disk)
-        for name in &["deepseek", "zhipu", "glm", "ollama"] {
+        for name in &["deepseek", "ollama"] {
             let provider = Provider::from_str(name);
             assert!(
                 provider.is_some(),

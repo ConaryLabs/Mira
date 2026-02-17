@@ -373,7 +373,7 @@ async fn handle_edit_write_patterns(
     // Open DB directly (lightweight, no embeddings needed)
     let db_path = crate::hooks::get_db_path();
     let pool = match crate::db::pool::DatabasePool::open_hook(&db_path).await {
-        Ok(p) => p,
+        Ok(p) => std::sync::Arc::new(p),
         Err(_) => {
             write_hook_output(&serde_json::json!({}));
             return Ok(());
@@ -381,7 +381,7 @@ async fn handle_edit_write_patterns(
     };
 
     // Resolve project
-    let (project_id, _) = crate::hooks::resolve_project(&std::sync::Arc::new(pool)).await;
+    let (project_id, _) = crate::hooks::resolve_project(&pool).await;
     let Some(project_id) = project_id else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
@@ -389,25 +389,15 @@ async fn handle_edit_write_patterns(
 
     // Query for change patterns that mention this file
     let fp = file_path.clone();
-    let pool2 = {
-        let db_path = crate::hooks::get_db_path();
-        match crate::db::pool::DatabasePool::open_hook(&db_path).await {
-            Ok(p) => std::sync::Arc::new(p),
-            Err(_) => {
-                write_hook_output(&serde_json::json!({}));
-                return Ok(());
-            }
-        }
-    };
 
-    let warnings: Vec<String> = pool2
+    let warnings: Vec<String> = pool
         .interact(move |conn| {
             let sql = r#"
                 SELECT pattern_data, occurrence_count
                 FROM behavior_patterns
                 WHERE project_id = ?1
                   AND pattern_type = 'change_pattern'
-                  AND pattern_data LIKE ?2
+                  AND pattern_data LIKE ?2 ESCAPE '\'
                 ORDER BY occurrence_count DESC
                 LIMIT 3
             "#;
@@ -416,7 +406,12 @@ async fn handle_edit_write_patterns(
                 .file_name()
                 .and_then(|f| f.to_str())
                 .unwrap_or(&fp);
-            let like_pattern = format!("%{}%", filename);
+            // Escape SQL LIKE wildcards to prevent injection
+            let escaped = filename
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let like_pattern = format!("%{}%", escaped);
 
             let mut stmt = match conn.prepare(sql) {
                 Ok(s) => s,

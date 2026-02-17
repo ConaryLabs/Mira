@@ -119,5 +119,76 @@ pub fn check_embedding_provider_change(conn: &Connection, current_provider: &str
     Ok(true)
 }
 
+/// Invalidate vec_code in the code database after an embedding provider change.
+///
+/// Clears `vec_code` (semantic embeddings only — `code_fts` is provider-independent
+/// and is preserved for uninterrupted keyword search). Re-populates `pending_embeddings`
+/// from all existing `code_chunks` so the fast-lane worker immediately begins re-embedding
+/// with the new provider. The canonical `code_chunks` table is always preserved.
+pub fn invalidate_code_embeddings(code_conn: &Connection) -> Result<()> {
+    tracing::info!("Clearing vec_code and re-queuing all code chunks for re-embedding");
+
+    let tx = code_conn.unchecked_transaction()?;
+    tx.execute_batch("DELETE FROM vec_code")?;
+
+    // Clear any existing pending entries, then insert all chunks exactly once.
+    // pending_embeddings has no UNIQUE constraint, so INSERT OR IGNORE is a no-op;
+    // DELETE + INSERT is the correct way to get an exact, duplicate-free queue.
+    tx.execute_batch("DELETE FROM pending_embeddings WHERE status = 'pending'")?;
+    tx.execute_batch(
+        "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line)
+         SELECT project_id, file_path, chunk_content, start_line FROM code_chunks",
+    )?;
+
+    tx.commit()?;
+
+    let queued: i64 = code_conn
+        .query_row(
+            "SELECT COUNT(*) FROM pending_embeddings WHERE status = 'pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    tracing::info!("Queued {} code chunks for re-embedding", queued);
+
+    Ok(())
+}
+
+/// Recovery check: if vec_code is empty but code_chunks exist and nothing is queued,
+/// re-populate pending_embeddings. Called at startup to handle cases where a previous
+/// invalidation succeeded in clearing vec_code but failed before re-queuing (e.g. crash).
+pub fn ensure_code_embeddings_queued(code_conn: &Connection) -> Result<()> {
+    let vec_count: i64 = code_conn
+        .query_row("SELECT COUNT(*) FROM vec_code", [], |r| r.get(0))
+        .unwrap_or(1); // default 1 = assume present if query fails
+
+    let chunk_count: i64 = code_conn
+        .query_row("SELECT COUNT(*) FROM code_chunks", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let pending_count: i64 = code_conn
+        .query_row(
+            "SELECT COUNT(*) FROM pending_embeddings WHERE status = 'pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    if vec_count == 0 && chunk_count > 0 && pending_count == 0 {
+        tracing::warn!(
+            "vec_code is empty but {} code chunks exist with nothing queued — \
+             re-queuing for re-embedding (likely from a previous interrupted provider switch)",
+            chunk_count
+        );
+        // pending_count == 0 is verified above, so a plain INSERT is duplicate-free.
+        code_conn.execute_batch(
+            "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line)
+             SELECT project_id, file_path, chunk_content, start_line FROM code_chunks",
+        )?;
+    }
+
+    Ok(())
+}
+
 // Note: vec_code and pending_embeddings migrations are now in db/schema/code.rs
 // (they apply to the separate code database, not the main database)

@@ -362,93 +362,7 @@ Pre-generated suggestions for fast lookup during UserPromptSubmit hook.
 
 ---
 
----
-
-## Cross-Project Intelligence
-
-> **Note:** The cross-project code module was removed in v0.6.6. These tables remain in the schema for potential future use but are not currently populated.
-
-Tables for privacy-preserving pattern sharing across projects.
-
-### cross_project_patterns
-
-Anonymized patterns that can be shared across projects.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| pattern_type | TEXT | `file_sequence`, `tool_chain`, `problem_pattern`, `collaboration` |
-| pattern_hash | TEXT UNIQUE | Hash for deduplication |
-| anonymized_data | TEXT | JSON: pattern data with identifiers removed |
-| category | TEXT | High-level category (e.g., `rust`, `web`, `database`) |
-| confidence | REAL | Aggregated confidence across projects |
-| occurrence_count | INTEGER | Projects showing this pattern |
-| noise_added | REAL | Differential privacy noise level |
-| min_projects_required | INTEGER | K-anonymity threshold (default: 3) |
-| source_project_count | INTEGER | Contributing project count |
-| last_updated_at | TEXT | Last update |
-| created_at | TEXT | Timestamp |
-
-### pattern_sharing_log
-
-Tracks pattern exports and imports.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| project_id | INTEGER FK | Project reference |
-| direction | TEXT | `exported` or `imported` |
-| pattern_type | TEXT | Pattern type |
-| pattern_hash | TEXT | Pattern hash |
-| anonymization_level | TEXT | `full`, `partial`, `none` |
-| differential_privacy_epsilon | REAL | Privacy budget used |
-| created_at | TEXT | Timestamp |
-
-### cross_project_preferences
-
-Per-project sharing preferences.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| project_id | INTEGER FK UNIQUE | Project reference |
-| sharing_enabled | INTEGER | Master opt-in switch |
-| export_patterns | INTEGER | Allow exporting patterns |
-| import_patterns | INTEGER | Allow importing patterns |
-| min_anonymization_level | TEXT | `full`, `partial`, `none` |
-| allowed_pattern_types | TEXT | JSON array of allowed types |
-| privacy_epsilon_budget | REAL | Total differential privacy budget |
-| privacy_epsilon_used | REAL | Privacy budget consumed |
-| created_at | TEXT | Timestamp |
-| updated_at | TEXT | Last update |
-
-### pattern_provenance
-
-Tracks which projects contributed (anonymously).
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| pattern_id | INTEGER FK | Cross-project pattern reference |
-| contribution_hash | TEXT | Hash of project contribution (not project id) |
-| contribution_weight | REAL | How much this contribution affects pattern |
-| contributed_at | TEXT | Timestamp |
-
----
-
 ## Multi-User & Teams
-
-### users
-
-User identity registry.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PK | Auto-increment ID |
-| identity | TEXT UNIQUE | User identifier |
-| display_name | TEXT | Display name |
-| email | TEXT | Email address |
-| created_at | TEXT | Timestamp |
 
 ### teams
 
@@ -597,7 +511,7 @@ LLM API usage and cost tracking.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PK | Auto-increment ID |
-| provider | TEXT | `deepseek`, `zhipu`, or `sampling` |
+| provider | TEXT | `deepseek` or `sampling` |
 | model | TEXT | Model name |
 | role | TEXT | LLM role/purpose for the call |
 | prompt_tokens | INTEGER | Input token count |

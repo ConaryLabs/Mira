@@ -133,14 +133,51 @@ async fn init_server_context() -> Result<ServerContext> {
 
         let provider_id = emb.provider_id().to_string();
         let check_pool = pool.clone();
-        if let Err(e) = check_pool
+        let check_code_pool = code_pool.clone();
+        let provider_id_clone = provider_id.clone();
+        match check_pool
             .interact(move |conn| {
                 mira::db::check_embedding_provider_change(conn, &provider_id)
                     .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await
         {
-            warn!("Failed to check embedding provider change: {}", e);
+            Ok(true) => {
+                // Provider changed — also invalidate code embeddings
+                if let Err(e) = check_code_pool
+                    .interact(move |conn| {
+                        mira::db::invalidate_code_embeddings(conn)
+                            .map_err(|e| anyhow::anyhow!("{}", e))
+                    })
+                    .await
+                {
+                    warn!(
+                        "Failed to invalidate code embeddings after provider change: {}",
+                        e
+                    );
+                } else {
+                    info!(
+                        "Invalidated code embeddings after provider change to {}",
+                        provider_id_clone
+                    );
+                }
+            }
+            Ok(false) => {} // no change
+            Err(e) => {
+                warn!("Failed to check embedding provider change: {}", e);
+            }
+        }
+
+        // Recovery: if a previous provider switch cleared vec_code but crashed before
+        // re-queuing, this re-queues the chunks so semantic search recovers automatically.
+        let recovery_code_pool = code_pool.clone();
+        if let Err(e) = recovery_code_pool
+            .interact(|conn| {
+                mira::db::ensure_code_embeddings_queued(conn).map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            warn!("Failed to run code embedding recovery check: {}", e);
         }
     }
 
@@ -237,7 +274,7 @@ pub async fn run_mcp_server() -> Result<()> {
             .collect();
         info!("LLM providers available: {}", providers.join(", "));
     } else {
-        info!("No LLM providers configured (set DEEPSEEK_API_KEY, ZHIPU_API_KEY, or OLLAMA_HOST)");
+        info!("No LLM providers configured (set DEEPSEEK_API_KEY or OLLAMA_HOST)");
     }
 
     // Spawn background workers with separate pools

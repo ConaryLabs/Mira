@@ -59,7 +59,7 @@ pub fn get_module_exports_sync(
 ) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT name FROM code_symbols
-         WHERE project_id = ? AND file_path LIKE ?
+         WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'
          ORDER BY name LIMIT ?",
     )?;
 
@@ -80,7 +80,7 @@ pub fn count_symbols_in_path_sync(
     path_pattern: &str,
 ) -> rusqlite::Result<u32> {
     conn.query_row(
-        "SELECT COUNT(*) FROM code_symbols WHERE project_id = ? AND file_path LIKE ?",
+        "SELECT COUNT(*) FROM code_symbols WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\'",
         params![project_id, path_pattern],
         |row| row.get(0),
     )
@@ -94,7 +94,7 @@ pub fn get_module_dependencies_sync(
 ) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT import_path FROM imports
-         WHERE project_id = ? AND file_path LIKE ? AND is_external = 0",
+         WHERE project_id = ? AND file_path LIKE ? ESCAPE '\\' AND is_external = 0",
     )?;
 
     let deps = stmt

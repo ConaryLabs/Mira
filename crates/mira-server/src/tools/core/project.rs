@@ -560,11 +560,20 @@ pub async fn session_start<C: ToolContext>(
     let has_embeddings = ctx.embeddings().is_some();
     let has_llm = ctx.llm_factory().has_providers();
 
-    let mode = match (has_embeddings, has_llm) {
-        (true, true) => "full",
-        (true, false) => "semantic search only",
-        (false, true) => "background intelligence only",
-        (false, false) => "basic",
+    let (mode, mode_detail) = match (has_embeddings, has_llm) {
+        (true, true) => ("full", None),
+        (true, false) => (
+            "semantic search only",
+            Some("background intelligence disabled — no LLM provider configured"),
+        ),
+        (false, true) => (
+            "background intelligence only",
+            Some("semantic search disabled — no embedding provider configured"),
+        ),
+        (false, false) => (
+            "basic",
+            Some("semantic search and background intelligence disabled — no API keys configured"),
+        ),
     };
 
     response.push_str(&format!(
@@ -572,8 +581,11 @@ pub async fn session_start<C: ToolContext>(
         memory_count, symbol_count, goal_count, mode
     ));
 
-    if mode != "full" {
-        response.push_str("Tip: Run `mira setup --check` to enable all features.\n");
+    if let Some(detail) = mode_detail {
+        response.push_str(&format!(
+            "  → {} | run `mira setup` to configure API keys and unlock all features\n",
+            detail
+        ));
     }
 
     response.push_str("\nReady.");

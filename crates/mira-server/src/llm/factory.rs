@@ -6,7 +6,6 @@ use crate::llm::circuit_breaker::CircuitBreaker;
 use crate::llm::deepseek::DeepSeekClient;
 use crate::llm::ollama::OllamaClient;
 use crate::llm::provider::{LlmClient, Provider};
-use crate::llm::zhipu::ZhipuClient;
 use rmcp::service::{Peer, RoleServer};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -63,12 +62,6 @@ impl ProviderFactory {
             );
         }
 
-        // Initialize Zhipu GLM client
-        if let Some(ref key) = api_keys.zhipu {
-            info!("Zhipu GLM client initialized");
-            clients.insert(Provider::Zhipu, Arc::new(ZhipuClient::new(key.clone())));
-        }
-
         // Initialize Ollama client (local LLM, no API key — just a host URL)
         if let Some(ref host) = api_keys.ollama {
             let model = std::env::var("OLLAMA_MODEL")
@@ -86,7 +79,7 @@ impl ProviderFactory {
         let available: Vec<_> = clients.keys().map(|p| p.to_string()).collect();
         info!(providers = ?available, "LLM providers available");
 
-        let background_fallback_order = vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama];
+        let background_fallback_order = vec![Provider::DeepSeek, Provider::Ollama];
 
         Self {
             clients,
@@ -202,7 +195,7 @@ mod tests {
             clients: HashMap::new(),
             default_provider: None,
             background_provider: None,
-            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
+            background_fallback_order: vec![Provider::DeepSeek, Provider::Ollama],
             sampling_peer: None,
             circuit_breaker: CircuitBreaker::new(),
         }
@@ -240,7 +233,7 @@ mod tests {
             clients: HashMap::new(),
             default_provider: Some(Provider::DeepSeek),
             background_provider: None,
-            background_fallback_order: vec![Provider::DeepSeek, Provider::Zhipu, Provider::Ollama],
+            background_fallback_order: vec![Provider::DeepSeek, Provider::Ollama],
             sampling_peer: None,
             circuit_breaker: CircuitBreaker::new(),
         };
@@ -251,9 +244,8 @@ mod tests {
     fn test_background_fallback_order() {
         let factory = empty_factory();
         // Background fallback includes Ollama
-        assert_eq!(factory.background_fallback_order.len(), 3);
+        assert_eq!(factory.background_fallback_order.len(), 2);
         assert_eq!(factory.background_fallback_order[0], Provider::DeepSeek);
-        assert_eq!(factory.background_fallback_order[1], Provider::Zhipu);
-        assert_eq!(factory.background_fallback_order[2], Provider::Ollama);
+        assert_eq!(factory.background_fallback_order[1], Provider::Ollama);
     }
 }

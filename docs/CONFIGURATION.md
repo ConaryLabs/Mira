@@ -153,18 +153,18 @@ The installer adds all hooks to `~/.claude/settings.json` using `jq` for JSON ma
 | Hook | Command | Timeout | Purpose |
 |------|---------|---------|---------|
 | `SessionStart` | `mira hook session-start` | 10s | Captures session ID, startup vs resume, task list ID |
-| `UserPromptSubmit` | `mira hook user-prompt` | 5s | Injects proactive context into prompts |
-| `PreToolUse` | `mira hook pre-tool` | 2s | Injects context before Grep/Glob/Read (matcher: `Grep\|Glob\|Read`) |
-| `PostToolUse` | `mira hook post-tool` | 5s | Tracks behavior for pattern mining (matcher: `Write\|Edit\|NotebookEdit`) |
+| `UserPromptSubmit` | `mira hook user-prompt` | 8s | Injects proactive context into prompts |
+| `PreToolUse` | `mira hook pre-tool` | 3s | Injects context before Grep/Glob/Read (matcher: `Grep\|Glob\|Read`) |
+| `PostToolUse` | `mira hook post-tool` | 5s | Tracks behavior for pattern mining (matcher: `Write\|Edit\|NotebookEdit\|Bash`) |
 | `PreCompact` | `mira hook pre-compact` | 30s | Preserves context before summarization |
-| `Stop` | `mira hook stop` | 5s | Save session state, auto-export memories to CLAUDE.local.md |
-| `SessionEnd` | `mira hook session-end` | 5s | Snapshot tasks on user interrupt |
+| `Stop` | `mira hook stop` | 8s | Save session state, auto-export memories to CLAUDE.local.md |
+| `SessionEnd` | `mira hook session-end` | 15s | Snapshot tasks on user interrupt |
 | `SubagentStart` | `mira hook subagent-start` | 3s | Inject context when subagents spawn |
 | `SubagentStop` | `mira hook subagent-stop` | 3s | Capture discoveries from subagent work |
 | `PermissionRequest` | `mira hook permission` | 3s | Auto-approve tools based on stored rules |
-| `PostToolFailure` | `mira hook post-tool-failure` | 3s | Track failures, recall memories after repeated failures |
-| `TaskCompleted` | `mira hook task-completed` | 3s | Log completions, auto-complete goal milestones |
-| `TeammateIdle` | `mira hook teammate-idle` | 3s | Log teammate idle events for team tracking |
+| `PostToolFailure` | `mira hook post-tool-failure` | 5s | Track failures, recall memories after repeated failures |
+| `TaskCompleted` | `mira hook task-completed` | 5s | Log completions, auto-complete goal milestones |
+| `TeammateIdle` | `mira hook teammate-idle` | 5s | Log teammate idle events for team tracking |
 
 ### Manual Configuration
 
@@ -173,19 +173,19 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
-    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3000}]}],
-    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2000}]}],
-    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000, "async": true}]}],
-    "PreCompact": [{"hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000, "async": true}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
-    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}],
-    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5000}]}],
-    "PostToolFailure": [{"hooks": [{"type": "command", "command": "mira hook post-tool-failure", "timeout": 3000}]}],
-    "TaskCompleted": [{"hooks": [{"type": "command", "command": "mira hook task-completed", "timeout": 3000, "async": true}]}],
-    "TeammateIdle": [{"hooks": [{"type": "command", "command": "mira hook teammate-idle", "timeout": 3000, "async": true}]}]
+    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 8}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3}]}],
+    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 3}]}],
+    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5}]}],
+    "PreCompact": [{"hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30, "async": true}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 8}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 15}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3}]}],
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3, "async": true}]}],
+    "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "mira hook post-tool-failure", "timeout": 5, "async": true}]}],
+    "TaskCompleted": [{"hooks": [{"type": "command", "command": "mira hook task-completed", "timeout": 5}]}],
+    "TeammateIdle": [{"hooks": [{"type": "command", "command": "mira hook teammate-idle", "timeout": 5}]}]
   }
 }
 ```

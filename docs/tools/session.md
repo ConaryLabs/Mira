@@ -3,7 +3,7 @@
 
 Session management, analytics, and background task tracking.
 
-> **MCP actions:** `current_session`, `recap`, `insights`, `dismiss_insight`
+> **MCP actions:** `current_session`, `recap`
 > All other actions below are **CLI-only** — use `mira tool session '<json>'`.
 
 ## Actions
@@ -79,30 +79,6 @@ List recent LLM usage records grouped by role.
 
 **Returns:** List of usage records per role.
 
-### insights
-
-Query unified insights digest combining pondering analysis and documentation gap detection.
-
-**Parameters:**
-- `action` (string, required) - `"insights"`
-- `insight_source` (string, optional) - Filter by source: `pondering`, `proactive`, `doc_gap`
-- `min_confidence` (float, optional) - Minimum confidence threshold 0.0-1.0 (default: 0.5)
-- `since_days` (integer, optional) - Look back period in days (default: 30)
-- `limit` (integer, optional) - Max results (default: 20)
-
-**Returns:** List of insights with priority scores, descriptions, evidence, and row IDs for dismissal.
-
-### dismiss_insight
-
-Remove a resolved insight so it no longer appears in future queries.
-
-**Parameters:**
-- `action` (string, required) - `"dismiss_insight"`
-- `insight_id` (integer, required) - Row ID of the insight to dismiss
-- `insight_source` (string, required) - Source table to target: `"pondering"` or `"doc_gap"`
-
-**Returns:** Confirmation or "not found" message.
-
 ### tasks_list (CLI-only)
 
 List all running and recently completed background tasks.
@@ -167,10 +143,6 @@ Run data cleanup to remove old records based on retention policy.
 ```
 
 ```json
-{"action": "insights", "insight_source": "pondering", "min_confidence": 0.7}
-```
-
-```json
 {"action": "usage_stats", "group_by": "provider_model", "since_days": 7}
 ```
 
@@ -180,9 +152,8 @@ Run data cleanup to remove old records based on retention policy.
 
 ## Errors
 
-- **"No active project"** - `list_sessions`, `insights`, and `dismiss_insight` require an active project
+- **"No active project"** - `list_sessions` requires an active project
 - **"No active session"** - `get_history` with no session_id and no active session
-- **"insight_id is required"** - `dismiss_insight` needs an insight_id
 - **"task_id is required"** - `tasks_get` and `tasks_cancel` need a task_id
 - **"Task not found"** - The specified task ID does not exist or has expired from cache
 
@@ -190,3 +161,4 @@ Run data cleanup to remove old records based on retention policy.
 
 - [project](./project.md) - Initialize session with project context
 - [memory](./memory.md) - Memories shown in recap
+- [insights](./insights.md) - Background analysis digest (split from session in v0.8.0)

@@ -1,5 +1,5 @@
 // crates/mira-server/src/llm/openai_compat/mod.rs
-// Shared OpenAI-compatible request/response handling for DeepSeek, GLM, etc.
+// Shared OpenAI-compatible request/response handling for DeepSeek, Ollama, etc.
 
 mod request;
 mod response;
