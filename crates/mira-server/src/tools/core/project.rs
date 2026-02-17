@@ -549,10 +549,25 @@ pub async fn session_start<C: ToolContext>(
         .await
         .unwrap_or(0);
 
+    // Capability mode detection
+    let has_embeddings = ctx.embeddings().is_some();
+    let has_llm = ctx.llm_factory().has_providers();
+
+    let mode = match (has_embeddings, has_llm) {
+        (true, true) => "full",
+        (true, false) => "semantic search only",
+        (false, true) => "background intelligence only",
+        (false, false) => "basic",
+    };
+
     response.push_str(&format!(
-        "\nMira: {} memories | {} symbols indexed | {} active goals\n",
-        memory_count, symbol_count, goal_count
+        "\nMira: {} memories | {} symbols indexed | {} active goals | mode: {}\n",
+        memory_count, symbol_count, goal_count, mode
     ));
+
+    if mode != "full" {
+        response.push_str("Tip: Run `mira setup --check` to enable all features.\n");
+    }
 
     response.push_str("\nReady.");
     Ok(Json(ProjectOutput {
