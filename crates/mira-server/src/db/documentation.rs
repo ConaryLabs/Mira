@@ -1,7 +1,6 @@
 // crates/mira-server/src/db/documentation.rs
 // Database layer for documentation tracking and generation
 
-use crate::utils::ResultExt;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -89,7 +88,7 @@ pub fn create_doc_task(
                 gap.source_signature_hash,
             ],
         )
-        .str_err()?;
+        .map_err(|e| e.to_string())?;
 
     if changed == 0 {
         return Err(format!("Task for {} already exists", gap.target_doc_path));
@@ -102,7 +101,7 @@ pub fn get_pending_doc_tasks(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
     limit: usize,
-) -> Result<Vec<DocTask>, String> {
+) -> rusqlite::Result<Vec<DocTask>> {
     let sql = format!(
         "SELECT {} FROM documentation_tasks
          WHERE {}status = 'pending'
@@ -117,15 +116,13 @@ pub fn get_pending_doc_tasks(
         super::PRIORITY_ORDER_SQL
     );
 
-    let mut stmt = conn.prepare(&sql).str_err()?;
+    let mut stmt = conn.prepare(&sql)?;
     let rows = if let Some(pid) = project_id {
-        stmt.query_map(params![pid, limit as i64], parse_doc_task)
-            .str_err()?
+        stmt.query_map(params![pid, limit as i64], parse_doc_task)?
     } else {
-        stmt.query_map(params![limit as i64], parse_doc_task)
-            .str_err()?
+        stmt.query_map(params![limit as i64], parse_doc_task)?
     };
-    rows.collect::<Result<Vec<_>, _>>().str_err()
+    rows.collect()
 }
 
 /// Get all tasks with optional filters
@@ -135,7 +132,7 @@ pub fn list_doc_tasks(
     status: Option<&str>,
     doc_type: Option<&str>,
     priority: Option<&str>,
-) -> Result<Vec<DocTask>, String> {
+) -> rusqlite::Result<Vec<DocTask>> {
     let mut sql = format!(
         "SELECT {} FROM documentation_tasks WHERE 1=1",
         DOC_TASK_COLUMNS
@@ -164,15 +161,16 @@ pub fn list_doc_tasks(
         super::PRIORITY_ORDER_SQL
     ));
 
-    let mut stmt = conn.prepare(&sql).str_err()?;
-    stmt.query_map(rusqlite::params_from_iter(params), parse_doc_task)
-        .str_err()?
-        .collect::<Result<Vec<_>, _>>()
-        .str_err()
+    let mut stmt = conn.prepare(&sql)?;
+    stmt.query_map(rusqlite::params_from_iter(params), parse_doc_task)?
+        .collect()
 }
 
 /// Get a single task by ID
-pub fn get_doc_task(conn: &rusqlite::Connection, task_id: i64) -> Result<Option<DocTask>, String> {
+pub fn get_doc_task(
+    conn: &rusqlite::Connection,
+    task_id: i64,
+) -> rusqlite::Result<Option<DocTask>> {
     conn.query_row(
         &format!(
             "SELECT {} FROM documentation_tasks WHERE id = ?",
@@ -182,11 +180,10 @@ pub fn get_doc_task(conn: &rusqlite::Connection, task_id: i64) -> Result<Option<
         parse_doc_task,
     )
     .optional()
-    .str_err()
 }
 
 /// Mark a task as completed (documentation written)
-pub fn mark_doc_task_completed(conn: &rusqlite::Connection, task_id: i64) -> Result<(), String> {
+pub fn mark_doc_task_completed(conn: &rusqlite::Connection, task_id: i64) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE documentation_tasks
          SET status = 'completed', applied_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
@@ -194,7 +191,6 @@ pub fn mark_doc_task_completed(conn: &rusqlite::Connection, task_id: i64) -> Res
         [task_id],
     )
     .map(|_| ())
-    .str_err()
 }
 
 /// Mark a task as skipped (preserves original reason, stores skip reason separately)
@@ -202,7 +198,7 @@ pub fn mark_doc_task_skipped(
     conn: &rusqlite::Connection,
     task_id: i64,
     reason: &str,
-) -> Result<(), String> {
+) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE documentation_tasks
          SET status = 'skipped', skip_reason = ?1, updated_at = CURRENT_TIMESTAMP
@@ -210,7 +206,6 @@ pub fn mark_doc_task_skipped(
         params![reason, task_id],
     )
     .map(|_| ())
-    .str_err()
 }
 
 /// Reset orphaned tasks whose target files no longer exist
@@ -219,7 +214,7 @@ pub fn reset_orphaned_doc_tasks(
     conn: &rusqlite::Connection,
     project_id: i64,
     project_path: &str,
-) -> Result<usize, String> {
+) -> rusqlite::Result<usize> {
     use std::path::{Path, PathBuf};
 
     let canonical_project = Path::new(project_path)
@@ -227,16 +222,13 @@ pub fn reset_orphaned_doc_tasks(
         .unwrap_or_else(|_| PathBuf::from(project_path));
 
     // Get all completed tasks for this project
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, target_doc_path FROM documentation_tasks
+    let mut stmt = conn.prepare(
+        "SELECT id, target_doc_path FROM documentation_tasks
              WHERE project_id = ? AND status = 'completed'",
-        )
-        .str_err()?;
+    )?;
 
     let tasks: Vec<(i64, String)> = stmt
-        .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .str_err()?
+        .query_map([project_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .filter_map(super::log_and_discard)
         .collect();
 
@@ -260,8 +252,7 @@ pub fn reset_orphaned_doc_tasks(
                  SET status = 'pending', applied_at = NULL, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?",
                 [task_id],
-            )
-            .str_err()?;
+            )?;
             reset_count += 1;
             tracing::info!(
                 "Reset orphaned doc task {} (file missing: {})",
@@ -308,7 +299,7 @@ pub struct DocInventoryParams<'a> {
 pub fn upsert_doc_inventory(
     conn: &rusqlite::Connection,
     p: &DocInventoryParams,
-) -> Result<i64, String> {
+) -> rusqlite::Result<i64> {
     conn.query_row(
         "INSERT INTO documentation_inventory (
             project_id, doc_path, doc_type, doc_category, title,
@@ -340,7 +331,6 @@ pub fn upsert_doc_inventory(
         ],
         |row| row.get(0),
     )
-    .str_err()
 }
 
 /// Mark documentation as stale
@@ -349,7 +339,7 @@ pub fn mark_doc_stale(
     project_id: i64,
     doc_path: &str,
     reason: &str,
-) -> Result<(), String> {
+) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE documentation_inventory
          SET is_stale = 1, staleness_reason = ?1
@@ -357,26 +347,21 @@ pub fn mark_doc_stale(
         params![reason, project_id, doc_path],
     )
     .map(|_| ())
-    .str_err()
 }
 
 /// Get all documentation inventory for a project
 pub fn get_doc_inventory(
     conn: &rusqlite::Connection,
     project_id: i64,
-) -> Result<Vec<DocInventory>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT * FROM documentation_inventory
+) -> rusqlite::Result<Vec<DocInventory>> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM documentation_inventory
              WHERE project_id = ?
              ORDER BY doc_type, doc_path",
-        )
-        .str_err()?;
+    )?;
 
-    stmt.query_map(params![project_id], parse_doc_inventory)
-        .str_err()?
-        .collect::<Result<Vec<_>, _>>()
-        .str_err()
+    stmt.query_map(params![project_id], parse_doc_inventory)?
+        .collect()
 }
 
 /// Get inventory items eligible for staleness check
@@ -384,38 +369,30 @@ pub fn get_doc_inventory(
 pub fn get_inventory_for_stale_check(
     conn: &rusqlite::Connection,
     project_id: i64,
-) -> Result<Vec<DocInventory>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT * FROM documentation_inventory
+) -> rusqlite::Result<Vec<DocInventory>> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM documentation_inventory
              WHERE project_id = ? AND source_signature_hash IS NOT NULL
              AND is_stale = 0",
-        )
-        .str_err()?;
+    )?;
 
-    stmt.query_map(params![project_id], parse_doc_inventory)
-        .str_err()?
-        .collect::<Result<Vec<_>, _>>()
-        .str_err()
+    stmt.query_map(params![project_id], parse_doc_inventory)?
+        .collect()
 }
 
 /// Get stale documentation for a project
 pub fn get_stale_docs(
     conn: &rusqlite::Connection,
     project_id: i64,
-) -> Result<Vec<DocInventory>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT * FROM documentation_inventory
+) -> rusqlite::Result<Vec<DocInventory>> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM documentation_inventory
              WHERE project_id = ? AND is_stale = 1
              ORDER BY doc_type, doc_path",
-        )
-        .str_err()?;
+    )?;
 
-    stmt.query_map(params![project_id], parse_doc_inventory)
-        .str_err()?
-        .collect::<Result<Vec<_>, _>>()
-        .str_err()
+    stmt.query_map(params![project_id], parse_doc_inventory)?
+        .collect()
 }
 
 /// Parse a DocTask row from explicit column list
@@ -462,20 +439,16 @@ pub fn parse_doc_inventory(row: &rusqlite::Row) -> Result<DocInventory, rusqlite
 pub fn count_doc_tasks_by_status(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
-) -> Result<Vec<(String, i64)>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT status, COUNT(*) as count FROM documentation_tasks
+) -> rusqlite::Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT status, COUNT(*) as count FROM documentation_tasks
              WHERE ?1 IS NULL OR project_id = ?1
              GROUP BY status",
-        )
-        .str_err()?;
+    )?;
     stmt.query_map(params![project_id], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })
-    .str_err()?
-    .collect::<Result<Vec<_>, _>>()
-    .str_err()
+    })?
+    .collect()
 }
 
 /// Get stale docs that need impact analysis (stale but not yet analyzed)
@@ -483,22 +456,18 @@ pub fn get_stale_docs_needing_analysis(
     conn: &rusqlite::Connection,
     project_id: i64,
     limit: usize,
-) -> Result<Vec<DocInventory>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT * FROM documentation_inventory
+) -> rusqlite::Result<Vec<DocInventory>> {
+    let mut stmt = conn.prepare(
+        "SELECT * FROM documentation_inventory
              WHERE project_id = ?
                AND is_stale = 1
                AND change_impact IS NULL
              ORDER BY verified_at DESC
              LIMIT ?",
-        )
-        .str_err()?;
+    )?;
 
-    stmt.query_map(params![project_id, limit as i64], parse_doc_inventory)
-        .str_err()?
-        .collect::<Result<Vec<_>, _>>()
-        .str_err()
+    stmt.query_map(params![project_id, limit as i64], parse_doc_inventory)?
+        .collect()
 }
 
 /// Update impact analysis results for a stale doc
@@ -507,7 +476,7 @@ pub fn update_doc_impact_analysis(
     doc_id: i64,
     change_impact: &str,
     change_summary: &str,
-) -> Result<(), String> {
+) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE documentation_inventory
          SET change_impact = ?,
@@ -517,7 +486,6 @@ pub fn update_doc_impact_analysis(
         params![change_impact, change_summary, doc_id],
     )
     .map(|_| ())
-    .str_err()
 }
 
 /// Clear impact analysis when doc is no longer stale (e.g., after update)
@@ -525,7 +493,7 @@ pub fn clear_doc_impact_analysis(
     conn: &rusqlite::Connection,
     project_id: i64,
     doc_path: &str,
-) -> Result<(), String> {
+) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE documentation_inventory
          SET change_impact = NULL,
@@ -537,5 +505,4 @@ pub fn clear_doc_impact_analysis(
         params![project_id, doc_path],
     )
     .map(|_| ())
-    .str_err()
 }

@@ -7,6 +7,7 @@ use crate::db::{
     build_session_recap_sync, compute_age_days, create_session_ext_sync, dismiss_insight_sync,
     get_recent_sessions_sync, get_session_history_sync, get_unified_insights_sync,
 };
+use crate::error::MiraError;
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
@@ -22,7 +23,7 @@ use uuid::Uuid;
 pub async fn handle_session<C: ToolContext>(
     ctx: &C,
     req: crate::mcp::requests::SessionRequest,
-) -> Result<Json<SessionOutput>, String> {
+) -> Result<Json<SessionOutput>, MiraError> {
     use crate::mcp::requests::SessionAction;
     match req.action {
         SessionAction::CurrentSession => {
@@ -84,7 +85,9 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
             // Tasks actions need MiraServer directly, not ToolContext
             // This branch is unreachable in MCP (router intercepts) but needed for CLI
-            Err("Tasks actions must be handled by the router/CLI dispatcher directly.".into())
+            Err(MiraError::Other(
+                "Tasks actions must be handled by the router/CLI dispatcher directly.".to_string(),
+            ))
         }
     }
 }
@@ -122,14 +125,14 @@ async fn query_insights<C: ToolContext>(
     min_confidence: Option<f64>,
     since_days: Option<u32>,
     limit: Option<i64>,
-) -> Result<Json<SessionOutput>, String> {
+) -> Result<Json<SessionOutput>, MiraError> {
     use std::collections::BTreeMap;
 
     let project = ctx.get_project().await;
     let project_id = project
         .as_ref()
         .map(|p| p.id)
-        .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
 
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.5);
@@ -360,16 +363,22 @@ async fn dismiss_insight<C: ToolContext>(
     ctx: &C,
     insight_id: Option<i64>,
     insight_source: Option<String>,
-) -> Result<Json<SessionOutput>, String> {
-    let id = insight_id.ok_or("insight_id is required for dismiss_insight action")?;
-    let source = insight_source
-        .ok_or("insight_source is required for dismiss_insight (use 'pondering' or 'doc_gap')")?;
+) -> Result<Json<SessionOutput>, MiraError> {
+    let id = insight_id.ok_or_else(|| {
+        MiraError::InvalidInput("insight_id is required for dismiss_insight action".to_string())
+    })?;
+    let source = insight_source.ok_or_else(|| {
+        MiraError::InvalidInput(
+            "insight_source is required for dismiss_insight (use 'pondering' or 'doc_gap')"
+                .to_string(),
+        )
+    })?;
 
     let project = ctx.get_project().await;
     let project_id = project
         .as_ref()
         .map(|p| p.id)
-        .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
 
     let source_clone = source.clone();
     let updated = ctx
@@ -409,7 +418,7 @@ pub(crate) async fn session_history<C: ToolContext>(
     action: HistoryKind,
     session_id: Option<String>,
     limit: Option<i64>,
-) -> Result<Json<SessionOutput>, String> {
+) -> Result<Json<SessionOutput>, MiraError> {
     let limit = limit.unwrap_or(20).max(0) as usize;
 
     match action {
@@ -433,7 +442,7 @@ pub(crate) async fn session_history<C: ToolContext>(
             let project_id = project
                 .as_ref()
                 .map(|p| p.id)
-                .ok_or(NO_ACTIVE_PROJECT_ERROR)?;
+                .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
 
             let sessions = ctx
                 .pool()
@@ -494,10 +503,11 @@ pub(crate) async fn session_history<C: ToolContext>(
             // Use provided session_id or fall back to current session
             let target_session_id = match session_id {
                 Some(id) => id,
-                None => ctx
-                    .get_session_id()
-                    .await
-                    .ok_or("No session_id provided and no active session")?,
+                None => ctx.get_session_id().await.ok_or_else(|| {
+                    MiraError::InvalidInput(
+                        "No session_id provided and no active session".to_string(),
+                    )
+                })?,
             };
 
             let session_id_clone = target_session_id.clone();
@@ -562,7 +572,7 @@ pub(crate) async fn session_history<C: ToolContext>(
 }
 
 /// Ensure a session exists in database and return session ID
-pub async fn ensure_session<C: ToolContext>(ctx: &C) -> Result<String, String> {
+pub async fn ensure_session<C: ToolContext>(ctx: &C) -> Result<String, MiraError> {
     // Check if session ID already exists in context
     if let Some(existing_id) = ctx.get_session_id().await {
         return Ok(existing_id);
@@ -637,7 +647,7 @@ async fn find_previous_session_heuristic<C: ToolContext>(
 
 /// Get session recap for MCP clients
 /// Returns recent context, preferences, project state, and Claude Code session notes
-pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, String> {
+pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, MiraError> {
     let project = ctx.get_project().await;
     let project_id = project.as_ref().map(|p| p.id);
 
@@ -697,7 +707,7 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// Show database storage status, row counts, and retention policy.
-async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, String> {
+async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, MiraError> {
     // Get file sizes
     let home = dirs::home_dir().unwrap_or_default();
     let main_db_path = home.join(".mira/mira.db");
@@ -855,7 +865,7 @@ async fn cleanup<C: ToolContext>(
     ctx: &C,
     dry_run: Option<bool>,
     category: Option<String>,
-) -> Result<Json<SessionOutput>, String> {
+) -> Result<Json<SessionOutput>, MiraError> {
     let dry_run = dry_run.unwrap_or(true);
 
     if dry_run {

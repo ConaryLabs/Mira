@@ -8,6 +8,7 @@ use crate::db::{
     get_sessions_for_goal_sync, record_session_goal_sync,
     update_goal_progress_from_milestones_sync, update_goal_sync,
 };
+use crate::error::MiraError;
 use crate::mcp::requests::{GoalAction, GoalRequest};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
@@ -36,30 +37,35 @@ struct BulkGoal {
 fn verify_goal_project(
     goal_project_id: Option<i64>,
     ctx_project_id: Option<i64>,
-) -> Result<(), String> {
+) -> Result<(), MiraError> {
     match (goal_project_id, ctx_project_id) {
         // Both have project IDs — must match
-        (Some(goal_pid), Some(ctx_pid)) if goal_pid != ctx_pid => {
-            Err("Access denied: goal belongs to a different project".to_string())
-        }
+        (Some(goal_pid), Some(ctx_pid)) if goal_pid != ctx_pid => Err(MiraError::InvalidInput(
+            "Access denied: goal belongs to a different project".to_string(),
+        )),
         // Goal has a project but no context project — deny access
-        (Some(_), None) => Err("Access denied: goal belongs to a different project".to_string()),
+        (Some(_), None) => Err(MiraError::InvalidInput(
+            "Access denied: goal belongs to a different project".to_string(),
+        )),
         // Both match, goal is global, or both are None — allow
         _ => Ok(()),
     }
 }
 
 /// Fetch a goal by ID and verify project authorization.
-async fn get_authorized_goal<C: ToolContext>(ctx: &C, id: i64) -> Result<crate::db::Goal, String> {
+async fn get_authorized_goal<C: ToolContext>(
+    ctx: &C,
+    id: i64,
+) -> Result<crate::db::Goal, MiraError> {
     let goal = ctx
         .pool()
         .run(move |conn| get_goal_by_id_sync(conn, id))
         .await?
         .ok_or_else(|| {
-            format!(
+            MiraError::InvalidInput(format!(
                 "Goal not found (id: {}). Use goal(action=\"list\") to see available goals.",
                 id
-            )
+            ))
         })?;
 
     let ctx_project_id = ctx.project_id().await;
@@ -72,26 +78,26 @@ async fn get_authorized_goal<C: ToolContext>(ctx: &C, id: i64) -> Result<crate::
 async fn verify_milestone_project<C: ToolContext>(
     ctx: &C,
     milestone_id: i64,
-) -> Result<(), String> {
+) -> Result<(), MiraError> {
     let milestone = ctx
         .pool()
         .run(move |conn| get_milestone_by_id_sync(conn, milestone_id))
         .await?
-        .ok_or_else(|| format!("Milestone not found (id: {}). Use goal(action=\"get\", goal_id=N) to see milestones for a goal.", milestone_id))?;
+        .ok_or_else(|| MiraError::InvalidInput(format!("Milestone not found (id: {}). Use goal(action=\"get\", goal_id=N) to see milestones for a goal.", milestone_id)))?;
 
     let goal_id = milestone
         .goal_id
-        .ok_or_else(|| "Milestone has no associated goal".to_string())?;
+        .ok_or_else(|| MiraError::InvalidInput("Milestone has no associated goal".to_string()))?;
 
     let goal = ctx
         .pool()
         .run(move |conn| get_goal_by_id_sync(conn, goal_id))
         .await?
         .ok_or_else(|| {
-            format!(
+            MiraError::InvalidInput(format!(
                 "Goal not found (id: {}). Use goal(action=\"list\") to see available goals.",
                 goal_id
-            )
+            ))
         })?;
 
     let ctx_project_id = ctx.project_id().await;
@@ -113,37 +119,40 @@ const VALID_STATUSES: &[&str] = &[
 const VALID_PRIORITIES: &[&str] = &["low", "medium", "high", "critical"];
 
 /// Validate a status value, if provided.
-fn validate_status(status: &Option<String>) -> Result<(), String> {
+fn validate_status(status: &Option<String>) -> Result<(), MiraError> {
     if let Some(s) = status
         && !VALID_STATUSES.contains(&s.as_str())
     {
-        return Err(format!(
+        return Err(MiraError::InvalidInput(format!(
             "Invalid status '{}'. Must be one of: {}",
             s,
             VALID_STATUSES.join(", ")
-        ));
+        )));
     }
     Ok(())
 }
 
 /// Validate a priority value, if provided.
-fn validate_priority(priority: &Option<String>) -> Result<(), String> {
+fn validate_priority(priority: &Option<String>) -> Result<(), MiraError> {
     if let Some(p) = priority
         && !VALID_PRIORITIES.contains(&p.as_str())
     {
-        return Err(format!(
+        return Err(MiraError::InvalidInput(format!(
             "Invalid priority '{}'. Must be one of: {}",
             p,
             VALID_PRIORITIES.join(", ")
-        ));
+        )));
     }
     Ok(())
 }
 
 /// Validate that an ID is positive (non-zero, non-negative).
-fn validate_positive_id(id: i64, field: &str) -> Result<i64, String> {
+fn validate_positive_id(id: i64, field: &str) -> Result<i64, MiraError> {
     if id <= 0 {
-        Err(format!("Invalid {}: must be positive", field))
+        Err(MiraError::InvalidInput(format!(
+            "Invalid {}: must be positive",
+            field
+        )))
     } else {
         Ok(id)
     }
@@ -168,7 +177,7 @@ async fn record_goal_interaction<C: ToolContext>(ctx: &C, goal_id: i64, interact
 // ============================================================================
 
 /// Get a goal by ID with its milestones
-async fn action_get<C: ToolContext>(ctx: &C, goal_id: i64) -> Result<Json<GoalOutput>, String> {
+async fn action_get<C: ToolContext>(ctx: &C, goal_id: i64) -> Result<Json<GoalOutput>, MiraError> {
     let goal = get_authorized_goal(ctx, goal_id).await?;
 
     let mut response = format!("Goal [{}]: {}\n", goal.id, goal.title);
@@ -229,7 +238,7 @@ async fn action_create<C: ToolContext>(
     status: Option<String>,
     priority: Option<String>,
     progress_percent: Option<i32>,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     validate_status(&status)?;
     validate_priority(&priority)?;
 
@@ -249,7 +258,12 @@ async fn action_create<C: ToolContext>(
             )
         })
         .await
-        .map_err(|e| format!("Failed to create goal: {}. Check database connectivity.", e))?;
+        .map_err(|e| {
+            MiraError::Other(format!(
+                "Failed to create goal: {}. Check database connectivity.",
+                e
+            ))
+        })?;
 
     // Record session-goal link
     record_goal_interaction(ctx, id, "created").await;
@@ -266,20 +280,24 @@ async fn action_bulk_create<C: ToolContext>(
     ctx: &C,
     project_id: Option<i64>,
     goals_json: &str,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     let bulk_goals: Vec<BulkGoal> = serde_json::from_str(goals_json).map_err(|e| {
-        format!(
+        MiraError::InvalidInput(format!(
             "Invalid goals JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]",
             e
-        )
+        ))
     })?;
 
     if bulk_goals.is_empty() {
-        return Err("goals array cannot be empty".to_string());
+        return Err(MiraError::InvalidInput(
+            "goals array cannot be empty".to_string(),
+        ));
     }
 
     if bulk_goals.len() > 100 {
-        return Err("Too many goals: maximum 100 per bulk_create call".into());
+        return Err(MiraError::InvalidInput(
+            "Too many goals: maximum 100 per bulk_create call".to_string(),
+        ));
     }
 
     // Validate status/priority for all goals before writing any
@@ -343,7 +361,7 @@ async fn action_list<C: ToolContext>(
     project_id: Option<i64>,
     include_finished: bool,
     limit: i64,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     let limit_usize = limit.max(0) as usize;
     let incl = include_finished;
     // Get true total count before applying limit
@@ -363,7 +381,7 @@ async fn action_list<C: ToolContext>(
             .pool()
             .run(move |conn| get_goals_sync(conn, project_id, None))
             .await
-            .map_err(|e| format!("Failed to list goals: {}. Try again or check /mira:status for database health.", e))?;
+            .map_err(|e| MiraError::Other(format!("Failed to list goals: {}. Try again or check /mira:status for database health.", e)))?;
         if limit_usize > 0 {
             all.truncate(limit_usize);
         }
@@ -372,7 +390,7 @@ async fn action_list<C: ToolContext>(
         ctx.pool()
             .run(move |conn| get_active_goals_sync(conn, project_id, limit_usize))
             .await
-            .map_err(|e| format!("Failed to list active goals: {}. Try again or check /mira:status for database health.", e))?
+            .map_err(|e| MiraError::Other(format!("Failed to list active goals: {}. Try again or check /mira:status for database health.", e)))?
     };
 
     if goals.is_empty() {
@@ -483,7 +501,7 @@ async fn action_update<C: ToolContext>(
     status: Option<String>,
     priority: Option<String>,
     progress_percent: Option<i32>,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     validate_status(&status)?;
     validate_priority(&priority)?;
 
@@ -514,7 +532,10 @@ async fn action_update<C: ToolContext>(
 }
 
 /// Delete a goal
-async fn action_delete<C: ToolContext>(ctx: &C, goal_id: i64) -> Result<Json<GoalOutput>, String> {
+async fn action_delete<C: ToolContext>(
+    ctx: &C,
+    goal_id: i64,
+) -> Result<Json<GoalOutput>, MiraError> {
     get_authorized_goal(ctx, goal_id).await?;
 
     ctx.pool()
@@ -534,7 +555,7 @@ async fn action_add_milestone<C: ToolContext>(
     goal_id: i64,
     milestone_title: String,
     weight: Option<i32>,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     get_authorized_goal(ctx, goal_id).await?;
 
     let mtitle_for_result = milestone_title.clone();
@@ -565,7 +586,7 @@ async fn action_add_milestone<C: ToolContext>(
 async fn action_complete_milestone<C: ToolContext>(
     ctx: &C,
     milestone_id: i64,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     verify_milestone_project(ctx, milestone_id).await?;
 
     let goal_id_result = ctx
@@ -611,7 +632,7 @@ async fn action_complete_milestone<C: ToolContext>(
 async fn action_delete_milestone<C: ToolContext>(
     ctx: &C,
     milestone_id: i64,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     verify_milestone_project(ctx, milestone_id).await?;
 
     let goal_id_result = ctx
@@ -655,7 +676,7 @@ async fn action_sessions<C: ToolContext>(
     ctx: &C,
     goal_id: i64,
     limit: usize,
-) -> Result<Json<GoalOutput>, String> {
+) -> Result<Json<GoalOutput>, MiraError> {
     get_authorized_goal(ctx, goal_id).await?;
 
     let lim = limit;
@@ -663,17 +684,17 @@ async fn action_sessions<C: ToolContext>(
         .pool()
         .run(move |conn| get_sessions_for_goal_sync(conn, goal_id, lim))
         .await
-        .map_err(|e| format!("Failed to get sessions for goal: {}. Verify the goal_id exists with goal(action=\"list\").", e))?;
+        .map_err(|e| MiraError::Other(format!("Failed to get sessions for goal: {}. Verify the goal_id exists with goal(action=\"list\").", e)))?;
 
     let total = ctx
         .pool()
         .run(move |conn| count_sessions_for_goal_sync(conn, goal_id))
         .await
         .map_err(|e| {
-            format!(
+            MiraError::Other(format!(
                 "Failed to count sessions: {}. Try again or check /mira:status.",
                 e
-            )
+            ))
         })?;
 
     let mut response = format!("Goal {} — {} distinct session(s):\n", goal_id, total);
@@ -709,21 +730,24 @@ async fn action_sessions<C: ToolContext>(
 
 /// Unified goal tool with actions: create, bulk_create, list, get, update, progress, delete,
 /// add_milestone, complete_milestone, delete_milestone
-pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<GoalOutput>, String> {
+pub async fn goal<C: ToolContext>(
+    ctx: &C,
+    req: GoalRequest,
+) -> Result<Json<GoalOutput>, MiraError> {
     let project_id = ctx.project_id().await;
 
     match req.action {
         GoalAction::Get => {
-            let id = req
-                .goal_id
-                .ok_or("goal_id is required for goal(action=get). Use goal(action=\"list\") to see available goals.")?;
+            let id = req.goal_id.ok_or_else(|| {
+                MiraError::InvalidInput("goal_id is required for goal(action=get). Use goal(action=\"list\") to see available goals.".to_string())
+            })?;
             let id = validate_positive_id(id, "goal_id")?;
             action_get(ctx, id).await
         }
         GoalAction::Create => {
-            let t = req
-                .title
-                .ok_or("title is required for goal(action=create)")?;
+            let t = req.title.ok_or_else(|| {
+                MiraError::InvalidInput("title is required for goal(action=create)".to_string())
+            })?;
             action_create(
                 ctx,
                 project_id,
@@ -736,9 +760,11 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             .await
         }
         GoalAction::BulkCreate => {
-            let g = req
-                .goals
-                .ok_or("goals is required for goal(action=bulk_create)")?;
+            let g = req.goals.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "goals is required for goal(action=bulk_create)".to_string(),
+                )
+            })?;
             action_bulk_create(ctx, project_id, &g).await
         }
         GoalAction::List => {
@@ -756,9 +782,9 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             } else {
                 "update"
             };
-            let id = req
-                .goal_id
-                .ok_or_else(|| format!("goal_id is required for goal(action={}). Use goal(action=\"list\") to see available goals.", action_name))?;
+            let id = req.goal_id.ok_or_else(|| {
+                MiraError::InvalidInput(format!("goal_id is required for goal(action={}). Use goal(action=\"list\") to see available goals.", action_name))
+            })?;
             let id = validate_positive_id(id, "goal_id")?;
             action_update(
                 ctx,
@@ -772,40 +798,42 @@ pub async fn goal<C: ToolContext>(ctx: &C, req: GoalRequest) -> Result<Json<Goal
             .await
         }
         GoalAction::Delete => {
-            let id = req
-                .goal_id
-                .ok_or("goal_id is required for goal(action=delete). Use goal(action=\"list\") to see available goals.")?;
+            let id = req.goal_id.ok_or_else(|| {
+                MiraError::InvalidInput("goal_id is required for goal(action=delete). Use goal(action=\"list\") to see available goals.".to_string())
+            })?;
             let id = validate_positive_id(id, "goal_id")?;
             action_delete(ctx, id).await
         }
         GoalAction::AddMilestone => {
-            let gid = req
-                .goal_id
-                .ok_or("goal_id is required for goal(action=add_milestone). Use goal(action=\"list\") to see available goals.")?;
+            let gid = req.goal_id.ok_or_else(|| {
+                MiraError::InvalidInput("goal_id is required for goal(action=add_milestone). Use goal(action=\"list\") to see available goals.".to_string())
+            })?;
             let gid = validate_positive_id(gid, "goal_id")?;
-            let mt = req
-                .milestone_title
-                .ok_or("milestone_title is required for goal(action=add_milestone)")?;
+            let mt = req.milestone_title.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "milestone_title is required for goal(action=add_milestone)".to_string(),
+                )
+            })?;
             action_add_milestone(ctx, gid, mt, req.weight).await
         }
         GoalAction::CompleteMilestone => {
-            let mid = req
-                .milestone_id
-                .ok_or("milestone_id is required for goal(action=complete_milestone). Use goal(action=\"get\", goal_id=N) to see milestones.")?;
+            let mid = req.milestone_id.ok_or_else(|| {
+                MiraError::InvalidInput("milestone_id is required for goal(action=complete_milestone). Use goal(action=\"get\", goal_id=N) to see milestones.".to_string())
+            })?;
             let mid = validate_positive_id(mid, "milestone_id")?;
             action_complete_milestone(ctx, mid).await
         }
         GoalAction::DeleteMilestone => {
-            let mid = req
-                .milestone_id
-                .ok_or("milestone_id is required for goal(action=delete_milestone). Use goal(action=\"get\", goal_id=N) to see milestones.")?;
+            let mid = req.milestone_id.ok_or_else(|| {
+                MiraError::InvalidInput("milestone_id is required for goal(action=delete_milestone). Use goal(action=\"get\", goal_id=N) to see milestones.".to_string())
+            })?;
             let mid = validate_positive_id(mid, "milestone_id")?;
             action_delete_milestone(ctx, mid).await
         }
         GoalAction::Sessions => {
-            let id = req
-                .goal_id
-                .ok_or("goal_id is required for goal(action=sessions). Use goal(action=\"list\") to see available goals.")?;
+            let id = req.goal_id.ok_or_else(|| {
+                MiraError::InvalidInput("goal_id is required for goal(action=sessions). Use goal(action=\"list\") to see available goals.".to_string())
+            })?;
             let id = validate_positive_id(id, "goal_id")?;
             let limit = req.limit.unwrap_or(20).max(1) as usize;
             action_sessions(ctx, id, limit).await
@@ -830,7 +858,7 @@ mod tests {
     fn test_verify_different_project_denied() {
         let result = verify_goal_project(Some(1), Some(2));
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("Access denied"));
         assert!(err.contains("different project"));
     }
@@ -866,14 +894,16 @@ mod tests {
 
     #[test]
     fn test_validate_zero_rejected() {
-        let err = validate_positive_id(0, "goal_id").unwrap_err();
+        let err = validate_positive_id(0, "goal_id").unwrap_err().to_string();
         assert!(err.contains("goal_id"));
         assert!(err.contains("must be positive"));
     }
 
     #[test]
     fn test_validate_negative_rejected() {
-        let err = validate_positive_id(-5, "milestone_id").unwrap_err();
+        let err = validate_positive_id(-5, "milestone_id")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("milestone_id"));
     }
 
@@ -936,7 +966,9 @@ mod tests {
 
     #[test]
     fn test_validate_status_invalid() {
-        let err = validate_status(&Some("typo".into())).unwrap_err();
+        let err = validate_status(&Some("typo".into()))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("Invalid status 'typo'"));
         assert!(err.contains("planning"));
     }
@@ -951,7 +983,9 @@ mod tests {
 
     #[test]
     fn test_validate_priority_invalid() {
-        let err = validate_priority(&Some("urgent".into())).unwrap_err();
+        let err = validate_priority(&Some("urgent".into()))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("Invalid priority 'urgent'"));
         assert!(err.contains("low"));
     }

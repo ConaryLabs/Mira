@@ -21,13 +21,15 @@ use super::responses;
 use crate::hooks::session::read_claude_session_id;
 use crate::utils::truncate;
 
-fn tool_result<T>(result: Result<Json<T>, String>) -> Result<CallToolResult, ErrorData>
+fn tool_result<T, E: std::fmt::Display>(
+    result: Result<Json<T>, E>,
+) -> Result<CallToolResult, ErrorData>
 where
     T: Serialize + JsonSchema + HasMessage + 'static,
 {
     match result {
         Ok(json) => json.into_call_tool_result(),
-        Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+        Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
     }
 }
 
@@ -473,7 +475,7 @@ mod tests {
     fn tool_result_err_produces_error_content() {
         use crate::mcp::responses::MemoryOutput;
         let result: Result<CallToolResult, ErrorData> =
-            tool_result::<MemoryOutput>(Err("bad request".to_string()));
+            tool_result::<MemoryOutput, String>(Err("bad request".to_string()));
         // Should be Ok (not protocol error), but with error content
         let call_result = result.expect("tool_result Err should produce Ok(CallToolResult)");
         let text = call_result

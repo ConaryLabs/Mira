@@ -86,6 +86,7 @@ pub async fn process_team_monitor(pool: &Arc<DatabasePool>) -> Result<usize, Str
         Ok::<usize, rusqlite::Error>(processed)
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Get IDs of all active teams.

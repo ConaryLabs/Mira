@@ -142,6 +142,7 @@ async fn should_ponder_project(pool: &Arc<DatabasePool>, project_id: i64) -> Res
         }
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Update last pondering timestamp
@@ -158,4 +159,5 @@ async fn update_last_pondering(pool: &Arc<DatabasePool>, project_id: i64) -> Res
         Ok::<_, rusqlite::Error>(())
     })
     .await
+    .map_err(Into::into)
 }

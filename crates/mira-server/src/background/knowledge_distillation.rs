@@ -46,6 +46,7 @@ pub async fn distill_team_session(
 ) -> Result<Option<DistillationResult>, String> {
     pool.run(move |conn| distill_team_session_sync(conn, team_id, project_id))
         .await
+        .map_err(Into::into)
 }
 
 /// Synchronous distillation logic for use within pool.interact().

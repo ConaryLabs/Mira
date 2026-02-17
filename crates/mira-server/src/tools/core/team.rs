@@ -2,6 +2,7 @@
 // Team intelligence tool — status and review for Agent Teams
 
 use super::ToolContext;
+use crate::error::MiraError;
 use crate::mcp::requests::{TeamAction, TeamRequest};
 use crate::mcp::responses::team::*;
 use crate::mcp::responses::{Json, TeamOutput, ToolOutput};
@@ -11,7 +12,7 @@ use std::collections::HashMap;
 pub async fn handle_team<C: ToolContext + ?Sized>(
     ctx: &C,
     req: TeamRequest,
-) -> Result<Json<TeamOutput>, String> {
+) -> Result<Json<TeamOutput>, MiraError> {
     match req.action {
         TeamAction::Status => team_status(ctx).await,
         TeamAction::Review => team_review(ctx, req.teammate).await,
@@ -20,7 +21,7 @@ pub async fn handle_team<C: ToolContext + ?Sized>(
 }
 
 /// Get team status: members, files, conflicts.
-async fn team_status<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, String> {
+async fn team_status<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, MiraError> {
     let membership = match ctx.get_team_membership() {
         Some(m) => m,
         None => {
@@ -122,7 +123,7 @@ async fn team_status<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput
 async fn team_review<C: ToolContext + ?Sized>(
     ctx: &C,
     teammate: Option<String>,
-) -> Result<Json<TeamOutput>, String> {
+) -> Result<Json<TeamOutput>, MiraError> {
     let membership = match ctx.get_team_membership() {
         Some(m) => m,
         None => {
@@ -181,7 +182,7 @@ async fn team_review<C: ToolContext + ?Sized>(
 }
 
 /// Distill key findings/decisions from team work into team-scoped memories.
-async fn team_distill<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, String> {
+async fn team_distill<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, MiraError> {
     let membership = match ctx.get_team_membership() {
         Some(m) => m,
         None => {

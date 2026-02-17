@@ -25,7 +25,7 @@
 // 4. **In-memory testing**: Use shared cache URI (`file:memdb_xxx?mode=memory&cache=shared`)
 //    so multiple pool connections share the same database state.
 
-use crate::utils::ResultExt;
+use crate::error::MiraError;
 use crate::utils::path_to_string;
 use anyhow::{Context, Result};
 use deadpool_sqlite::{Config, Hook, Pool, Runtime};
@@ -356,20 +356,19 @@ impl DatabasePool {
     ///     .run(move |conn| some_function(conn))
     ///     .await?;
     /// ```
-    pub async fn run<F, R, E>(&self, f: F) -> Result<R, String>
+    pub async fn run<F, R, E>(&self, f: F) -> Result<R, MiraError>
     where
         F: FnOnce(&Connection) -> Result<R, E> + Send + 'static,
         R: Send + 'static,
-        E: std::fmt::Display + Send + 'static,
+        E: Into<MiraError> + Send + 'static,
     {
         self.pool
             .get()
             .await
-            .map_err(|e| format!("Failed to get connection: {}", e))?
-            .interact(move |conn| f(conn).map_err(|e| anyhow::anyhow!("{}", e)))
+            .map_err(|e| MiraError::Other(format!("Failed to get connection: {}", e)))?
+            .interact(move |conn| f(conn).map_err(Into::into))
             .await
-            .map_err(|e| format!("Database error: {}", e))?
-            .str_err()
+            .map_err(|e| MiraError::Other(format!("Database error: {}", e)))?
     }
 
     /// Like [`run`](Self::run) but with retry on SQLite contention errors.
@@ -378,18 +377,18 @@ impl DatabasePool {
     /// Use this for critical writes that must not be lost (memory storage,
     /// session creation, goal updates). The closure must be `Clone` to
     /// support retries.
-    pub async fn run_with_retry<F, R, E>(&self, f: F) -> Result<R, String>
+    pub async fn run_with_retry<F, R, E>(&self, f: F) -> Result<R, MiraError>
     where
         F: FnOnce(&Connection) -> Result<R, E> + Send + Clone + 'static,
         R: Send + 'static,
-        E: std::fmt::Display + Send + 'static,
+        E: Into<MiraError> + Send + 'static,
     {
         retry_with_backoff(
             || {
                 let f_clone = f.clone();
                 self.run(f_clone)
             },
-            |e| is_sqlite_contention(e),
+            |e: &MiraError| is_sqlite_contention(&e.to_string()),
         )
         .await
     }

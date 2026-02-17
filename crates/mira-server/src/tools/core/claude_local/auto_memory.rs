@@ -1,3 +1,4 @@
+use crate::error::MiraError;
 use std::path::PathBuf;
 
 /// Line budget for auto memory export (Claude Code truncates after 200 lines)
@@ -70,7 +71,7 @@ fn fetch_auto_memory_candidates_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
     limit: usize,
-) -> Result<Vec<AutoMemoryCandidate>, String> {
+) -> Result<Vec<AutoMemoryCandidate>, MiraError> {
     // Only SELECT fields we actually use; hotness is computed for ORDER BY only
     let sql = r#"
         SELECT content, fact_type, category
@@ -103,22 +104,17 @@ fn fetch_auto_memory_candidates_sync(
         LIMIT ?2
     "#;
 
-    let mut stmt = conn
-        .prepare(sql)
-        .map_err(|e| format!("Failed to load memories for export: {}", e))?;
+    let mut stmt = conn.prepare(sql)?;
 
-    let rows = stmt
-        .query_map(rusqlite::params![project_id, limit as i64], |row| {
-            Ok(AutoMemoryCandidate {
-                content: row.get(0)?,
-                fact_type: row.get(1)?,
-                category: row.get(2)?,
-            })
+    let rows = stmt.query_map(rusqlite::params![project_id, limit as i64], |row| {
+        Ok(AutoMemoryCandidate {
+            content: row.get(0)?,
+            fact_type: row.get(1)?,
+            category: row.get(2)?,
         })
-        .map_err(|e| format!("Failed to load memories for export: {}", e))?;
+    })?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to collect auto memory results: {}", e))
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 /// Build line-budgeted export for auto memory with category quotas.
@@ -212,7 +208,7 @@ pub fn write_auto_memory_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
     project_path: &str,
-) -> Result<usize, String> {
+) -> Result<usize, MiraError> {
     let dir = get_auto_memory_dir(project_path);
 
     // Feature detection: only write if directory exists
@@ -241,13 +237,13 @@ pub fn write_auto_memory_sync(
     if let Err(e) = std::fs::write(&temp_path, &content) {
         // Clean up temp file on error
         let _ = std::fs::remove_file(&temp_path);
-        return Err(format!("Failed to write temp file: {}", e));
+        return Err(MiraError::Io(e));
     }
 
     if let Err(e) = std::fs::rename(&temp_path, &memory_path) {
         // Clean up temp file on rename failure
         let _ = std::fs::remove_file(&temp_path);
-        return Err(format!("Failed to rename temp file: {}", e));
+        return Err(MiraError::Io(e));
     }
 
     // Count entries (lines starting with "- ")

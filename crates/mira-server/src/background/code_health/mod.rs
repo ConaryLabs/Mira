@@ -884,6 +884,7 @@ async fn capture_health_snapshot(pool: &Arc<DatabasePool>, project_id: i64) -> R
         Ok(())
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Clear old health issues before refresh

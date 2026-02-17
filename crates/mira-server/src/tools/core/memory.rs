@@ -1,6 +1,7 @@
 //! Unified memory tools (recall, remember, forget)
 
 use crate::db::{StoreMemoryParams, store_memory_sync};
+use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData};
 use crate::search::embedding_to_bytes;
@@ -246,13 +247,15 @@ fn build_recall_output<T: RecallResult>(
 pub async fn handle_memory<C: ToolContext>(
     ctx: &C,
     req: crate::mcp::requests::MemoryRequest,
-) -> Result<Json<MemoryOutput>, String> {
+) -> Result<Json<MemoryOutput>, MiraError> {
     use crate::mcp::requests::MemoryAction;
     match req.action {
         MemoryAction::Remember => {
-            let content = req
-                .content
-                .ok_or("content is required for memory(action=remember)")?;
+            let content = req.content.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "content is required for memory(action=remember)".to_string(),
+                )
+            })?;
             remember(
                 ctx,
                 content,
@@ -265,17 +268,21 @@ pub async fn handle_memory<C: ToolContext>(
             .await
         }
         MemoryAction::Recall => {
-            let query = req
-                .query
-                .ok_or("query is required for memory(action=recall)")?;
+            let query = req.query.ok_or_else(|| {
+                MiraError::InvalidInput("query is required for memory(action=recall)".to_string())
+            })?;
             recall(ctx, query, req.limit, req.category, req.fact_type).await
         }
         MemoryAction::Forget => {
-            let id = req.id.ok_or("id is required for memory(action=forget)")?;
+            let id = req.id.ok_or_else(|| {
+                MiraError::InvalidInput("id is required for memory(action=forget)".to_string())
+            })?;
             forget(ctx, id).await
         }
         MemoryAction::Archive => {
-            let id = req.id.ok_or("id is required for memory(action=archive)")?;
+            let id = req.id.ok_or_else(|| {
+                MiraError::InvalidInput("id is required for memory(action=archive)".to_string())
+            })?;
             archive(ctx, id).await
         }
         MemoryAction::ExportClaudeLocal => {
@@ -303,19 +310,21 @@ pub async fn remember<C: ToolContext>(
     category: Option<String>,
     confidence: Option<f64>,
     scope: Option<String>,
-) -> Result<Json<MemoryOutput>, String> {
+) -> Result<Json<MemoryOutput>, MiraError> {
     // Input validation: reject oversized content (10KB limit)
     const MAX_MEMORY_BYTES: usize = 10 * 1024;
     if content.len() > MAX_MEMORY_BYTES {
-        return Err(format!(
+        return Err(MiraError::InvalidInput(format!(
             "Memory content too large ({} bytes). Maximum allowed is {} bytes (10KB).",
             content.len(),
             MAX_MEMORY_BYTES
-        ));
+        )));
     }
 
     if content.trim().is_empty() {
-        return Err("Memory content cannot be empty or whitespace-only.".to_string());
+        return Err(MiraError::InvalidInput(
+            "Memory content cannot be empty or whitespace-only.".to_string(),
+        ));
     }
 
     // Resolve identity fields early — needed by both rate-limit bypass and the insert.
@@ -330,15 +339,17 @@ pub async fn remember<C: ToolContext>(
 
     // Validate scope
     if !["personal", "project", "team"].contains(&scope.as_str()) {
-        return Err(format!(
+        return Err(MiraError::InvalidInput(format!(
             "Invalid scope '{}'. Must be one of: personal, project, team",
             scope
-        ));
+        )));
     }
 
     // Personal scope requires user identity for access control
     if scope == "personal" && user_id.is_none() {
-        return Err("Cannot create personal memory: user identity not available".to_string());
+        return Err(MiraError::InvalidInput(
+            "Cannot create personal memory: user identity not available".to_string(),
+        ));
     }
 
     // Team scope: strict enforcement — must be in an active team
@@ -347,10 +358,10 @@ pub async fn remember<C: ToolContext>(
         match membership {
             Some(m) => Some(m.team_id),
             None => {
-                return Err(
+                return Err(MiraError::InvalidInput(
                     "Cannot use scope='team': not in an active team. Use scope='project' instead."
                         .to_string(),
-                );
+                ));
             }
         }
     } else {
@@ -359,11 +370,11 @@ pub async fn remember<C: ToolContext>(
 
     // Security: warn if content looks like it contains secrets
     if let Some(pattern_name) = detect_secret(&content) {
-        return Err(format!(
+        return Err(MiraError::InvalidInput(format!(
             "Content appears to contain a secret ({pattern_name}). \
              Secrets should be stored in ~/.mira/.env, not in memories. \
              If this is a false positive, rephrase the content to avoid secret-like patterns."
-        ));
+        )));
     }
 
     // Security: detect prompt injection patterns. Store but flag as suspicious.
@@ -453,8 +464,7 @@ pub async fn remember<C: ToolContext>(
             tx.commit().map_err(|e| e.to_string())?;
             Ok(id)
         })
-        .await
-        .map_err(|e| format!("Failed to store memory: {}", e))?;
+        .await?;
 
     // Extract and link entities in a separate transaction
     // If this fails, the fact is still stored — backfill will pick it up later
@@ -523,7 +533,7 @@ pub async fn recall<C: ToolContext>(
     limit: Option<i64>,
     category: Option<String>,
     fact_type: Option<String>,
-) -> Result<Json<MemoryOutput>, String> {
+) -> Result<Json<MemoryOutput>, MiraError> {
     use crate::db::search_memories_sync;
 
     let pi = get_project_info(ctx).await;
@@ -575,8 +585,7 @@ pub async fn recall<C: ToolContext>(
                     fetch_limit,
                 )
             })
-            .await
-            .map_err(|e| format!("Failed to recall memories (semantic): {}", e));
+            .await;
 
         let results = match vec_result {
             Ok(r) => r,
@@ -695,8 +704,7 @@ pub async fn recall<C: ToolContext>(
                 fetch_limit,
             )
         })
-        .await
-        .map_err(|e| format!("Failed to recall memories (SQL fallback): {}", e))?;
+        .await?;
 
     let results = filter_results(results, &category, &fact_type, limit);
 
@@ -729,25 +737,29 @@ fn verify_memory_access(
     caller_project_id: Option<i64>,
     caller_user_id: Option<&str>,
     caller_team_id: Option<i64>,
-) -> Result<(), String> {
+) -> Result<(), MiraError> {
     let (mem_project_id, ref scope, ref mem_user_id, mem_team_id) = *scope_info;
 
     // Project-scoped memories require matching project_id (global memories are always accessible)
     if mem_project_id.is_some() && mem_project_id != caller_project_id {
-        return Err("Access denied: memory belongs to a different project".to_string());
+        return Err(MiraError::InvalidInput(
+            "Access denied: memory belongs to a different project".to_string(),
+        ));
     }
 
     match scope.as_str() {
         "personal" => {
             if mem_user_id.as_deref() != caller_user_id {
-                return Err(
-                    "Access denied: personal memory belongs to a different user".to_string()
-                );
+                return Err(MiraError::InvalidInput(
+                    "Access denied: personal memory belongs to a different user".to_string(),
+                ));
             }
         }
         "team" => {
             if caller_team_id.is_none() || mem_team_id != caller_team_id {
-                return Err("Access denied: team memory belongs to a different team".to_string());
+                return Err(MiraError::InvalidInput(
+                    "Access denied: team memory belongs to a different team".to_string(),
+                ));
             }
         }
         _ => {} // project / NULL scope — accessible if project check passed
@@ -757,11 +769,13 @@ fn verify_memory_access(
 }
 
 /// Delete a memory
-pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutput>, String> {
+pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutput>, MiraError> {
     use crate::db::{delete_memory_sync, get_memory_scope_sync};
 
     if id <= 0 {
-        return Err("Invalid memory ID: must be positive".to_string());
+        return Err(MiraError::InvalidInput(
+            "Invalid memory ID: must be positive".to_string(),
+        ));
     }
 
     // Verify scope/ownership before deleting
@@ -771,10 +785,10 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
         .await?;
 
     let Some(scope_info) = scope_info else {
-        return Err(format!(
+        return Err(MiraError::InvalidInput(format!(
             "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
             id
-        ));
+        )));
     };
 
     let project_id = ctx.project_id().await;
@@ -798,19 +812,21 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
             data: None,
         }))
     } else {
-        Err(format!(
+        Err(MiraError::InvalidInput(format!(
             "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
             id
-        ))
+        )))
     }
 }
 
 /// Archive a memory (sets status to 'archived', excluding it from auto-export)
-pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutput>, String> {
+pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutput>, MiraError> {
     use crate::db::get_memory_scope_sync;
 
     if id <= 0 {
-        return Err("Invalid memory ID: must be positive".to_string());
+        return Err(MiraError::InvalidInput(
+            "Invalid memory ID: must be positive".to_string(),
+        ));
     }
 
     // Verify scope/ownership before archiving
@@ -820,10 +836,10 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
         .await?;
 
     let Some(scope_info) = scope_info else {
-        return Err(format!(
+        return Err(MiraError::InvalidInput(format!(
             "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
             id
-        ));
+        )));
     };
 
     let project_id = ctx.project_id().await;
@@ -838,9 +854,8 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
                 .execute(
                     "UPDATE memory_facts SET status = 'archived', updated_at = datetime('now') WHERE id = ?",
                     [id],
-                )
-                .map_err(|e| format!("Failed to archive memory: {}", e))?;
-            Ok::<bool, String>(rows > 0)
+                )?;
+            Ok::<bool, rusqlite::Error>(rows > 0)
         })
         .await?;
 
@@ -857,10 +872,10 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
             data: None,
         }))
     } else {
-        Err(format!(
+        Err(MiraError::InvalidInput(format!(
             "Memory not found (id: {}). Use memory(action=\"recall\", query=\"...\") to search.",
             id
-        ))
+        )))
     }
 }
 

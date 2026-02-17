@@ -4,6 +4,7 @@
 // This handler takes &MiraServer directly (not &impl ToolContext) because
 // it needs access to the OperationProcessor which is MCP-specific.
 
+use crate::error::MiraError;
 use crate::mcp::CachedTaskResult;
 use crate::mcp::MiraServer;
 use crate::mcp::requests::SessionAction;
@@ -21,18 +22,28 @@ pub async fn handle_tasks(
     server: &MiraServer,
     action: SessionAction,
     task_id: Option<String>,
-) -> Result<Json<TasksOutput>, String> {
+) -> Result<Json<TasksOutput>, MiraError> {
     match action {
         SessionAction::TasksList => handle_list(server).await,
         SessionAction::TasksGet => {
-            let task_id = task_id.ok_or("task_id is required for session(action=tasks_get)")?;
+            let task_id = task_id.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "task_id is required for session(action=tasks_get)".to_string(),
+                )
+            })?;
             handle_get(server, &task_id).await
         }
         SessionAction::TasksCancel => {
-            let task_id = task_id.ok_or("task_id is required for session(action=tasks_cancel)")?;
+            let task_id = task_id.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "task_id is required for session(action=tasks_cancel)".to_string(),
+                )
+            })?;
             handle_cancel(server, &task_id).await
         }
-        _ => Err("Invalid action for tasks handler".into()),
+        _ => Err(MiraError::InvalidInput(
+            "Invalid action for tasks handler".to_string(),
+        )),
     }
 }
 
@@ -47,7 +58,7 @@ fn result_status(
     }
 }
 
-async fn handle_list(server: &MiraServer) -> Result<Json<TasksOutput>, String> {
+async fn handle_list(server: &MiraServer) -> Result<Json<TasksOutput>, MiraError> {
     let mut proc = server.processor.lock().await;
     proc.check_timeouts();
 
@@ -131,7 +142,7 @@ async fn handle_list(server: &MiraServer) -> Result<Json<TasksOutput>, String> {
     }))
 }
 
-async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutput>, String> {
+async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutput>, MiraError> {
     let mut proc = server.processor.lock().await;
 
     // Drain channel first — moves finished tasks from running to completed
@@ -180,10 +191,10 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
     // Try to find the requested task in freshly completed results
     if let Some(idx) = position {
         let Some(task_result) = freshly_completed.into_iter().nth(idx) else {
-            return Err(format!(
+            return Err(MiraError::InvalidInput(format!(
                 "Task '{}' not found. Use session(action=\"tasks_list\") to see available tasks.",
                 task_id
-            ));
+            )));
         };
 
         let (status, result_text, result_structured) = extract_full_result(&task_result);
@@ -224,10 +235,10 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
         }));
     }
 
-    Err(format!(
+    Err(MiraError::InvalidInput(format!(
         "Task '{}' not found. Use session(action=\"tasks_list\") to see available tasks.",
         task_id
-    ))
+    )))
 }
 
 /// Extract just the text portion of a completed result (for caching).
@@ -289,7 +300,7 @@ fn extract_full_result(
     }
 }
 
-async fn handle_cancel(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutput>, String> {
+async fn handle_cancel(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutput>, MiraError> {
     let mut proc = server.processor.lock().await;
     if proc.cancel_task(task_id) {
         Ok(Json(TasksOutput {
@@ -298,9 +309,9 @@ async fn handle_cancel(server: &MiraServer, task_id: &str) -> Result<Json<TasksO
             data: None,
         }))
     } else {
-        Err(format!(
+        Err(MiraError::InvalidInput(format!(
             "Task '{}' not found or already completed. Use session(action=\"tasks_list\") to see current tasks.",
             task_id
-        ))
+        )))
     }
 }

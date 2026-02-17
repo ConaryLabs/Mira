@@ -8,6 +8,7 @@ use crate::background::diff_analysis::{
     compute_historical_risk, format_diff_analysis, map_to_symbols,
 };
 use crate::db::get_recent_diff_analyses_sync;
+use crate::error::MiraError;
 use crate::git::{
     get_head_commit, get_staged_diff, get_working_diff, parse_staged_stats, parse_working_stats,
     resolve_ref,
@@ -16,7 +17,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     DiffAnalysisData, DiffData, DiffOutput, HistoricalRiskData, PatternMatchInfo,
 };
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext, get_project_info};
+use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::truncate;
 
 /// Analyze git diff semantically
@@ -27,24 +28,28 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     from_ref: Option<String>,
     to_ref: Option<String>,
     include_impact: Option<bool>,
-) -> Result<Json<DiffOutput>, String> {
+) -> Result<Json<DiffOutput>, MiraError> {
     // Validate ref lengths before any git operations
     if let Some(ref r) = from_ref
         && r.len() > 256
     {
-        return Err("from_ref exceeds maximum length of 256 characters".to_string());
+        return Err(MiraError::InvalidInput(
+            "from_ref exceeds maximum length of 256 characters".to_string(),
+        ));
     }
     if let Some(ref r) = to_ref
         && r.len() > 256
     {
-        return Err("to_ref exceeds maximum length of 256 characters".to_string());
+        return Err(MiraError::InvalidInput(
+            "to_ref exceeds maximum length of 256 characters".to_string(),
+        ));
     }
 
     let pi = get_project_info(ctx).await;
     let project_path = match pi.path {
         Some(ref p) => p.clone(),
         None => {
-            return Err(NO_ACTIVE_PROJECT_ERROR.to_string());
+            return Err(MiraError::ProjectNotSet);
         }
     };
     let project_id = pi.id;
@@ -151,7 +156,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
     analysis_type: &str,
     diff_content: &str,
     include_impact: bool,
-) -> Result<Json<DiffOutput>, String> {
+) -> Result<Json<DiffOutput>, MiraError> {
     use crate::background::diff_analysis::{
         analyze_diff_heuristic, analyze_diff_semantic, calculate_risk_level,
     };
@@ -200,7 +205,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
             } else {
                 build_impact_graph(conn, project_id, &symbols, 2)
             };
-            Ok::<_, String>(result)
+            Ok::<_, MiraError>(result)
         })
         .await
         .map_err(|e| {
@@ -270,7 +275,9 @@ async fn compute_historical_risk_live<C: ToolContext>(
     let pid = project_id?;
     let files = files.to_vec();
     ctx.pool()
-        .run(move |conn| Ok::<_, String>(compute_historical_risk(conn, pid, &files, files_changed)))
+        .run(move |conn| {
+            Ok::<_, MiraError>(compute_historical_risk(conn, pid, &files, files_changed))
+        })
         .await
         .ok()
         .flatten()
@@ -297,7 +304,7 @@ fn to_historical_risk_data(hr: HistoricalRisk) -> HistoricalRiskData {
 pub async fn list_diff_analyses<C: ToolContext>(
     ctx: &C,
     limit: Option<i64>,
-) -> Result<Json<DiffOutput>, String> {
+) -> Result<Json<DiffOutput>, MiraError> {
     let pi = get_project_info(ctx).await;
     let project_id = pi.id;
     let context_header = pi.header;

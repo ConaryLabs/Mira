@@ -10,13 +10,13 @@ pub use analysis::*;
 pub use index::*;
 pub use search::*;
 
+use crate::error::MiraError;
 use crate::mcp::responses::CodeOutput;
 use crate::mcp::responses::Json;
 use crate::search::{
     CrossRefResult, HybridSearchResult, find_callees, find_callers, hybrid_search,
 };
 use crate::tools::core::{ToolContext, get_project_info};
-use crate::utils::ResultExt;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Query Core — shared by MCP handlers
@@ -27,7 +27,7 @@ pub async fn query_search_code<C: ToolContext>(
     ctx: &C,
     query: &str,
     limit: usize,
-) -> Result<HybridSearchResult, String> {
+) -> Result<HybridSearchResult, MiraError> {
     let pi = get_project_info(ctx).await;
     hybrid_search(
         ctx.code_pool(),
@@ -39,7 +39,6 @@ pub async fn query_search_code<C: ToolContext>(
         limit,
     )
     .await
-    .str_err()
 }
 
 /// Find callers of a function. Returns raw crossref results.
@@ -51,7 +50,7 @@ pub async fn query_callers<C: ToolContext>(
     let project_id = ctx.project_id().await;
     let fn_name = fn_name.to_string();
     ctx.code_pool()
-        .run(move |conn| Ok::<_, String>(find_callers(conn, project_id, &fn_name, limit)))
+        .run(move |conn| Ok::<_, MiraError>(find_callers(conn, project_id, &fn_name, limit)))
         .await
         .unwrap_or_default()
 }
@@ -65,7 +64,7 @@ pub async fn query_callees<C: ToolContext>(
     let project_id = ctx.project_id().await;
     let fn_name = fn_name.to_string();
     ctx.code_pool()
-        .run(move |conn| Ok::<_, String>(find_callees(conn, project_id, &fn_name, limit)))
+        .run(move |conn| Ok::<_, MiraError>(find_callees(conn, project_id, &fn_name, limit)))
         .await
         .unwrap_or_default()
 }
@@ -78,19 +77,21 @@ pub async fn query_callees<C: ToolContext>(
 pub async fn handle_code<C: ToolContext>(
     ctx: &C,
     req: crate::mcp::requests::CodeRequest,
-) -> Result<Json<CodeOutput>, String> {
+) -> Result<Json<CodeOutput>, MiraError> {
     use crate::mcp::requests::CodeAction;
     match req.action {
         CodeAction::Search => {
-            let query = req
-                .query
-                .ok_or("query is required for code(action=search)")?;
+            let query = req.query.ok_or_else(|| {
+                MiraError::InvalidInput("query is required for code(action=search)".to_string())
+            })?;
             search_code(ctx, query, req.limit).await
         }
         CodeAction::Symbols => {
-            let file_path = req
-                .file_path
-                .ok_or("file_path is required for code(action=symbols)")?;
+            let file_path = req.file_path.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "file_path is required for code(action=symbols)".to_string(),
+                )
+            })?;
             // Validate file_path is within the project directory
             if let Some(project) = ctx.get_project().await {
                 let project_path = std::path::Path::new(&project.path)
@@ -100,24 +101,28 @@ pub async fn handle_code<C: ToolContext>(
                     .canonicalize()
                     .unwrap_or_else(|_| std::path::PathBuf::from(&file_path));
                 if !target_path.starts_with(&project_path) {
-                    return Err(format!(
+                    return Err(MiraError::InvalidInput(format!(
                         "File path must be within the project directory: {}",
                         project.path
-                    ));
+                    )));
                 }
             }
             get_symbols(file_path, req.symbol_type)
         }
         CodeAction::Callers => {
-            let function_name = req
-                .function_name
-                .ok_or("function_name is required for code(action=callers)")?;
+            let function_name = req.function_name.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "function_name is required for code(action=callers)".to_string(),
+                )
+            })?;
             find_function_callers(ctx, function_name, req.limit).await
         }
         CodeAction::Callees => {
-            let function_name = req
-                .function_name
-                .ok_or("function_name is required for code(action=callees)")?;
+            let function_name = req.function_name.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "function_name is required for code(action=callees)".to_string(),
+                )
+            })?;
             find_function_callees(ctx, function_name, req.limit).await
         }
         CodeAction::Dependencies => get_dependencies(ctx).await,
@@ -125,10 +130,10 @@ pub async fn handle_code<C: ToolContext>(
         CodeAction::TechDebt => get_tech_debt(ctx).await,
         CodeAction::Diff => {
             // Defensive guard: router intercepts Tasks/Diff actions before reaching this handler
-            Err(
+            Err(MiraError::Other(
                 "Internal routing error for code(action=diff) — please report this as a bug."
-                    .into(),
-            )
+                    .to_string(),
+            ))
         }
     }
 }

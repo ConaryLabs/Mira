@@ -3,6 +3,7 @@
 
 use super::serve::setup_server_context;
 use anyhow::Result;
+use mira::error::MiraError;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
     CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, MemoryRequest,
@@ -15,7 +16,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
     let server = setup_server_context().await?;
 
     // Execute tool
-    let res: Result<String, String> = match name.as_str() {
+    let res: Result<String, MiraError> = match name.as_str() {
         "project" => {
             let req: ProjectRequest = serde_json::from_str(&args)?;
             // For start action, use provided session ID or fall back to Claude's hook-generated ID
@@ -107,7 +108,7 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 .await
                 .map(|output| output.0.message)
         }
-        _ => Err(format!("Unknown tool: {}", name)),
+        _ => Err(MiraError::InvalidInput(format!("Unknown tool: {}", name))),
     };
 
     match res {

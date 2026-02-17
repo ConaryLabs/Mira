@@ -7,6 +7,7 @@ mod prompts;
 mod qa_hardening;
 mod refactor;
 
+use crate::error::MiraError;
 use crate::mcp::requests::{RecipeAction, RecipeRequest};
 use crate::mcp::responses::{
     Json, RecipeData, RecipeGetData, RecipeListData, RecipeListItem, RecipeMemberData,
@@ -48,14 +49,14 @@ const ALL_RECIPES: &[&Recipe] = &[
 // ============================================================================
 
 /// Handle recipe tool actions.
-pub async fn handle_recipe(req: RecipeRequest) -> Result<Json<RecipeOutput>, String> {
+pub async fn handle_recipe(req: RecipeRequest) -> Result<Json<RecipeOutput>, MiraError> {
     match req.action {
         RecipeAction::List => action_list(),
         RecipeAction::Get => action_get(req.name),
     }
 }
 
-fn action_list() -> Result<Json<RecipeOutput>, String> {
+fn action_list() -> Result<Json<RecipeOutput>, MiraError> {
     let recipes: Vec<RecipeListItem> = ALL_RECIPES
         .iter()
         .map(|r| RecipeListItem {
@@ -74,13 +75,13 @@ fn action_list() -> Result<Json<RecipeOutput>, String> {
     }))
 }
 
-fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, String> {
+fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, MiraError> {
     let name = name.ok_or_else(|| {
         let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
-        format!(
+        MiraError::InvalidInput(format!(
             "name is required for recipe(action=get). Available: {}",
             available.join(", ")
-        )
+        ))
     })?;
 
     let recipe = ALL_RECIPES
@@ -88,11 +89,11 @@ fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, String> {
         .find(|r| r.name.eq_ignore_ascii_case(&name))
         .ok_or_else(|| {
             let available: Vec<&str> = ALL_RECIPES.iter().map(|r| r.name).collect();
-            format!(
+            MiraError::InvalidInput(format!(
                 "Recipe '{}' not found. Available: {}",
                 name,
                 available.join(", ")
-            )
+            ))
         })?;
 
     let members: Vec<RecipeMemberData> = recipe
@@ -277,7 +278,7 @@ mod tests {
             name: Some("nonexistent".to_string()),
         };
         match handle_recipe(req).await {
-            Err(e) => assert!(e.contains("not found"), "unexpected error: {e}"),
+            Err(e) => assert!(e.to_string().contains("not found"), "unexpected error: {e}"),
             Ok(_) => panic!("Expected error for nonexistent recipe"),
         }
     }
@@ -290,9 +291,10 @@ mod tests {
         };
         match handle_recipe(req).await {
             Err(e) => {
-                assert!(e.contains("required"), "unexpected error: {e}");
+                let msg = e.to_string();
+                assert!(msg.contains("required"), "unexpected error: {e}");
                 assert!(
-                    e.contains("Available:"),
+                    msg.contains("Available:"),
                     "should hint available recipes: {e}"
                 );
             }

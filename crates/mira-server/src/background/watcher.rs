@@ -427,7 +427,7 @@ impl FileWatcher {
         {
             cache.invalidate_code(Some(project_id)).await;
         }
-        result
+        result.map_err(Into::into)
     }
 
     /// Update a file (re-parse and queue embeddings) - runs DB ops on pool connection

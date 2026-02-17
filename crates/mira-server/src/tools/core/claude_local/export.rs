@@ -1,6 +1,6 @@
 use crate::db::{RankedMemory, fetch_ranked_memories_for_export_sync};
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
-use crate::utils::ResultExt;
+use crate::error::MiraError;
+use crate::tools::core::ToolContext;
 use std::path::Path;
 
 /// Total byte budget for CLAUDE.local.md content (~2K tokens)
@@ -10,10 +10,10 @@ const CLAUDE_LOCAL_BYTE_BUDGET: usize = 8192;
 const MAX_MEMORY_BYTES: usize = 500;
 
 /// Export Mira memories to CLAUDE.local.md (MCP tool wrapper)
-pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, String> {
+pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, MiraError> {
     let project = ctx.get_project().await;
     let Some(project) = project else {
-        return Err(NO_ACTIVE_PROJECT_ERROR.to_string());
+        return Err(MiraError::ProjectNotSet);
     };
 
     let project_id = project.id;
@@ -38,10 +38,9 @@ pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, Stri
 fn export_to_claude_local_md_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
-) -> Result<String, String> {
+) -> Result<String, MiraError> {
     let memories =
-        fetch_ranked_memories_for_export_sync(conn, project_id, super::RANKED_FETCH_LIMIT)
-            .str_err()?;
+        fetch_ranked_memories_for_export_sync(conn, project_id, super::RANKED_FETCH_LIMIT)?;
 
     if memories.is_empty() {
         return Ok(String::new());
@@ -123,7 +122,7 @@ pub fn write_claude_local_md_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
     project_path: &str,
-) -> Result<usize, String> {
+) -> Result<usize, MiraError> {
     let content = export_to_claude_local_md_sync(conn, project_id)?;
     if content.is_empty() {
         return Ok(0);
@@ -135,12 +134,12 @@ pub fn write_claude_local_md_sync(
     // Atomic write: temp file + rename
     if let Err(e) = std::fs::write(&temp_path, &content) {
         let _ = std::fs::remove_file(&temp_path);
-        return Err(format!("Failed to write temp file: {}", e));
+        return Err(MiraError::Io(e));
     }
 
     if let Err(e) = std::fs::rename(&temp_path, &claude_local_path) {
         let _ = std::fs::remove_file(&temp_path);
-        return Err(format!("Failed to rename temp file: {}", e));
+        return Err(MiraError::Io(e));
     }
 
     // Count entries (lines starting with "- ")

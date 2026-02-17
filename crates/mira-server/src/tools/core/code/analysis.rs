@@ -1,13 +1,13 @@
 // crates/mira-server/src/tools/core/code/analysis.rs
 // Dependencies, patterns, and tech debt analysis
 
+use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     CodeData, CodeOutput, DebtFactor, DependenciesData, DependencyEdge, ModulePatterns,
     PatternEntry, PatternsData, TechDebtData, TechDebtModule, TechDebtTier,
 };
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
-use crate::utils::ResultExt;
 
 /// Try to queue a health scan for a cold-start project (never scanned before).
 /// Returns a user-facing message appropriate for the outcome.
@@ -20,7 +20,9 @@ async fn maybe_queue_health_scan<C: ToolContext>(
     let already_scanned = ctx
         .pool()
         .run(move |conn| {
-            Ok::<_, String>(crate::db::get_scan_info_sync(conn, pid, "health_scan_time").is_some())
+            Ok::<_, MiraError>(
+                crate::db::get_scan_info_sync(conn, pid, "health_scan_time").is_some(),
+            )
         })
         .await
         .unwrap_or(false);
@@ -46,12 +48,15 @@ async fn maybe_queue_health_scan<C: ToolContext>(
 }
 
 /// Get module dependencies and circular dependency warnings
-pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
-    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
+pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, MiraError> {
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
 
     let deps = ctx
         .code_pool()
-        .run(move |conn| crate::db::dependencies::get_module_deps_sync(conn, project_id).str_err())
+        .run(move |conn| crate::db::dependencies::get_module_deps_sync(conn, project_id))
         .await?;
 
     if deps.is_empty() {
@@ -131,8 +136,11 @@ pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput
 }
 
 /// Get detected architectural patterns
-pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
-    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
+pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, MiraError> {
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
 
     let patterns = ctx
         .code_pool()
@@ -211,14 +219,17 @@ pub async fn get_patterns<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, S
 }
 
 /// Get tech debt scores for all modules
-pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, String> {
+pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, MiraError> {
     use crate::background::code_health::scoring::tier_label;
 
-    let project_id = ctx.project_id().await.ok_or(NO_ACTIVE_PROJECT_ERROR)?;
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
 
     let scores = ctx
         .pool()
-        .run(move |conn| crate::db::tech_debt::get_debt_scores_sync(conn, project_id).str_err())
+        .run(move |conn| crate::db::tech_debt::get_debt_scores_sync(conn, project_id))
         .await?;
 
     if scores.is_empty() {
@@ -237,7 +248,7 @@ pub async fn get_tech_debt<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, 
     // Summary
     let summary = ctx
         .pool()
-        .run(move |conn| crate::db::tech_debt::get_debt_summary_sync(conn, project_id).str_err())
+        .run(move |conn| crate::db::tech_debt::get_debt_summary_sync(conn, project_id))
         .await?;
 
     let mut response = format!("Tech Debt Report ({} modules):\n\n", scores.len());

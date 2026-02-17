@@ -24,6 +24,7 @@ pub async fn cleanup_stale_insights(pool: &Arc<DatabasePool>) -> Result<usize, S
         Ok::<_, anyhow::Error>(deleted)
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Normalize a description for dedup hashing.
@@ -566,6 +567,7 @@ pub(super) async fn store_insights(
         Ok::<_, anyhow::Error>(stored)
     })
     .await
+    .map_err(Into::into)
 }
 
 #[cfg(test)]

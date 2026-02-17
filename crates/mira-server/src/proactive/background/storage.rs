@@ -80,6 +80,7 @@ pub(super) async fn store_suggestions(
         Ok::<usize, anyhow::Error>(stored)
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Clean up expired suggestions
@@ -94,4 +95,5 @@ pub async fn cleanup_expired_suggestions(pool: &Arc<DatabasePool>) -> Result<usi
         Ok::<_, anyhow::Error>(deleted)
     })
     .await
+    .map_err(Into::into)
 }

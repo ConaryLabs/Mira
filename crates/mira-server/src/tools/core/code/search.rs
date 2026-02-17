@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use crate::error::MiraError;
 use crate::indexer;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
@@ -13,7 +14,7 @@ use crate::search::{
     CrossRefType, crossref_search, expand_context_with_conn, format_crossref_results,
 };
 use crate::tools::core::{ToolContext, get_project_info};
-use crate::utils::{ResultExt, truncate};
+use crate::utils::truncate;
 
 use super::{query_callees, query_callers, query_search_code};
 
@@ -22,7 +23,7 @@ pub async fn search_code<C: ToolContext>(
     ctx: &C,
     query: String,
     limit: Option<i64>,
-) -> Result<Json<CodeOutput>, String> {
+) -> Result<Json<CodeOutput>, MiraError> {
     let limit = limit.unwrap_or(10).max(0) as usize;
     let pi = get_project_info(ctx).await;
     let project_id = pi.id;
@@ -33,9 +34,9 @@ pub async fn search_code<C: ToolContext>(
     let query_clone = query.clone();
     let crossref_result = ctx
         .code_pool()
-        .run(move |conn| Ok::<_, String>(crossref_search(conn, &query_clone, project_id, limit)))
+        .run(move |conn| Ok::<_, MiraError>(crossref_search(conn, &query_clone, project_id, limit)))
         .await
-        .map_err(|e| format!("Failed to search code cross-references: {}. Try re-indexing with index(action=\"project\").", e))?;
+        .map_err(|e| MiraError::Other(format!("Failed to search code cross-references: {}. Try re-indexing with index(action=\"project\").", e)))?;
 
     if let Some((target, ref_type, results)) = crossref_result {
         let direction = match ref_type {
@@ -104,7 +105,7 @@ pub async fn search_code<C: ToolContext>(
     type ExpandedResult = (String, String, f32, Option<(Option<String>, String)>);
     let expanded_results: Vec<ExpandedResult> = ctx
         .code_pool()
-        .run(move |conn| -> Result<Vec<ExpandedResult>, String> {
+        .run(move |conn| -> Result<Vec<ExpandedResult>, MiraError> {
             Ok(results_data
                 .iter()
                 .map(|(file_path, content, score)| {
@@ -120,7 +121,7 @@ pub async fn search_code<C: ToolContext>(
                 .collect())
         })
         .await
-        .map_err(|e| format!("Failed to expand code search results: {}. Try re-indexing with index(action=\"project\").", e))?;
+        .map_err(|e| MiraError::Other(format!("Failed to expand code search results: {}. Try re-indexing with index(action=\"project\").", e)))?;
 
     let items: Vec<CodeSearchResult> = expanded_results
         .iter()
@@ -171,9 +172,11 @@ pub async fn find_function_callers<C: ToolContext>(
     ctx: &C,
     function_name: String,
     limit: Option<i64>,
-) -> Result<Json<CodeOutput>, String> {
+) -> Result<Json<CodeOutput>, MiraError> {
     if function_name.is_empty() {
-        return Err("function_name is required for code(action=callers)".to_string());
+        return Err(MiraError::InvalidInput(
+            "function_name is required for code(action=callers)".to_string(),
+        ));
     }
 
     let limit = limit.unwrap_or(20).max(0) as usize;
@@ -226,9 +229,11 @@ pub async fn find_function_callees<C: ToolContext>(
     ctx: &C,
     function_name: String,
     limit: Option<i64>,
-) -> Result<Json<CodeOutput>, String> {
+) -> Result<Json<CodeOutput>, MiraError> {
     if function_name.is_empty() {
-        return Err("function_name is required for code(action=callees)".to_string());
+        return Err(MiraError::InvalidInput(
+            "function_name is required for code(action=callees)".to_string(),
+        ));
     }
 
     let limit = limit.unwrap_or(20).max(0) as usize;
@@ -280,25 +285,25 @@ pub async fn find_function_callees<C: ToolContext>(
 pub fn get_symbols(
     file_path: String,
     symbol_type: Option<String>,
-) -> Result<Json<CodeOutput>, String> {
+) -> Result<Json<CodeOutput>, MiraError> {
     #[cfg(not(feature = "parsers"))]
     {
         let _ = (file_path, symbol_type);
-        return Err("Symbol extraction requires the 'parsers' feature. Reinstall with: cargo install --git https://github.com/ConaryLabs/Mira.git --features parsers".to_string());
+        return Err(MiraError::Other("Symbol extraction requires the 'parsers' feature. Reinstall with: cargo install --git https://github.com/ConaryLabs/Mira.git --features parsers".to_string()));
     }
     #[cfg(feature = "parsers")]
     {
         let path = Path::new(&file_path);
 
         if !path.exists() {
-            return Err(format!(
+            return Err(MiraError::InvalidInput(format!(
                 "File not found: {}. Check the path exists and is within the project directory.",
                 file_path
-            ));
+            )));
         }
 
         // Parse file for symbols
-        let symbols = indexer::extract_symbols(path).str_err()?;
+        let symbols = indexer::extract_symbols(path)?;
 
         if symbols.is_empty() {
             return Ok(Json(CodeOutput {

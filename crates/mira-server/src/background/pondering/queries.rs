@@ -56,6 +56,7 @@ pub(super) async fn get_recent_tool_history(
             .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Summarize tool arguments to avoid leaking sensitive data
@@ -106,6 +107,7 @@ pub(super) async fn get_recent_memories(
             .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
     })
     .await
+    .map_err(Into::into)
 }
 
 // ── New project-aware queries ──────────────────────────────────────────
@@ -165,6 +167,7 @@ pub(super) async fn get_stale_goals(
             .map_err(|e| anyhow::anyhow!("Failed to collect stale goals: {}", e))
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Modules where a significant portion of diffs resulted in reverts or follow-up fixes.
@@ -261,6 +264,7 @@ pub(super) async fn get_fragile_modules(
         Ok::<_, anyhow::Error>(results)
     })
     .await
+    .map_err(Into::into)
 }
 
 /// 2+ reverts in the same module within 48h, looking back 7 days.
@@ -349,6 +353,7 @@ pub(super) async fn get_recent_revert_clusters(
         Ok::<_, anyhow::Error>(clusters)
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Files modified 5+ times across multiple sessions without corresponding test file changes.
@@ -431,6 +436,7 @@ pub(super) async fn get_untested_hotspots(
         Ok::<_, anyhow::Error>(results)
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Detect session-level patterns: many short sessions, sessions with no commits, long gaps.
@@ -519,6 +525,7 @@ pub(super) async fn get_session_patterns(
         Ok::<_, rusqlite::Error>(patterns)
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Errors that recur across multiple sessions without resolution (3+ occurrences).
@@ -556,6 +563,7 @@ pub(super) async fn get_recurring_errors(
             .map_err(|e| anyhow::anyhow!("Failed to collect recurring errors: {}", e))
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Files modified frequently across many sessions (5+ sessions in the last 30 days).
@@ -596,6 +604,7 @@ pub(super) async fn get_churn_hotspots(
             .map_err(|e| anyhow::anyhow!("Failed to collect churn hotspots: {}", e))
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Get health trend from recent snapshots for a project.
@@ -676,6 +685,7 @@ pub(super) async fn get_health_trend(
         }))
     })
     .await
+    .map_err(Into::into)
 }
 
 /// Gather all project insight data in one call.
@@ -743,6 +753,7 @@ pub(super) async fn get_existing_insights(
             .map_err(|e| anyhow::anyhow!("Failed to collect existing insights: {}", e))
     })
     .await
+    .map_err(Into::into)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

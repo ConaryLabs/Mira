@@ -943,7 +943,7 @@ async fn test_pool_error_handling() {
     let result = forget(&ctx, 999999).await;
     match result {
         Err(ref err) => assert!(
-            err.contains("not found"),
+            err.to_string().contains("not found"),
             "Should indicate memory not found: {}",
             err
         ),
@@ -1241,7 +1241,7 @@ async fn test_documentation_list_requires_project() {
     assert!(result.is_err(), "Should fail without active project");
     let error = result.err().expect("should be Err");
     assert!(
-        error.contains("No active project"),
+        error.to_string().contains("No active project"),
         "Error should mention no active project: {}",
         error
     );
@@ -1455,7 +1455,7 @@ async fn test_documentation_get_requires_task_id() {
     assert!(result.is_err(), "Should fail without task_id");
     let error = result.err().expect("should be Err");
     assert!(
-        error.contains("task_id is required"),
+        error.to_string().contains("task_id is required"),
         "Error should mention task_id required: {}",
         error
     );
@@ -1495,7 +1495,7 @@ async fn test_documentation_get_nonexistent_task() {
     assert!(result.is_err(), "Should fail for non-existent task");
     let error = result.err().expect("should be Err");
     assert!(
-        error.contains("not found"),
+        error.to_string().contains("not found"),
         "Error should mention not found: {}",
         error
     );
@@ -1650,7 +1650,7 @@ async fn test_documentation_complete_already_completed() {
     assert!(result.is_err(), "Should fail for already-completed task");
     let error = result.err().expect("should be Err");
     assert!(
-        error.contains("not pending"),
+        error.to_string().contains("not pending"),
         "Error should mention not pending: {}",
         error
     );
@@ -1923,7 +1923,7 @@ async fn test_documentation_project_scoping() {
     );
     let error = result.err().expect("should be Err");
     assert!(
-        error.contains("different project"),
+        error.to_string().contains("different project"),
         "Error should mention different project: {}",
         error
     );
@@ -2140,7 +2140,7 @@ async fn test_tasks_get_not_found() {
     .await;
     let err = result.err().expect("expected error");
     assert!(
-        err.contains("not found"),
+        err.to_string().contains("not found"),
         "Expected 'not found' error, got: {}",
         err
     );
@@ -2157,7 +2157,7 @@ async fn test_tasks_cancel_not_found() {
     .await;
     let err = result.err().expect("expected error");
     assert!(
-        err.contains("not found"),
+        err.to_string().contains("not found"),
         "Expected 'not found' error, got: {}",
         err
     );
@@ -2169,7 +2169,7 @@ async fn test_tasks_get_missing_task_id() {
     let result = mira::tools::tasks::handle_tasks(&server, SessionAction::TasksGet, None).await;
     let err = result.err().expect("expected error");
     assert!(
-        err.contains("task_id is required"),
+        err.to_string().contains("task_id is required"),
         "Expected 'task_id is required' error, got: {}",
         err
     );
@@ -2912,12 +2912,12 @@ async fn test_memory_secret_rejection() {
     assert!(result.is_err(), "Should reject content with AWS key");
     let err = result.err().expect("should be Err");
     assert!(
-        err.contains("secret") || err.contains("Secret"),
+        err.to_string().contains("secret") || err.to_string().contains("Secret"),
         "Error should mention secret: {}",
         err
     );
     assert!(
-        err.contains("AWS key"),
+        err.to_string().contains("AWS key"),
         "Error should identify pattern as AWS key: {}",
         err
     );
@@ -3129,7 +3129,7 @@ async fn test_recipe_get_not_found() {
         name: Some("nonexistent".to_string()),
     };
     match handle_recipe(req).await {
-        Err(e) => assert!(e.contains("not found"), "unexpected error: {e}"),
+        Err(e) => assert!(e.to_string().contains("not found"), "unexpected error: {e}"),
         Ok(_) => panic!("Expected error for nonexistent recipe"),
     }
 }
@@ -3358,7 +3358,7 @@ async fn test_dismiss_insight_requires_project() {
     assert!(result.is_err(), "Should fail without active project");
     let err = result.err().unwrap();
     assert!(
-        err.contains("project"),
+        err.to_string().contains("project"),
         "Error should mention project, got: {}",
         err
     );

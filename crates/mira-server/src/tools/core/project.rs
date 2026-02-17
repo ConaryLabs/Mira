@@ -14,6 +14,7 @@ use crate::db::{
     search_memories_text_sync, set_server_state_sync, store_observation_sync,
     update_project_name_sync, upsert_session_with_branch_sync,
 };
+use crate::error::MiraError;
 use crate::git::get_git_branch;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
@@ -22,7 +23,7 @@ use crate::mcp::responses::{
 use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::claude_local;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
-use crate::utils::{ResultExt, truncate};
+use crate::utils::truncate;
 
 /// Session info tuple: (session_id, last_activity, summary, tool_count, tool_names)
 type SessionInfo = (String, String, Option<String>, usize, Vec<String>);
@@ -101,7 +102,7 @@ async fn init_project<C: ToolContext>(
     ctx: &C,
     project_path: &str,
     name: Option<&str>,
-) -> Result<(i64, Option<String>), String> {
+) -> Result<(i64, Option<String>), MiraError> {
     // Use pool for project creation (ensures same database as memory operations)
     let path_owned = project_path.to_string();
     let name_owned = name.map(|s| s.to_string());
@@ -158,7 +159,7 @@ pub async fn set_project<C: ToolContext>(
     ctx: &C,
     project_path: String,
     name: Option<String>,
-) -> Result<Json<ProjectOutput>, String> {
+) -> Result<Json<ProjectOutput>, MiraError> {
     let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
 
     let display_name = project_name.as_deref().unwrap_or(&project_path);
@@ -173,7 +174,7 @@ pub async fn set_project<C: ToolContext>(
 }
 
 /// Get current project info
-pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>, String> {
+pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>, MiraError> {
     let project = ctx.get_project().await;
 
     match project {
@@ -292,7 +293,7 @@ async fn persist_session<C: ToolContext>(
     project_id: i64,
     sid: &str,
     branch: Option<&str>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, MiraError> {
     let system_context = gather_system_context_content();
     let sid_owned = sid.to_string();
     let branch_owned = branch.map(|b| b.to_string());
@@ -304,10 +305,9 @@ async fn persist_session<C: ToolContext>(
                 &sid_owned,
                 Some(project_id),
                 branch_owned.as_deref(),
-            )
-            .str_err()?;
+            )?;
 
-            set_server_state_sync(conn, "active_session_id", &sid_owned).str_err()?;
+            set_server_state_sync(conn, "active_session_id", &sid_owned)?;
 
             if let Some(ref content) = system_context
                 && let Err(e) = store_observation_sync(
@@ -338,7 +338,7 @@ async fn persist_session<C: ToolContext>(
                 tracing::warn!("Failed to mark session for briefing: {}", e);
             }
 
-            Ok::<_, String>(briefing)
+            Ok::<_, rusqlite::Error>(briefing)
         })
         .await
 }
@@ -348,7 +348,7 @@ async fn load_recent_sessions<C: ToolContext>(
     ctx: &C,
     project_id: i64,
     current_sid: &str,
-) -> Result<Vec<SessionInfo>, String> {
+) -> Result<Vec<SessionInfo>, MiraError> {
     let sid_owned = current_sid.to_string();
     ctx.pool()
         .run(move |conn| {
@@ -365,7 +365,7 @@ async fn load_recent_sessions<C: ToolContext>(
 }
 
 /// Load recap data: preferences, memories, health alerts, doc counts, interventions
-async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<RecapData, String> {
+async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<RecapData, MiraError> {
     let user_id = ctx.get_user_identity();
     let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
     ctx.pool()
@@ -409,7 +409,7 @@ pub async fn session_start<C: ToolContext>(
     project_path: String,
     name: Option<String>,
     session_id: Option<String>,
-) -> Result<Json<ProjectOutput>, String> {
+) -> Result<Json<ProjectOutput>, MiraError> {
     let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
     let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let branch = get_git_branch(&project_path);
@@ -521,7 +521,6 @@ pub async fn session_start<C: ToolContext>(
                 rusqlite::params![project_id],
                 |row| row.get(0),
             )
-            .map_err(|e| e.to_string())
         })
         .await
         .unwrap_or(0);
@@ -534,7 +533,6 @@ pub async fn session_start<C: ToolContext>(
                 rusqlite::params![project_id],
                 |row| row.get(0),
             )
-            .map_err(|e| e.to_string())
         })
         .await
         .unwrap_or(0);
@@ -547,7 +545,6 @@ pub async fn session_start<C: ToolContext>(
                 rusqlite::params![project_id],
                 |row| row.get(0),
             )
-            .map_err(|e| e.to_string())
         })
         .await
         .unwrap_or(0);
@@ -672,14 +669,22 @@ pub async fn project<C: ToolContext>(
     project_path: Option<String>,
     name: Option<String>,
     session_id: Option<String>,
-) -> Result<Json<ProjectOutput>, String> {
+) -> Result<Json<ProjectOutput>, MiraError> {
     match action {
         ProjectAction::Start => {
-            let path = project_path.ok_or("project_path is required for project(action=start)")?;
+            let path = project_path.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "project_path is required for project(action=start)".to_string(),
+                )
+            })?;
             session_start(ctx, path, name, session_id).await
         }
         ProjectAction::Set => {
-            let path = project_path.ok_or("project_path is required for project(action=set)")?;
+            let path = project_path.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "project_path is required for project(action=set)".to_string(),
+                )
+            })?;
             set_project(ctx, path, name).await
         }
         ProjectAction::Get => get_project(ctx).await,

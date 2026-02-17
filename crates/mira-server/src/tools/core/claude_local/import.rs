@@ -1,5 +1,6 @@
 use crate::db::{import_confirmed_memory_sync, pool::DatabasePool, search_memories_sync};
-use crate::utils::{ResultExt, truncate_at_boundary};
+use crate::error::MiraError;
+use crate::utils::truncate_at_boundary;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -9,7 +10,7 @@ pub async fn import_claude_local_md_async(
     pool: &Arc<DatabasePool>,
     project_id: i64,
     project_path: &str,
-) -> Result<usize, String> {
+) -> Result<usize, MiraError> {
     let project_path = project_path.to_string();
     pool.run(move |conn| import_claude_local_md_sync(conn, project_id, &project_path))
         .await
@@ -71,15 +72,14 @@ fn import_claude_local_md_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
     project_path: &str,
-) -> Result<usize, String> {
+) -> Result<usize, MiraError> {
     let claude_local_path = Path::new(project_path).join("CLAUDE.local.md");
 
     if !claude_local_path.exists() {
         return Ok(0);
     }
 
-    let content = std::fs::read_to_string(&claude_local_path)
-        .map_err(|e| format!("Failed to read CLAUDE.local.md: {}", e))?;
+    let content = std::fs::read_to_string(&claude_local_path)?;
 
     let entries = parse_claude_local_md(&content);
     if entries.is_empty() {
@@ -87,7 +87,7 @@ fn import_claude_local_md_sync(
     }
 
     // Get existing memories and pre-normalize for O(1) duplicate checks
-    let existing = search_memories_sync(conn, Some(project_id), "", None, None, 1000).str_err()?;
+    let existing = search_memories_sync(conn, Some(project_id), "", None, None, 1000)?;
     let existing_normalized: HashSet<String> = existing
         .iter()
         .map(|m| m.content.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -120,8 +120,7 @@ fn import_claude_local_md_sync(
             fact_type,
             category.as_deref(),
             0.9,
-        )
-        .str_err()?;
+        )?;
 
         imported += 1;
     }

@@ -3,6 +3,7 @@
 
 use super::ToolContext;
 use crate::db::{get_llm_usage_summary, query_llm_usage_stats};
+use crate::error::MiraError;
 use crate::utils::{format_period, truncate};
 
 /// Get LLM usage summary
@@ -10,7 +11,7 @@ pub async fn usage_summary<C: ToolContext>(
     ctx: &C,
     since_days: Option<u32>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<String, MiraError> {
     let project_id = ctx.project_id().await;
     let since_days = since_days.or(Some(30));
     let _ = limit; // unused for summary but kept for consistent API
@@ -44,7 +45,7 @@ pub async fn usage_stats<C: ToolContext>(
     group_by: Option<String>,
     since_days: Option<u32>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<String, MiraError> {
     let project_id = ctx.project_id().await;
     let since_days = since_days.or(Some(30));
     let _ = limit; // unused for stats but kept for consistent API
@@ -104,7 +105,7 @@ pub async fn usage_list<C: ToolContext>(
     ctx: &C,
     since_days: Option<u32>,
     limit: Option<i64>,
-) -> Result<String, String> {
+) -> Result<String, MiraError> {
     let project_id = ctx.project_id().await;
     let since_days = since_days.or(Some(30));
 
