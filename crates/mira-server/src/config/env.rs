@@ -111,9 +111,9 @@ impl ApiKeys {
         self.deepseek.is_some() || self.zhipu.is_some() || self.ollama.is_some()
     }
 
-    /// Check if embeddings are available (requires OpenAI key)
+    /// Check if embeddings are available (OpenAI key or Ollama host)
     pub fn has_embeddings(&self) -> bool {
-        self.openai.is_some()
+        self.openai.is_some() || self.ollama.is_some()
     }
 
     /// Get a summary of available providers
@@ -147,6 +147,8 @@ impl ApiKeys {
 pub struct EmbeddingsConfig {
     /// Custom embedding dimensions (MIRA_EMBEDDING_DIMENSIONS)
     pub dimensions: Option<usize>,
+    /// Ollama embedding model override (OLLAMA_EMBEDDING_MODEL)
+    pub ollama_embedding_model: Option<String>,
 }
 
 impl EmbeddingsConfig {
@@ -156,24 +158,22 @@ impl EmbeddingsConfig {
             .ok()
             .and_then(|d| d.parse::<usize>().ok());
 
-        let dimensions = if let Some(dims) = dimensions {
-            if dims != 1536 {
-                warn!(
-                    configured = dims,
-                    expected = 1536,
-                    "MIRA_EMBEDDING_DIMENSIONS={} does not match vec_memory table (1536). Ignoring custom value.",
-                    dims
-                );
-                None
-            } else {
-                debug!(dimensions = dims, "Custom embedding dimensions configured");
-                Some(dims)
-            }
-        } else {
-            None
-        };
+        if let Some(dims) = dimensions {
+            debug!(dimensions = dims, "Custom embedding dimensions configured");
+        }
 
-        Self { dimensions }
+        let ollama_embedding_model = std::env::var("OLLAMA_EMBEDDING_MODEL")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
+        if let Some(ref model) = ollama_embedding_model {
+            debug!(model = %model, "Custom Ollama embedding model configured");
+        }
+
+        Self {
+            dimensions,
+            ollama_embedding_model,
+        }
     }
 }
 
@@ -281,7 +281,7 @@ impl EnvConfig {
         // Check for embeddings
         if !self.api_keys.has_embeddings() {
             validation.add_warning(
-                "No embeddings API key configured. Set OPENAI_API_KEY for semantic search.",
+                "No embeddings provider configured. Set OPENAI_API_KEY or OLLAMA_HOST for semantic search.",
             );
         }
 

@@ -8,12 +8,14 @@ use std::process::Command;
 use crate::cartographer;
 use crate::db::documentation::count_doc_tasks_by_status;
 use crate::db::{
-    StoreObservationParams, get_health_alerts_sync, get_or_create_project_sync,
-    get_preferences_sync, get_project_briefing_sync, get_recent_sessions_sync,
-    get_session_stats_sync, mark_session_for_briefing_sync, save_active_project_sync,
-    search_memories_text_sync, set_server_state_sync, store_observation_sync,
-    update_project_name_sync, upsert_session_with_branch_sync,
+    StoreMemoryParams, StoreObservationParams, get_health_alerts_sync,
+    get_or_create_project_sync, get_preferences_sync, get_project_briefing_sync,
+    get_recent_sessions_sync, get_session_stats_sync, mark_session_for_briefing_sync,
+    save_active_project_sync, search_memories_text_sync, set_server_state_sync,
+    store_memory_sync, store_observation_sync, update_project_name_sync,
+    upsert_session_with_branch_sync,
 };
+use crate::mcp::elicitation;
 use crate::error::MiraError;
 use crate::git::get_git_branch;
 use crate::mcp::responses::Json;
@@ -445,9 +447,17 @@ pub async fn session_start<C: ToolContext>(
     if !recent_session_data.is_empty() {
         response.push_str(&format_recent_sessions(&recent_session_data));
     } else {
-        response.push_str(
-            "\nFirst session for this project. Tip: use session(action=\"recap\") for context, or memory(action=\"remember\", content=\"...\") to store a decision.\n",
-        );
+        // First session — try onboarding via elicitation
+        let onboarding_done = run_first_session_onboarding(ctx, project_id, &sid).await;
+        if onboarding_done {
+            response.push_str(
+                "\nFirst session — onboarding preferences saved.\n",
+            );
+        } else {
+            response.push_str(
+                "\nFirst session for this project. Tip: use session(action=\"recap\") for context, or memory(action=\"remember\", content=\"...\") to store a decision.\n",
+            );
+        }
     }
 
     let (preferences, memories, health_alerts, doc_task_counts, pending_interventions) =
@@ -580,6 +590,72 @@ pub async fn session_start<C: ToolContext>(
             project_type: project_type.to_string(),
         })),
     }))
+}
+
+/// Run first-session onboarding via elicitation.
+///
+/// Asks the user a few optional questions and stores non-empty answers as memories.
+/// Returns `true` if at least one answer was stored, `false` otherwise.
+/// Failures are logged and swallowed — onboarding is strictly optional.
+async fn run_first_session_onboarding<C: ToolContext>(
+    ctx: &C,
+    project_id: i64,
+    session_id: &str,
+) -> bool {
+    let client = match ctx.elicitation_client() {
+        Some(c) => c,
+        None => return false,
+    };
+
+    if !client.is_available().await {
+        return false;
+    }
+
+    let answers = elicitation::request_onboarding(&client).await;
+    if answers.is_empty() {
+        return false;
+    }
+
+    let user_id = ctx.get_user_identity();
+    let sid = session_id.to_string();
+    let stored = ctx
+        .pool()
+        .run(move |conn| {
+            let mut count = 0u32;
+            for answer in &answers {
+                let result = store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: None,
+                        content: &format!("{}: {}", answer.field, answer.content),
+                        fact_type: "preference",
+                        category: Some("onboarding"),
+                        confidence: 0.9,
+                        session_id: Some(&sid),
+                        user_id: user_id.as_deref(),
+                        scope: "project",
+                        branch: None,
+                        team_id: None,
+                        suspicious: false,
+                    },
+                );
+                match result {
+                    Ok(_) => count += 1,
+                    Err(e) => tracing::warn!("Failed to store onboarding answer: {}", e),
+                }
+            }
+            Ok::<_, rusqlite::Error>(count)
+        })
+        .await
+        .unwrap_or(0);
+
+    tracing::info!(
+        "[onboarding] Stored {} preference(s) for project {}",
+        stored,
+        project_id
+    );
+    stored > 0
 }
 
 /// Gather system context content for bash tool usage (returns content string, does not store)

@@ -147,6 +147,28 @@ pub fn context_schema(question: &str) -> ElicitationSchema {
         .build_unchecked()
 }
 
+/// Build an elicitation schema for first-run onboarding questions.
+///
+/// Fields (all optional — user can skip any):
+/// - `language`: primary programming language for this project
+/// - `style`: preferred code style / conventions
+/// - `description`: brief project description
+pub fn onboarding_schema() -> ElicitationSchema {
+    ElicitationSchema::builder()
+        .title("Project Onboarding")
+        .description("Welcome! A few quick questions to personalize your experience. All fields are optional.")
+        .optional_string_with("language", |s| {
+            s.description("What's the main programming language for this project?")
+        })
+        .optional_string_with("style", |s| {
+            s.description("How would you describe your preferred code style? (e.g., concise, well-documented, functional, OOP)")
+        })
+        .optional_string_with("description", |s| {
+            s.description("Brief description of what this project does")
+        })
+        .build_unchecked()
+}
+
 // =============================================================================
 // Request helpers
 // =============================================================================
@@ -197,6 +219,56 @@ pub async fn request_context(client: &ElicitationClient, question: &str) -> Opti
     }
 
     Some(response)
+}
+
+/// Onboarding answer for a single question.
+pub struct OnboardingAnswer {
+    pub field: &'static str,
+    pub content: String,
+}
+
+/// Request first-run onboarding answers via elicitation.
+///
+/// Returns a vec of non-empty answers. Empty vec if user declined/cancelled
+/// or elicitation is unavailable.
+pub async fn request_onboarding(client: &ElicitationClient) -> Vec<OnboardingAnswer> {
+    let schema = onboarding_schema();
+    let outcome = client
+        .request(
+            "Welcome to Mira! Answer a few optional questions to personalize your experience.",
+            schema,
+        )
+        .await;
+
+    let data = match outcome.into_value() {
+        Some(d) => d,
+        None => return vec![],
+    };
+    let obj = match data.as_object() {
+        Some(o) => o,
+        None => return vec![],
+    };
+
+    let fields: &[(&str, &str)] = &[
+        ("language", "Primary language for this project"),
+        ("style", "Code style preference"),
+        ("description", "Project description"),
+    ];
+
+    let mut answers = Vec::new();
+    for &(key, label) in fields {
+        if let Some(val) = obj.get(key).and_then(|v| v.as_str()) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                answers.push(OnboardingAnswer {
+                    field: label,
+                    content: trimmed.to_string(),
+                });
+            }
+        }
+    }
+
+    answers
 }
 
 /// Best-effort append an API key to ~/.mira/.env.
@@ -312,5 +384,26 @@ mod tests {
         let schema = api_key_schema();
         let outcome = client.request("test", schema).await;
         assert!(matches!(outcome, ElicitationOutcome::NotSupported));
+    }
+
+    #[test]
+    fn test_onboarding_schema_has_optional_fields() {
+        let schema = onboarding_schema();
+        // All fields are optional — no required fields
+        assert!(
+            schema.required.is_none() || schema.required.as_ref().unwrap().is_empty(),
+            "onboarding fields should all be optional"
+        );
+        assert_eq!(schema.properties.len(), 3);
+        assert!(schema.properties.contains_key("language"));
+        assert!(schema.properties.contains_key("style"));
+        assert!(schema.properties.contains_key("description"));
+    }
+
+    #[tokio::test]
+    async fn test_onboarding_no_peer_returns_empty() {
+        let client = ElicitationClient::new(Arc::new(RwLock::new(None)));
+        let answers = request_onboarding(&client).await;
+        assert!(answers.is_empty());
     }
 }

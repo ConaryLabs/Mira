@@ -6,6 +6,7 @@ pub mod elicitation;
 mod extraction;
 mod handler;
 pub mod requests;
+mod resources;
 pub mod responses;
 mod router;
 mod tasks;

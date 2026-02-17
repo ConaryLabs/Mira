@@ -9,8 +9,9 @@ use rmcp::{
     ErrorData, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResult, CancelTaskParams, CreateTaskResult,
-        GetTaskInfoParams, GetTaskInfoResult, GetTaskResultParams, ListTasksResult,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Task,
+        GetTaskInfoParams, GetTaskInfoResult, GetTaskResultParams, ListResourceTemplatesResult,
+        ListResourcesResult, ListTasksResult, ListToolsResult, PaginatedRequestParams,
+        ReadResourceRequestParams, ReadResourceResult, ServerCapabilities, ServerInfo, Task,
         TaskResult as ModelTaskResult, TaskStatus, TasksCapability,
     },
     service::{RequestContext, RoleServer},
@@ -35,6 +36,7 @@ impl ServerHandler for MiraServer {
             protocol_version: Default::default(),
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
+                .enable_resources()
                 .enable_tasks_with(TasksCapability::server_default())
                 .build(),
             server_info: rmcp::model::Implementation {
@@ -60,6 +62,36 @@ impl ServerHandler for MiraServer {
             next_cursor: None,
             meta: None,
         }))
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
+        async move { self.handle_list_resources(request, context).await }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_
+    {
+        async move {
+            self.handle_list_resource_templates(request, context).await
+        }
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ReadResourceResult, ErrorData>> + Send + '_ {
+        async move { self.handle_read_resource(request, context).await }
     }
 
     #[allow(clippy::manual_async_fn)]
