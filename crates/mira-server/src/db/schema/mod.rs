@@ -539,14 +539,14 @@ fn migrate_goals_updated_at(conn: &Connection) -> Result<()> {
 /// Add temporal tracking columns to milestones table
 fn migrate_milestones_temporal_tracking(conn: &Connection) -> Result<()> {
     use crate::db::migration_helpers::add_column_if_missing;
-    add_column_if_missing(
-        conn,
-        "milestones",
-        "created_at",
-        "TEXT DEFAULT (datetime('now'))",
-    )?;
+    add_column_if_missing(conn, "milestones", "created_at", "TEXT")?;
     add_column_if_missing(conn, "milestones", "completed_at", "TEXT")?;
     add_column_if_missing(conn, "milestones", "completed_in_session_id", "TEXT")?;
+    // Backfill created_at for existing rows
+    conn.execute(
+        "UPDATE milestones SET created_at = datetime('now') WHERE created_at IS NULL",
+        [],
+    )?;
     Ok(())
 }
 
