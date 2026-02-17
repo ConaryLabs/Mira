@@ -124,7 +124,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Get agentic team recipes for expert review, full-cycle, QA hardening, and refactoring workflows. Actions: list (available recipes), get (full recipe with members, tasks, coordination).",
+        description = "Pre-built team configurations for code review, QA, and refactoring. Actions: list (show available), get (full details with team members and tasks).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::RecipeOutput>()
             .expect("RecipeOutput schema")
     )]

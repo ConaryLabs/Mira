@@ -103,7 +103,33 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         println!("Running in non-interactive mode (--yes).");
         println!("Skipping API key prompts. Detecting Ollama...");
     } else {
-        // Step 2: Embeddings
+        // Step 2: Background Intelligence (DeepSeek)
+        println!("\n--- Background Intelligence (DeepSeek) ---");
+        println!("  Powers insights, summaries, and semantic analysis.");
+        let ds_choices = &["DeepSeek (recommended)", "Skip"];
+        let ds_sel = Select::new()
+            .with_prompt("Configure DeepSeek")
+            .items(ds_choices)
+            .default(0)
+            .interact()?;
+
+        if ds_sel == 0 {
+            if let Some(key) = prompt_api_key(
+                "DeepSeek",
+                "DEEPSEEK_API_KEY",
+                existing.get("DEEPSEEK_API_KEY"),
+            )
+            .await?
+            {
+                keys.insert("DEEPSEEK_API_KEY".into(), key);
+            }
+        } else {
+            println!(
+                "Skipping DeepSeek. Background intelligence will be unavailable without DeepSeek or Ollama."
+            );
+        }
+
+        // Step 3: Embeddings (OpenAI)
         println!("\n--- Embeddings (semantic search) ---");
         let embed_choices = &["OpenAI (required for semantic search)", "Skip"];
         let embed_sel = Select::new()
@@ -120,21 +146,6 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
             }
         } else {
             println!("Skipping embeddings. Semantic search will be unavailable.");
-        }
-
-        // Step 3: Web search
-        println!("\n--- Web Search ---");
-        let web_choices = &["Brave Search", "Skip"];
-        let web_sel = Select::new()
-            .with_prompt("Choose web search provider")
-            .items(web_choices)
-            .default(1)
-            .interact()?;
-
-        if web_sel == 0
-            && let Some(key) = prompt_brave_key(existing.get("BRAVE_API_KEY"))?
-        {
-            keys.insert("BRAVE_API_KEY".into(), key);
         }
     }
 
@@ -252,7 +263,24 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         }
     }
 
-    // Step 5: Summary + write
+    // Step 5: Web Search (Brave) — optional, last
+    if !non_interactive {
+        println!("\n--- Web Search (optional) ---");
+        let web_choices = &["Brave Search", "Skip"];
+        let web_sel = Select::new()
+            .with_prompt("Choose web search provider")
+            .items(web_choices)
+            .default(1)
+            .interact()?;
+
+        if web_sel == 0
+            && let Some(key) = prompt_brave_key(existing.get("BRAVE_API_KEY"))?
+        {
+            keys.insert("BRAVE_API_KEY".into(), key);
+        }
+    }
+
+    // Step 6: Summary + write
     println!("\n--- Summary ---");
     match setup_summary(&existing, &keys) {
         SetupSummary::NoProviders => {
@@ -279,6 +307,11 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
     if env_path.exists() {
         let backup = mira_dir.join(".env.backup");
         std::fs::copy(&env_path, &backup)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o600))?;
+        }
         println!("\nBacked up existing .env to .env.backup");
     }
 
@@ -297,8 +330,13 @@ pub async fn run(check: bool, non_interactive: bool) -> Result<()> {
         env_path.display()
     );
 
-    // Write config.toml if Ollama selected
-    if ollama_selected {
+    // Write config.toml if Ollama selected AND no DeepSeek key exists
+    // (neither newly entered nor already in .env — DeepSeek takes priority)
+    let has_deepseek = keys.contains_key("DEEPSEEK_API_KEY")
+        || existing
+            .get("DEEPSEEK_API_KEY")
+            .is_some_and(|v| !v.is_empty());
+    if ollama_selected && !has_deepseek {
         write_config_toml(&config_path)?;
         println!(
             "Updated {} with background_provider = \"ollama\"",
@@ -374,6 +412,34 @@ async fn run_check() -> Result<()> {
         println!("\n{}", validation.report());
     } else {
         println!("\n  Configuration OK");
+    }
+
+    // Features enabled summary
+    println!("\n  Enabled features:");
+
+    if config.api_keys.openai.is_some() {
+        println!("    \u{2713} Memory & search: semantic (OpenAI)");
+    } else {
+        println!("    - Memory & search: keyword-only (add OPENAI_API_KEY for semantic)");
+    }
+
+    if config.api_keys.deepseek.is_some() {
+        println!("    \u{2713} Background intelligence: DeepSeek");
+    } else if config.api_keys.ollama.is_some() {
+        println!("    \u{2713} Background intelligence: Ollama");
+    } else {
+        println!(
+            "    - Background intelligence: disabled (add DEEPSEEK_API_KEY or configure Ollama)"
+        );
+    }
+
+    println!("    \u{2713} Goal tracking: ready");
+    println!("    \u{2713} Code indexing: ready");
+
+    if config.api_keys.brave.is_some() {
+        println!("    \u{2713} Web search: Brave");
+    } else {
+        println!("    - Web search: not configured (optional)");
     }
 
     Ok(())

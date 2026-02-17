@@ -24,7 +24,10 @@ use std::time::Instant;
 
 /// Get the Mira database path (~/.mira/mira.db)
 pub fn get_db_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home = dirs::home_dir().unwrap_or_else(|| {
+        eprintln!("[Mira] WARNING: HOME directory not set, using '.' as fallback for DB path");
+        PathBuf::from(".")
+    });
     home.join(".mira/mira.db")
 }
 

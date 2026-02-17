@@ -159,7 +159,7 @@ mod tests {
             Some(RecipeData::List(data)) => {
                 assert_eq!(data.recipes.len(), 4);
                 assert_eq!(data.recipes[0].name, "expert-review");
-                assert_eq!(data.recipes[0].member_count, 6);
+                assert_eq!(data.recipes[0].member_count, 7);
                 assert!(!data.recipes[0].use_when.is_empty());
                 assert_eq!(data.recipes[2].name, "qa-hardening");
                 assert_eq!(data.recipes[2].member_count, 5);
@@ -181,8 +181,8 @@ mod tests {
         match output.data {
             Some(RecipeData::Get(data)) => {
                 assert_eq!(data.name, "expert-review");
-                assert_eq!(data.members.len(), 6);
-                assert_eq!(data.tasks.len(), 6);
+                assert_eq!(data.members.len(), 7);
+                assert_eq!(data.tasks.len(), 7);
                 assert_eq!(data.members[0].name, "architect");
                 assert_eq!(data.tasks[0].assignee, "architect");
                 assert!(!data.coordination.is_empty());
@@ -202,15 +202,16 @@ mod tests {
         match output.data {
             Some(RecipeData::Get(data)) => {
                 assert_eq!(data.name, "full-cycle");
-                assert_eq!(data.members.len(), 8); // 6 discovery + 2 QA
-                assert_eq!(data.tasks.len(), 8);
+                assert_eq!(data.members.len(), 9); // 7 discovery + 2 QA
+                assert_eq!(data.tasks.len(), 9);
                 // Verify discovery experts
                 assert_eq!(data.members[0].name, "architect");
                 assert_eq!(data.members[4].name, "ux-strategist");
-                assert_eq!(data.members[5].name, "plan-reviewer");
+                assert_eq!(data.members[5].name, "growth-strategist");
+                assert_eq!(data.members[6].name, "plan-reviewer");
                 // Verify QA agents
-                assert_eq!(data.members[6].name, "test-runner");
-                assert_eq!(data.members[7].name, "ux-reviewer");
+                assert_eq!(data.members[7].name, "test-runner");
+                assert_eq!(data.members[8].name, "ux-reviewer");
                 assert!(data.coordination.contains("Phase 1"));
                 assert!(data.coordination.contains("Phase 2"));
                 assert!(data.coordination.contains("Phase 3"));

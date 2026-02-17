@@ -1220,7 +1220,8 @@ mod tests {
         );
 
         // Use wrong project_id
-        let result = dismiss_insight_sync(&conn, project_id + 999, row_id, Some("pondering")).unwrap();
+        let result =
+            dismiss_insight_sync(&conn, project_id + 999, row_id, Some("pondering")).unwrap();
         assert!(!result, "Should return false when project_id doesn't match");
 
         // Verify not dismissed
@@ -1325,8 +1326,7 @@ mod tests {
         let row_id = results[0].row_id.expect("doc_gap should have row_id");
 
         // Dismiss via doc_gap source
-        let result =
-            dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
+        let result = dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
         assert!(result, "Should return true for valid doc_gap dismissal");
 
         // Verify the doc task is now 'skipped'
@@ -1373,13 +1373,11 @@ mod tests {
         let row_id = results[0].row_id.unwrap();
 
         // First dismiss
-        let result1 =
-            dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
+        let result1 = dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
         assert!(result1, "First dismiss should succeed");
 
         // Second dismiss — already skipped
-        let result2 =
-            dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
+        let result2 = dismiss_insight_sync(&conn, project_id, row_id, Some("doc_gap")).unwrap();
         assert!(!result2, "Should return false when already skipped");
     }
 

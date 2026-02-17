@@ -354,6 +354,7 @@ async fn query_insights<C: ToolContext>(
 /// Dismiss a single insight by row ID, routed by source.
 /// - `"pondering"` → dismisses behavior_patterns row
 /// - `"doc_gap"` → marks documentation_tasks row as 'skipped'
+///
 /// `insight_source` is required to prevent cross-table ID collisions.
 async fn dismiss_insight<C: ToolContext>(
     ctx: &C,

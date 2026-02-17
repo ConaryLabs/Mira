@@ -12,35 +12,38 @@ use std::sync::Arc;
 
 use super::get_db_path;
 
+/// Get the home directory, logging a warning if unavailable.
+fn home_dir_or_fallback() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| {
+        eprintln!("[Mira] WARNING: HOME directory not set, using '.' as fallback");
+        PathBuf::from(".")
+    })
+}
+
 /// File where Claude's session_id is stored for MCP to read
 pub fn session_file_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/claude-session-id")
+    home_dir_or_fallback().join(".mira/claude-session-id")
 }
 
 /// File where Claude's working directory is stored for MCP to read
 pub fn cwd_file_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/claude-cwd")
+    home_dir_or_fallback().join(".mira/claude-cwd")
 }
 
 /// File where Claude's session source info is stored for MCP to read
 pub fn source_file_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/claude-source.json")
+    home_dir_or_fallback().join(".mira/claude-source.json")
 }
 
 /// File where Claude's task list ID is stored for MCP to read
 pub fn task_list_file_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/claude-task-list-id")
+    home_dir_or_fallback().join(".mira/claude-task-list-id")
 }
 
 /// Marker file path for tracking whether goals were already shown this session.
 /// Other hooks can check this to avoid re-injecting goals.
 fn goals_shown_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".mira/tmp/goals_shown")
+    home_dir_or_fallback().join(".mira/tmp/goals_shown")
 }
 
 /// Write a file with restricted permissions (0o600 on Unix).
@@ -131,10 +134,21 @@ pub async fn run() -> Result<()> {
     );
 
     // Ensure .mira directory exists
-    let mira_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mira");
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => {
+            eprintln!("[Mira] WARNING: HOME directory not set, skipping SessionStart hook");
+            super::write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    };
+    let mira_dir = home.join(".mira");
     fs::create_dir_all(&mira_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&mira_dir, fs::Permissions::from_mode(0o700));
+    }
 
     // Extract session_id from Claude's hook input
     let session_id = input.get("session_id").and_then(|v| v.as_str());
@@ -176,7 +190,7 @@ pub async fn run() -> Result<()> {
     let source_json = serde_json::to_string(&source_info)?;
     let source_path = source_file_path();
     let temp_path = source_path.with_extension("tmp");
-    fs::write(&temp_path, &source_json)?;
+    write_file_restricted(&temp_path, &source_json)?;
     fs::rename(&temp_path, &source_path)?;
     tracing::debug!(source = source, "Captured Claude source");
 
@@ -357,6 +371,12 @@ pub(crate) async fn build_startup_context(
     }
 
     if context_parts.is_empty() {
+        if previous_session.is_none() {
+            // First-ever session for this user — show a welcome message
+            return Some(
+                "[Mira] Ready! Try /mira:status (health check), /mira:recap (session context), or memory(action=\"remember\", content=\"...\") to store your first decision.".to_string()
+            );
+        }
         return None;
     }
 
@@ -748,7 +768,13 @@ pub fn team_file_path_for_session(session_id: &str) -> Option<PathBuf> {
         );
         return None;
     }
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => {
+            eprintln!("[Mira] WARNING: HOME directory not set, cannot resolve team file path");
+            return None;
+        }
+    };
     Some(home.join(format!(".mira/claude-team-{}.json", session_id)))
 }
 

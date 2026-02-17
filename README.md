@@ -166,19 +166,19 @@ The plugin install auto-configures hooks. For MCP-only installs, add to `~/.clau
 ```json
 {
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10000}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 5000}]}],
-    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3000}]}],
-    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 2000}]}],
-    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5000, "async": true}]}],
-    "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30000, "async": true}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 5000}]}],
-    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 5000}]}],
-    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3000}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3000, "async": true}]}],
-    "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "mira hook post-tool-failure", "timeout": 5000, "async": true}]}],
-    "TaskCompleted": [{"hooks": [{"type": "command", "command": "mira hook task-completed", "timeout": 5000}]}],
-    "TeammateIdle": [{"hooks": [{"type": "command", "command": "mira hook teammate-idle", "timeout": 5000}]}]
+    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 8}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3}]}],
+    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 3}]}],
+    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5}]}],
+    "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30, "async": true}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 8}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 15}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3}]}],
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3, "async": true}]}],
+    "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "mira hook post-tool-failure", "timeout": 5, "async": true}]}],
+    "TaskCompleted": [{"hooks": [{"type": "command", "command": "mira hook task-completed", "timeout": 5}]}],
+    "TeammateIdle": [{"hooks": [{"type": "command", "command": "mira hook teammate-idle", "timeout": 5}]}]
   }
 }
 ```

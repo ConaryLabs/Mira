@@ -24,7 +24,10 @@ const MAX_RECENT_QUERIES: usize = 5;
 /// files (dead PID) are cleaned up automatically.
 fn try_acquire_lock() -> Option<LockGuard> {
     let lock_path = dirs::home_dir()
-        .unwrap_or_default()
+        .unwrap_or_else(|| {
+            eprintln!("[Mira] WARNING: HOME directory not set, using '.' as fallback");
+            std::path::PathBuf::from(".")
+        })
         .join(".mira")
         .join("tmp")
         .join("pretool.lock");
@@ -100,7 +103,10 @@ struct CooldownState {
 
 fn cooldown_path() -> std::path::PathBuf {
     let mira_dir = dirs::home_dir()
-        .unwrap_or_default()
+        .unwrap_or_else(|| {
+            eprintln!("[Mira] WARNING: HOME directory not set, using '.' as fallback");
+            std::path::PathBuf::from(".")
+        })
         .join(".mira")
         .join("tmp");
     mira_dir.join("pretool_last.json")

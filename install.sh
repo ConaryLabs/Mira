@@ -123,6 +123,7 @@ setup_config() {
     if [ ! -d "$config_dir" ]; then
         info "Creating config directory at $config_dir"
         mkdir -p "$config_dir"
+        chmod 700 "$config_dir"
     fi
 }
 
@@ -147,15 +148,18 @@ setup_hooks() {
         cat << MANUAL
     "hooks": {
       "SessionStart": [{"hooks": [{"type": "command", "command": "${mira_bin} hook session-start", "timeout": 10}]}],
-      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "${mira_bin} hook user-prompt", "timeout": 5}]}],
+      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "${mira_bin} hook user-prompt", "timeout": 8}]}],
       "PermissionRequest": [{"hooks": [{"type": "command", "command": "${mira_bin} hook permission", "timeout": 3}]}],
-      "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "${mira_bin} hook pre-tool", "timeout": 2}]}],
-      "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "${mira_bin} hook post-tool", "timeout": 5, "async": true}]}],
+      "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "${mira_bin} hook pre-tool", "timeout": 3}]}],
+      "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "${mira_bin} hook post-tool", "timeout": 5}]}],
+      "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "${mira_bin} hook post-tool-failure", "timeout": 5, "async": true}]}],
       "PreCompact": [{"hooks": [{"type": "command", "command": "${mira_bin} hook pre-compact", "timeout": 30, "async": true}]}],
-      "Stop": [{"hooks": [{"type": "command", "command": "${mira_bin} hook stop", "timeout": 5}]}],
-      "SessionEnd": [{"hooks": [{"type": "command", "command": "${mira_bin} hook session-end", "timeout": 5}]}],
+      "Stop": [{"hooks": [{"type": "command", "command": "${mira_bin} hook stop", "timeout": 8}]}],
+      "SessionEnd": [{"hooks": [{"type": "command", "command": "${mira_bin} hook session-end", "timeout": 15}]}],
       "SubagentStart": [{"hooks": [{"type": "command", "command": "${mira_bin} hook subagent-start", "timeout": 3}]}],
-      "SubagentStop": [{"hooks": [{"type": "command", "command": "${mira_bin} hook subagent-stop", "timeout": 3, "async": true}]}]
+      "SubagentStop": [{"hooks": [{"type": "command", "command": "${mira_bin} hook subagent-stop", "timeout": 3, "async": true}]}],
+      "TaskCompleted": [{"hooks": [{"type": "command", "command": "${mira_bin} hook task-completed", "timeout": 5}]}],
+      "TeammateIdle": [{"hooks": [{"type": "command", "command": "${mira_bin} hook teammate-idle", "timeout": 5}]}]
     }
 MANUAL
         return
@@ -163,7 +167,7 @@ MANUAL
 
     info "Configuring Claude Code hooks..."
 
-    # Define all 10 hooks matching plugin/hooks/hooks.json
+    # Define all 13 hooks matching plugin/hooks/hooks.json
     local hooks_json
     hooks_json=$(cat << EOF
 {
@@ -184,7 +188,7 @@ MANUAL
         {
           "type": "command",
           "command": "${mira_bin} hook user-prompt",
-          "timeout": 5
+          "timeout": 8
         }
       ]
     }
@@ -207,18 +211,29 @@ MANUAL
         {
           "type": "command",
           "command": "${mira_bin} hook pre-tool",
-          "timeout": 2
+          "timeout": 3
         }
       ]
     }
   ],
   "PostToolUse": [
     {
-      "matcher": "Write|Edit|NotebookEdit",
+      "matcher": "Write|Edit|NotebookEdit|Bash",
       "hooks": [
         {
           "type": "command",
           "command": "${mira_bin} hook post-tool",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "PostToolUseFailure": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook post-tool-failure",
           "timeout": 5,
           "async": true
         }
@@ -243,7 +258,7 @@ MANUAL
         {
           "type": "command",
           "command": "${mira_bin} hook stop",
-          "timeout": 5
+          "timeout": 8
         }
       ]
     }
@@ -254,7 +269,7 @@ MANUAL
         {
           "type": "command",
           "command": "${mira_bin} hook session-end",
-          "timeout": 5
+          "timeout": 15
         }
       ]
     }
@@ -278,6 +293,28 @@ MANUAL
           "command": "${mira_bin} hook subagent-stop",
           "timeout": 3,
           "async": true
+        }
+      ]
+    }
+  ],
+  "TaskCompleted": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook task-completed",
+          "timeout": 5
+        }
+      ]
+    }
+  ],
+  "TeammateIdle": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "${mira_bin} hook teammate-idle",
+          "timeout": 5
         }
       ]
     }
@@ -412,6 +449,12 @@ main() {
     else
         echo "    Hooks configured in ~/.claude/settings.json."
     fi
+    echo ""
+    echo "  Try it now:"
+    echo "    /mira:status          -- See what Mira knows about your project"
+    echo '    /mira:remember "..."  -- Store knowledge for future sessions'
+    echo '    /mira:search "..."    -- Semantic code search'
+    echo "    /mira:goals           -- Track work across sessions"
     echo ""
     echo "  Verify: mira --version"
     echo ""

@@ -62,6 +62,7 @@ pub fn get_unified_insights_sync(
 /// Dismiss a single insight by ID, routed by source.
 /// - `"pondering"` → sets `dismissed = 1` on behavior_patterns
 /// - `"doc_gap"` → sets `status = 'skipped'` on documentation_tasks
+///
 /// Source is required to prevent cross-table ID collisions.
 /// Scoped to project_id. Returns whether a row was actually updated.
 pub fn dismiss_insight_sync(

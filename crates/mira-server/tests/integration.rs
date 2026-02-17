@@ -3080,9 +3080,9 @@ async fn test_recipe_list() {
         Some(RecipeData::List(data)) => {
             assert_eq!(data.recipes.len(), 4);
             assert_eq!(data.recipes[0].name, "expert-review");
-            assert_eq!(data.recipes[0].member_count, 6);
+            assert_eq!(data.recipes[0].member_count, 7);
             assert_eq!(data.recipes[1].name, "full-cycle");
-            assert_eq!(data.recipes[1].member_count, 8);
+            assert_eq!(data.recipes[1].member_count, 9);
             assert_eq!(data.recipes[2].name, "qa-hardening");
             assert_eq!(data.recipes[2].member_count, 5);
             assert_eq!(data.recipes[3].name, "refactor");
@@ -3104,8 +3104,8 @@ async fn test_recipe_get() {
     match output.0.data {
         Some(RecipeData::Get(data)) => {
             assert_eq!(data.name, "expert-review");
-            assert_eq!(data.members.len(), 6);
-            assert_eq!(data.tasks.len(), 6);
+            assert_eq!(data.members.len(), 7);
+            assert_eq!(data.tasks.len(), 7);
             // Verify all expected roles are present
             let member_names: Vec<&str> = data.members.iter().map(|m| m.name.as_str()).collect();
             assert!(member_names.contains(&"architect"));
@@ -3113,6 +3113,7 @@ async fn test_recipe_get() {
             assert!(member_names.contains(&"security"));
             assert!(member_names.contains(&"scope-analyst"));
             assert!(member_names.contains(&"ux-strategist"));
+            assert!(member_names.contains(&"growth-strategist"));
             assert!(member_names.contains(&"plan-reviewer"));
             // Coordination instructions should be non-empty
             assert!(!data.coordination.is_empty());
