@@ -168,8 +168,8 @@ impl MiraServer {
                     None => return Ok(None),
                 };
 
-                // Scope check: goal must belong to the active project
-                if goal.project_id != project_id {
+                // Scope check: goal must belong to the active project or be global
+                if goal.project_id.is_some() && goal.project_id != project_id {
                     return Ok(None);
                 }
 
@@ -297,6 +297,10 @@ impl MiraServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pool::DatabasePool;
+    use crate::tools::core::ToolContext;
+    use mira_types::ProjectContext;
+    use std::sync::Arc;
 
     #[test]
     fn resource_list_has_expected_entries() {
@@ -317,5 +321,93 @@ mod tests {
         assert_eq!(templates.len(), 1);
         assert_eq!(templates[0].raw.uri_template, "mira://goals/{id}");
         assert_eq!(templates[0].raw.name, "goal-detail");
+    }
+
+    /// Helper: create a MiraServer with in-memory DBs and an active project.
+    async fn server_with_project() -> (MiraServer, i64) {
+        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
+        let code_pool = Arc::new(DatabasePool::open_code_db_in_memory().await.unwrap());
+        let server = MiraServer::new(pool.clone(), code_pool, None);
+
+        let project_id = pool
+            .interact(|conn| {
+                crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
+                    .map(|(id, _)| id)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+
+        server
+            .set_project(ProjectContext {
+                id: project_id,
+                path: "/test/project".into(),
+                name: Some("test".into()),
+            })
+            .await;
+
+        (server, project_id)
+    }
+
+    #[tokio::test]
+    async fn goal_detail_allows_project_goal() {
+        let (server, project_id) = server_with_project().await;
+
+        let goal_id = server
+            .pool
+            .interact(move |conn| {
+                crate::db::create_goal_sync(conn, Some(project_id), "Project goal", None, None, None, None)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+
+        let result = server.read_goal_detail(goal_id).await;
+        assert!(result.is_ok(), "Project-scoped goal should be readable");
+    }
+
+    #[tokio::test]
+    async fn goal_detail_allows_global_goal() {
+        let (server, _project_id) = server_with_project().await;
+
+        let goal_id = server
+            .pool
+            .interact(move |conn| {
+                crate::db::create_goal_sync(conn, None, "Global goal", None, None, None, None)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+
+        let result = server.read_goal_detail(goal_id).await;
+        assert!(result.is_ok(), "Global goal (project_id=NULL) should be readable");
+    }
+
+    #[tokio::test]
+    async fn goal_detail_rejects_other_project_goal() {
+        let (server, _project_id) = server_with_project().await;
+
+        // Create a second project and a goal belonging to it
+        let other_pid = server
+            .pool
+            .interact(|conn| {
+                crate::db::get_or_create_project_sync(conn, "/other/project", Some("other"))
+                    .map(|(id, _)| id)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+
+        let goal_id = server
+            .pool
+            .interact(move |conn| {
+                crate::db::create_goal_sync(conn, Some(other_pid), "Other project goal", None, None, None, None)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+
+        let result = server.read_goal_detail(goal_id).await;
+        assert!(result.is_err(), "Goal from another project should be rejected");
     }
 }

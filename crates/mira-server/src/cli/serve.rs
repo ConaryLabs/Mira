@@ -117,6 +117,33 @@ async fn init_server_context() -> Result<ServerContext> {
         http_client.clone(),
     );
 
+    // Ensure vec dimensions and provider are consistent (needed by both MCP and CLI paths)
+    if let Some(ref emb) = embeddings {
+        let dims = emb.dimensions();
+        let dim_pool = pool.clone();
+        if let Err(e) = dim_pool
+            .interact(move |conn| {
+                mira::db::ensure_vec_table_dimensions(conn, dims)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            warn!("Failed to ensure vec_memory dimensions: {}", e);
+        }
+
+        let provider_id = emb.provider_id().to_string();
+        let check_pool = pool.clone();
+        if let Err(e) = check_pool
+            .interact(move |conn| {
+                mira::db::check_embedding_provider_change(conn, &provider_id)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            warn!("Failed to check embedding provider change: {}", e);
+        }
+    }
+
     // Create server context from centralized config
     let server = MiraServer::from_api_keys(
         pool.clone(),
@@ -193,32 +220,6 @@ pub async fn run_mcp_server() -> Result<()> {
             dims = emb.dimensions(),
             "Semantic search enabled"
         );
-
-        // Ensure vec_memory dimensions match the active provider
-        let dims = emb.dimensions();
-        let dim_pool = pool.clone();
-        if let Err(e) = dim_pool
-            .interact(move |conn| {
-                mira::db::ensure_vec_table_dimensions(conn, dims)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-        {
-            warn!("Failed to ensure vec_memory dimensions: {}", e);
-        }
-
-        // Check for embedding provider change and invalidate stale vectors
-        let provider_id = emb.provider_id().to_string();
-        let check_pool = pool.clone();
-        if let Err(e) = check_pool
-            .interact(move |conn| {
-                mira::db::check_embedding_provider_change(conn, &provider_id)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-        {
-            warn!("Failed to check embedding provider change: {}", e);
-        }
     } else {
         info!("Semantic search disabled (no OPENAI_API_KEY or OLLAMA_HOST)");
     }
