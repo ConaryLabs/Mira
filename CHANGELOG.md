@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.3] - 2026-02-17
+
+### Added
+- **`/mira:recall` skill** — New slash command for browsing and searching stored memories. Without args: lists recent 20 memories grouped by category. With a query: semantic recall. Fills the gap where the flagship feature had no slash command shortcut.
+- **`docs/tools/insights.md`** — Documentation for the `insights` MCP tool (previously undocumented after being split from `session`).
+- **Code embedding recovery on startup** — If a previous embedding provider switch cleared `vec_code` but crashed before re-queuing, Mira now detects the invariant violation (`vec_code` empty, chunks present, nothing queued) and self-heals automatically.
+
+### Fixed
+- **Unescaped LIKE wildcards** — `hooks/pre_tool.rs` and `cartographer/map.rs` now escape `%` and `_` before using filenames/module paths in SQL LIKE clauses, consistent with the rest of the codebase.
+- **Double pool open in `pre_tool`** — `handle_edit_write_patterns` was opening a second `DatabasePool` redundantly; now reuses the existing pool.
+- **`vec_code` not invalidated on embedding provider change** — Switching embedding providers previously cleared `vec_memory` but left stale `vec_code` embeddings, causing garbage semantic code search results. `vec_code` is now cleared and all chunks re-queued for re-embedding on provider switch. `code_fts` (keyword search) is preserved unchanged.
+- **Duplicate re-queue on provider switch** — `INSERT OR IGNORE` had no effect without a UNIQUE constraint on `pending_embeddings`. Fixed with `DELETE WHERE status='pending'` + plain `INSERT` for exact-once queuing.
+- **`mode: basic` messaging** — Now explicitly lists what features are disabled and links to `mira setup`, instead of a bare mode label.
+- **Silent HOME directory fallback** — All three paths that fall back to CWD when `$HOME` is unset now emit a `tracing::warn!` explaining the risk.
+
+### Changed
+- **Zhipu/GLM provider removed** — `Provider::Zhipu`, `llm/zhipu.rs`, and all references removed. LLM providers are now DeepSeek, Ollama, and MCP Sampling only.
+- **Docs sync** — Tool count updated from 8 to 9 everywhere (`insights` is now a standalone tool). Hook timeouts in `CONFIGURATION.md` and `README.md` synced to `hooks.json`. Dropped tables removed from `DATABASE.md`. Zhipu references removed from `.env.example`, `CONTRIBUTING.md`, `DATABASE.md`. `docs/tools/session.md` no longer documents `insights`/`dismiss_insight` actions. Three missing hooks added to `plugin/README.md` hooks table.
+
+---
+
 ## [0.8.2] - 2026-02-16
 
 ### Added
