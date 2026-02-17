@@ -49,14 +49,15 @@ pub async fn run_cleanup(dry_run: bool, yes: bool, category: Option<String>) -> 
         .interact(move |conn| Ok(retention::count_retention_candidates(conn, &preview_config)))
         .await?;
 
-    // Filter by category if specified
+    // Filter by category for display only; execution always runs full cleanup
     let filter = category.as_deref().unwrap_or("all");
     let filtered: Vec<&(String, usize)> = candidates
         .iter()
         .filter(|(table, _)| filter == "all" || table_category(table) == filter)
         .collect();
 
-    let total_candidates: usize = filtered.iter().map(|(_, c)| *c).sum();
+    let display_candidates: usize = filtered.iter().map(|(_, c)| *c).sum();
+    let total_candidates: usize = candidates.iter().map(|(_, c)| *c).sum();
 
     if total_candidates == 0 && !dry_run {
         println!("Nothing to clean up.");
@@ -72,20 +73,26 @@ pub async fn run_cleanup(dry_run: bool, yes: bool, category: Option<String>) -> 
         return Ok(());
     }
 
-    if total_candidates > 0 {
+    if display_candidates > 0 {
         println!("Cleanup preview:");
         for (table, count) in &filtered {
             if *count > 0 {
                 println!("  {} rows from {}", count, table);
             }
         }
-        println!("  Total: {} rows eligible for cleanup", total_candidates);
+        println!("  Total: {} rows eligible for cleanup", display_candidates);
         if filter != "all" {
             println!(
-                "\n  Note: showing category '{}' only. Execution runs full cleanup.",
-                filter
+                "\n  Note: showing category '{}' only. Execution runs full cleanup ({} total rows).",
+                filter, total_candidates
             );
         }
+    } else if total_candidates > 0 && filter != "all" {
+        println!(
+            "No rows in category '{}'. {} total rows eligible (all categories).",
+            filter, total_candidates
+        );
+        println!("\n  Note: Execution runs full cleanup regardless of category filter.");
     }
 
     println!("\nProtected (never auto-deleted):");

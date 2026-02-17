@@ -318,7 +318,7 @@ pub struct SessionRequest {
     )]
     pub dry_run: Option<bool>,
     #[schemars(
-        description = "Category to clean: sessions, analytics, chat, behavior, all (default: all, for cleanup action)"
+        description = "Category to clean: sessions, analytics, behavior, all (default: all, for cleanup action)"
     )]
     pub category: Option<String>,
 }

@@ -123,7 +123,7 @@ Run data cleanup to remove old records based on retention policy.
 
 **Parameters:**
 - `action` (string, required) - `"cleanup"`
-- `category` (string, optional) - Category to clean: `sessions`, `analytics`, `chat`, `behavior`, `all` (default: `all`)
+- `category` (string, optional) - Category to clean: `sessions`, `analytics`, `behavior`, `all` (default: `all`)
 - `dry_run` (boolean, optional) - Preview what would be cleaned without deleting (default: `true`)
 
 **Returns:** Summary of rows that would be (or were) deleted per table.

@@ -107,7 +107,7 @@ pub enum Commands {
         #[arg(long, short)]
         yes: bool,
 
-        /// Filter by category: sessions, analytics, chat, behavior, or all (default)
+        /// Filter by category: sessions, analytics, behavior, or all (default)
         #[arg(long)]
         category: Option<String>,
     },
