@@ -7,7 +7,7 @@ description: This skill should be used when the user asks "what did you learn", 
 
 ## Current Insights (Live)
 
-!`mira tool session '{"action":"insights","min_confidence":0.5}'`
+!`mira tool insights '{"action":"insights","min_confidence":0.5}'`
 
 ## Instructions
 
@@ -27,6 +27,6 @@ If no insights exist, suggest actions that generate them:
 
 ## Optional Filters
 
-If user passes arguments, use `mcp__mira__session` tool with filters:
+If user passes arguments, use `mcp__mira__insights` tool with filters:
 - `--source pondering|doc_gap` → `insight_source` parameter
 - `--min-confidence 0.7` → `min_confidence` parameter

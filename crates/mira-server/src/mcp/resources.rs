@@ -24,9 +24,7 @@ impl MiraServer {
                 uri: "mira://goals".into(),
                 name: "goals".into(),
                 title: Some("Active Goals".into()),
-                description: Some(
-                    "List of active goals with progress percentages".into(),
-                ),
+                description: Some("List of active goals with progress percentages".into()),
                 mime_type: Some("application/json".into()),
                 size: None,
                 icons: None,
@@ -97,10 +95,7 @@ impl MiraServer {
             _ if uri.starts_with("mira://goals/") => {
                 let id_str = &uri["mira://goals/".len()..];
                 let id: i64 = id_str.parse().map_err(|_| {
-                    rmcp::ErrorData::invalid_params(
-                        format!("Invalid goal ID: {id_str}"),
-                        None,
-                    )
+                    rmcp::ErrorData::invalid_params(format!("Invalid goal ID: {id_str}"), None)
                 })?;
                 self.read_goal_detail(id).await
             }
@@ -122,21 +117,20 @@ impl MiraServer {
         let goals = self
             .pool
             .interact(move |conn| {
-                crate::db::get_active_goals_sync(conn, project_id, 100)
-                    .map(|goals| {
-                        goals
-                            .into_iter()
-                            .map(|g| {
-                                serde_json::json!({
-                                    "id": g.id,
-                                    "title": g.title,
-                                    "status": g.status,
-                                    "priority": g.priority,
-                                    "progress_percent": g.progress_percent,
-                                })
+                crate::db::get_active_goals_sync(conn, project_id, 100).map(|goals| {
+                    goals
+                        .into_iter()
+                        .map(|g| {
+                            serde_json::json!({
+                                "id": g.id,
+                                "title": g.title,
+                                "status": g.status,
+                                "priority": g.priority,
+                                "progress_percent": g.progress_percent,
                             })
-                            .collect::<Vec<_>>()
-                    })
+                        })
+                        .collect::<Vec<_>>()
+                })
             })
             .await
             .map_err(|e| {
@@ -356,8 +350,16 @@ mod tests {
         let goal_id = server
             .pool
             .interact(move |conn| {
-                crate::db::create_goal_sync(conn, Some(project_id), "Project goal", None, None, None, None)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
+                crate::db::create_goal_sync(
+                    conn,
+                    Some(project_id),
+                    "Project goal",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await
             .unwrap();
@@ -380,7 +382,10 @@ mod tests {
             .unwrap();
 
         let result = server.read_goal_detail(goal_id).await;
-        assert!(result.is_ok(), "Global goal (project_id=NULL) should be readable");
+        assert!(
+            result.is_ok(),
+            "Global goal (project_id=NULL) should be readable"
+        );
     }
 
     #[tokio::test]
@@ -401,13 +406,24 @@ mod tests {
         let goal_id = server
             .pool
             .interact(move |conn| {
-                crate::db::create_goal_sync(conn, Some(other_pid), "Other project goal", None, None, None, None)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
+                crate::db::create_goal_sync(
+                    conn,
+                    Some(other_pid),
+                    "Other project goal",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
             })
             .await
             .unwrap();
 
         let result = server.read_goal_detail(goal_id).await;
-        assert!(result.is_err(), "Goal from another project should be rejected");
+        assert!(
+            result.is_err(),
+            "Goal from another project should be rejected"
+        );
     }
 }

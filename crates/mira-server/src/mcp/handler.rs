@@ -80,9 +80,7 @@ impl ServerHandler for MiraServer {
         context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_
     {
-        async move {
-            self.handle_list_resource_templates(request, context).await
-        }
+        async move { self.handle_list_resource_templates(request, context).await }
     }
 
     #[allow(clippy::manual_async_fn)]

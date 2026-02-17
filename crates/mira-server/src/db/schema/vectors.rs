@@ -70,10 +70,7 @@ pub fn ensure_vec_table_dimensions(conn: &Connection, target_dims: usize) -> Res
         }
         None => {
             // Table doesn't exist yet — create with correct dimensions
-            tracing::info!(
-                "Creating vec_memory with {} dimensions",
-                target_dims
-            );
+            tracing::info!("Creating vec_memory with {} dimensions", target_dims);
             conn.execute_batch(&format!(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(\
                      embedding float[{target_dims}],\

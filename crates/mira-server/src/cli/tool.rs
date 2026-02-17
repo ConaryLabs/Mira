@@ -7,7 +7,7 @@ use mira::error::MiraError;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
     CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, MemoryRequest,
-    ProjectRequest, RecipeRequest, SessionAction, SessionRequest, TeamRequest,
+    ProjectRequest, RecipeRequest, SessionRequest, TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -77,18 +77,22 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             .await
             .map(|output| output.0.message)
         }
-        "session" => {
+        "session" | "insights" => {
             let req: SessionRequest = serde_json::from_str(&args)?;
-            match req.action {
-                SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
-                    mira::tools::tasks::handle_tasks(&server, req.action, req.task_id)
-                        .await
-                        .map(|output| output.0.message)
-                }
-                _ => mira::tools::handle_session(&server, req)
-                    .await
-                    .map(|output| output.0.message),
+            mira::tools::handle_session(&server, req)
+                .await
+                .map(|output| output.0.message)
+        }
+        "tasks" => {
+            #[derive(serde::Deserialize)]
+            struct TasksArgs {
+                action: mira::tools::tasks::TaskAction,
+                task_id: Option<String>,
             }
+            let req: TasksArgs = serde_json::from_str(&args)?;
+            mira::tools::tasks::handle_tasks(&server, req.action, req.task_id)
+                .await
+                .map(|output| output.0.message)
         }
         "documentation" => {
             let req: DocumentationRequest = serde_json::from_str(&args)?;
@@ -130,6 +134,8 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "goal",
         "index",
         "session",
+        "insights",
+        "tasks",
         "documentation",
         "team",
         "recipe",

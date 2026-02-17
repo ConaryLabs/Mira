@@ -433,37 +433,33 @@ async fn handle_edit_write_patterns(
 
             let mut warnings = Vec::new();
             for (pattern_data_str, occurrence_count) in rows {
-                if let Some(data) =
-                    crate::proactive::patterns::PatternData::from_json(&pattern_data_str)
+                if let Some(crate::proactive::patterns::PatternData::ChangePattern {
+                    pattern_subtype,
+                    outcome_stats,
+                    ..
+                }) = crate::proactive::patterns::PatternData::from_json(&pattern_data_str)
                 {
-                    if let crate::proactive::patterns::PatternData::ChangePattern {
-                        pattern_subtype,
-                        outcome_stats,
-                        ..
-                    } = data
-                    {
-                        let warning = match pattern_subtype.as_str() {
-                            "module_hotspot" => format!(
-                                "hotspot: modified {} times, {}/{} changes needed follow-up fixes",
-                                occurrence_count,
-                                outcome_stats.follow_up_fix,
-                                outcome_stats.total,
-                            ),
-                            "size_risk" => format!(
-                                "size risk: {}/{} changes to this area needed follow-up fixes",
-                                outcome_stats.follow_up_fix, outcome_stats.total,
-                            ),
-                            "co_change_gap" => format!(
-                                "co-change pattern: this file is usually changed with related files ({}/{} had issues when changed alone)",
-                                outcome_stats.follow_up_fix, outcome_stats.total,
-                            ),
-                            other => format!(
-                                "{}: modified {} times",
-                                other, occurrence_count,
-                            ),
-                        };
-                        warnings.push(warning);
-                    }
+                    let warning = match pattern_subtype.as_str() {
+                        "module_hotspot" => format!(
+                            "hotspot: modified {} times, {}/{} changes needed follow-up fixes",
+                            occurrence_count,
+                            outcome_stats.follow_up_fix,
+                            outcome_stats.total,
+                        ),
+                        "size_risk" => format!(
+                            "size risk: {}/{} changes to this area needed follow-up fixes",
+                            outcome_stats.follow_up_fix, outcome_stats.total,
+                        ),
+                        "co_change_gap" => format!(
+                            "co-change pattern: this file is usually changed with related files ({}/{} had issues when changed alone)",
+                            outcome_stats.follow_up_fix, outcome_stats.total,
+                        ),
+                        other => format!(
+                            "{}: modified {} times",
+                            other, occurrence_count,
+                        ),
+                    };
+                    warnings.push(warning);
                 }
             }
             Ok(warnings)
@@ -474,10 +470,7 @@ async fn handle_edit_write_patterns(
     let output = if warnings.is_empty() {
         serde_json::json!({})
     } else {
-        let context = format!(
-            "[Mira/patterns] \u{26a0} {}",
-            warnings.join("; "),
-        );
+        let context = format!("[Mira/patterns] \u{26a0} {}", warnings.join("; "),);
         serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

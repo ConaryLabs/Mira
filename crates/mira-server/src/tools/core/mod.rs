@@ -145,6 +145,7 @@ pub mod code;
 pub mod diff;
 pub mod documentation;
 pub mod goals;
+pub mod insights;
 pub mod memory;
 pub mod project;
 pub mod recipe;
@@ -163,6 +164,7 @@ pub use code::{
 pub use diff::{analyze_diff_tool, list_diff_analyses};
 pub use documentation::documentation;
 pub use goals::goal;
+pub use insights::{dismiss_insight, query_insights};
 pub use memory::{archive, forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
 pub use recipe::handle_recipe;

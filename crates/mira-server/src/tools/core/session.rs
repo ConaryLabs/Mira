@@ -1,21 +1,20 @@
 // crates/mira-server/src/tools/core/session.rs
 // Unified session management tools
 
-use crate::config::file::{MiraConfig, RetentionConfig};
+use crate::config::file::MiraConfig;
 use crate::db::retention::{cleanup_orphans, count_retention_candidates, run_data_retention_sync};
 use crate::db::{
-    build_session_recap_sync, compute_age_days, create_session_ext_sync, dismiss_insight_sync,
-    get_error_patterns_sync, get_health_history_sync, get_recent_sessions_sync,
-    get_session_history_sync, get_session_lineage_sync, get_unified_insights_sync,
+    build_session_recap_sync, create_session_ext_sync, get_error_patterns_sync,
+    get_health_history_sync, get_recent_sessions_sync, get_session_history_scoped_sync,
+    get_session_lineage_sync,
 };
 use crate::error::MiraError;
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     CapabilitiesData, CapabilityStatus, ErrorPatternItem, ErrorPatternsData, HealthSnapshotItem,
-    HealthTrendsData, HistoryEntry, InsightItem, InsightsData, LineageSession, SessionCurrentData,
-    SessionData, SessionHistoryData, SessionLineageData, SessionListData, SessionOutput,
-    SessionSummary,
+    HealthTrendsData, HistoryEntry, LineageSession, SessionCurrentData, SessionData,
+    SessionHistoryData, SessionLineageData, SessionListData, SessionOutput, SessionSummary,
 };
 use crate::tools::core::session_notes;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
@@ -71,7 +70,7 @@ pub async fn handle_session<C: ToolContext>(
             }))
         }
         SessionAction::Insights => {
-            query_insights(
+            super::insights::query_insights(
                 ctx,
                 req.insight_source,
                 req.min_confidence,
@@ -81,7 +80,7 @@ pub async fn handle_session<C: ToolContext>(
             .await
         }
         SessionAction::DismissInsight => {
-            dismiss_insight(ctx, req.insight_id, req.insight_source).await
+            super::insights::dismiss_insight(ctx, req.insight_id, req.insight_source).await
         }
         SessionAction::StorageStatus => storage_status(ctx).await,
         SessionAction::Cleanup => cleanup(ctx, req.dry_run, req.category).await,
@@ -89,327 +88,7 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::HealthTrends => get_health_trends(ctx, req.limit).await,
         SessionAction::SessionLineage => get_session_lineage(ctx, req.limit).await,
         SessionAction::Capabilities => get_capabilities(ctx).await,
-        SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
-            // Tasks actions need MiraServer directly, not ToolContext
-            // This branch is unreachable in MCP (router intercepts) but needed for CLI
-            Err(MiraError::Other(
-                "Tasks actions must be handled by the router/CLI dispatcher directly.".to_string(),
-            ))
-        }
     }
-}
-
-/// Map a tech-debt score to a letter-grade tier label.
-fn score_to_tier_label(score: f64) -> &'static str {
-    if score <= 20.0 {
-        "A (Healthy)"
-    } else if score <= 40.0 {
-        "B (Moderate)"
-    } else if score <= 60.0 {
-        "C (Needs Work)"
-    } else if score <= 80.0 {
-        "D (Poor)"
-    } else {
-        "F (Critical)"
-    }
-}
-
-/// Category display order and human-readable labels.
-const CATEGORY_ORDER: &[(&str, &str)] = &[
-    ("attention", "Attention Required"),
-    ("quality", "Code Quality"),
-    ("testing", "Testing & Reliability"),
-    ("workflow", "Workflow"),
-    ("documentation", "Documentation"),
-    ("health", "Health Trend"),
-    ("other", "Other"),
-];
-
-/// Query unified insights digest, formatted as a categorized Health Dashboard.
-async fn query_insights<C: ToolContext>(
-    ctx: &C,
-    insight_source: Option<String>,
-    min_confidence: Option<f64>,
-    since_days: Option<u32>,
-    limit: Option<i64>,
-) -> Result<Json<SessionOutput>, MiraError> {
-    use std::collections::BTreeMap;
-
-    let project = ctx.get_project().await;
-    let project_id = project
-        .as_ref()
-        .map(|p| p.id)
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
-
-    let filter_source = insight_source.clone();
-    let min_conf = min_confidence.unwrap_or(0.5);
-    let days_back = since_days.unwrap_or(30) as i64;
-    let lim = limit.unwrap_or(20).max(0) as usize;
-
-    let project_id_for_snapshot = project_id;
-
-    let insights = ctx
-        .pool()
-        .run(move |conn| {
-            get_unified_insights_sync(
-                conn,
-                project_id,
-                filter_source.as_deref(),
-                min_conf,
-                days_back,
-                lim,
-            )
-        })
-        .await?;
-
-    // Fetch latest health snapshot for the dashboard header
-    let snapshot_summary = ctx
-        .pool()
-        .run(move |conn| {
-            let result: Option<(f64, i64, String)> = conn
-                .query_row(
-                    "SELECT avg_debt_score, module_count, tier_distribution
-                     FROM health_snapshots WHERE project_id = ?1
-                     ORDER BY snapshot_at DESC LIMIT 1",
-                    rusqlite::params![project_id_for_snapshot],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .ok();
-            Ok::<_, String>(result)
-        })
-        .await?;
-
-    // Handle empty state
-    if insights.is_empty() {
-        let has_filters = insight_source.is_some()
-            || min_confidence.is_some()
-            || since_days.is_some()
-            || limit.is_some();
-        let empty_msg = if has_filters {
-            "No insights match the current filters.".to_string()
-        } else if snapshot_summary.is_some() {
-            "No active insights. Codebase is looking healthy.".to_string()
-        } else {
-            "No insights found.\n\nTo generate insights:\n  \
-             1. Index your project: index(action=\"project\")\n  \
-             2. CLI health scan: `mira tool index '{\"action\":\"health\"}'`\n  \
-             3. Then check insights again"
-                .to_string()
-        };
-        return Ok(Json(SessionOutput {
-            action: "insights".into(),
-            message: empty_msg,
-            data: Some(SessionData::Insights(InsightsData {
-                insights: vec![],
-                total: 0,
-            })),
-        }));
-    }
-
-    // ── Build categorized dashboard ──
-
-    // Separate high-priority items into "attention" bucket; track their indices
-    // so they don't also appear under their original category.
-    let mut attention_indices: Vec<usize> = Vec::new();
-    for (i, insight) in insights.iter().enumerate() {
-        if insight.priority_score >= 0.75 {
-            attention_indices.push(i);
-        }
-    }
-
-    // Group remaining insights by category
-    let mut by_category: BTreeMap<String, Vec<(usize, &crate::db::UnifiedInsight)>> =
-        BTreeMap::new();
-    for (i, insight) in insights.iter().enumerate() {
-        if attention_indices.contains(&i) {
-            by_category
-                .entry("attention".to_string())
-                .or_default()
-                .push((i, insight));
-        } else {
-            let cat = insight.category.as_deref().unwrap_or("other").to_string();
-            by_category.entry(cat).or_default().push((i, insight));
-        }
-    }
-
-    // ── Dashboard header ──
-    let mut output = String::from("## Project Health Dashboard\n\n");
-    if let Some((avg_score, module_count, ref tier_dist)) = snapshot_summary {
-        let tier = score_to_tier_label(avg_score);
-        output.push_str(&format!(
-            "### Overall: {} | Score: {:.1} | {} modules\n",
-            tier, avg_score, module_count
-        ));
-        // Parse tier distribution for summary
-        if let Ok(tiers) = serde_json::from_str::<serde_json::Value>(tier_dist)
-            && let Some(obj) = tiers.as_object()
-        {
-            let tier_summary: Vec<String> =
-                obj.iter().map(|(k, v)| format!("{}:{}", k, v)).collect();
-            if !tier_summary.is_empty() {
-                output.push_str(&format!("    tiers: {{{}}}\n", tier_summary.join(",")));
-            }
-        }
-        output.push_str("\n---\n\n");
-    }
-
-    // ── Category sections (skip empty) ──
-    for &(cat_key, cat_label) in CATEGORY_ORDER {
-        let entries = by_category.get(cat_key);
-        let count = entries.map_or(0, |v| v.len());
-        if count == 0 {
-            continue;
-        }
-        output.push_str(&format!("### {} ({})\n\n", cat_label, count));
-
-        if let Some(entries) = entries {
-            for (_idx, insight) in entries {
-                let indicator = if insight.priority_score >= 0.75 {
-                    "[!!]"
-                } else if insight.priority_score >= 0.5 {
-                    "[!]"
-                } else {
-                    "[ ]"
-                };
-                let age = format_age(&insight.timestamp);
-                output.push_str(&format!("  {} {}{}\n", indicator, insight.description, age));
-                if let Some(ref trend) = insight.trend
-                    && let Some(ref summary) = insight.change_summary
-                {
-                    output.push_str(&format!("       Trend: {} ({})\n", trend, summary));
-                }
-                if let Some(ref evidence) = insight.evidence {
-                    output.push_str(&format!("       {}\n", evidence));
-                }
-                output.push('\n');
-            }
-        }
-    }
-
-    // ── Footer ──
-    let dismissable = insights.iter().filter(|i| i.row_id.is_some()).count();
-    if dismissable > 0 {
-        output.push_str("---\n");
-        output.push_str(&format!(
-            "{} dismissable (use session action=dismiss_insight insight_id=<row_id> insight_source=<source>)\n",
-            dismissable
-        ));
-    }
-
-    // ── Build InsightItem vec ──
-    let items: Vec<InsightItem> = insights
-        .iter()
-        .enumerate()
-        .map(|(i, insight)| {
-            let item_category = if attention_indices.contains(&i) {
-                Some("attention".to_string())
-            } else {
-                insight.category.clone()
-            };
-            InsightItem {
-                row_id: insight.row_id,
-                source: insight.source.clone(),
-                source_type: insight.source_type.clone(),
-                description: insight.description.clone(),
-                priority_score: insight.priority_score,
-                confidence: insight.confidence,
-                evidence: insight.evidence.clone(),
-                trend: insight.trend.clone(),
-                change_summary: insight.change_summary.clone(),
-                category: item_category,
-            }
-        })
-        .collect();
-
-    // Fire-and-forget: mark all returned pondering insights as shown by row ID
-    // Only pondering insights live in behavior_patterns — filter to avoid cross-table ID collision
-    let row_ids: Vec<i64> = insights
-        .iter()
-        .filter(|i| i.source == "pondering")
-        .filter_map(|i| i.row_id)
-        .collect();
-    if !row_ids.is_empty() {
-        let pool = ctx.pool().clone();
-        tokio::spawn(async move {
-            let _ = pool
-                .run(move |conn| {
-                    let placeholders: String =
-                        row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                    let sql = format!(
-                        "UPDATE behavior_patterns \
-                         SET shown_count = COALESCE(shown_count, 0) + 1 \
-                         WHERE id IN ({})",
-                        placeholders
-                    );
-                    if let Err(e) = conn.execute(&sql, rusqlite::params_from_iter(row_ids.iter())) {
-                        tracing::warn!("Failed to update insight shown_count: {}", e);
-                    }
-                    Ok::<_, String>(())
-                })
-                .await;
-        });
-    }
-
-    let total = items.len();
-    Ok(Json(SessionOutput {
-        action: "insights".into(),
-        message: output,
-        data: Some(SessionData::Insights(InsightsData {
-            insights: items,
-            total,
-        })),
-    }))
-}
-
-/// Dismiss a single insight by row ID, routed by source.
-/// - `"pondering"` → dismisses behavior_patterns row
-/// - `"doc_gap"` → marks documentation_tasks row as 'skipped'
-///
-/// `insight_source` is required to prevent cross-table ID collisions.
-async fn dismiss_insight<C: ToolContext>(
-    ctx: &C,
-    insight_id: Option<i64>,
-    insight_source: Option<String>,
-) -> Result<Json<SessionOutput>, MiraError> {
-    let id = insight_id.ok_or_else(|| {
-        MiraError::InvalidInput("insight_id is required for dismiss_insight action".to_string())
-    })?;
-    let source = insight_source.ok_or_else(|| {
-        MiraError::InvalidInput(
-            "insight_source is required for dismiss_insight (use 'pondering' or 'doc_gap')"
-                .to_string(),
-        )
-    })?;
-
-    let project = ctx.get_project().await;
-    let project_id = project
-        .as_ref()
-        .map(|p| p.id)
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
-
-    let source_clone = source.clone();
-    let updated = ctx
-        .pool()
-        .run(move |conn| {
-            dismiss_insight_sync(conn, project_id, id, Some(&source_clone))
-                .map_err(|e| format!("Failed to dismiss insight: {}. Verify insight_id and insight_source (\"pondering\" or \"doc_gap\") with session(action=\"insights\").", e))
-        })
-        .await?;
-
-    let message = if updated {
-        format!("Insight {} ({}) dismissed.", id, source)
-    } else {
-        format!(
-            "Insight {} ({}) not found or already dismissed. Use session(action=\"insights\") to see active insights.",
-            id, source
-        )
-    };
-
-    Ok(Json(SessionOutput {
-        action: "dismiss_insight".into(),
-        message,
-        data: None,
-    }))
 }
 
 /// Internal kind enum for session history queries (replaces deleted SessionHistoryAction)
@@ -517,10 +196,18 @@ pub(crate) async fn session_history<C: ToolContext>(
                 })?,
             };
 
+            let project_id = ctx
+                .get_project()
+                .await
+                .as_ref()
+                .map(|p| p.id)
+                .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
             let session_id_clone = target_session_id.clone();
             let history = ctx
                 .pool()
-                .run(move |conn| get_session_history_sync(conn, &session_id_clone, limit))
+                .run(move |conn| {
+                    get_session_history_scoped_sync(conn, &session_id_clone, Some(project_id), limit)
+                })
                 .await?;
 
             if history.is_empty() {
@@ -771,15 +458,7 @@ async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, 
     let config = MiraConfig::load();
     let retention = config.retention;
 
-    let retention_clone = RetentionConfig {
-        enabled: retention.enabled,
-        tool_history_days: retention.tool_history_days,
-        chat_days: retention.chat_days,
-        sessions_days: retention.sessions_days,
-        analytics_days: retention.analytics_days,
-        behavior_days: retention.behavior_days,
-        observations_days: retention.observations_days,
-    };
+    let retention_clone = retention.clone();
 
     let candidates = ctx
         .pool()
@@ -854,19 +533,6 @@ async fn storage_status<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, 
     }))
 }
 
-/// Build a `RetentionConfig` clone suitable for moving into closures.
-fn clone_retention(r: &RetentionConfig) -> RetentionConfig {
-    RetentionConfig {
-        enabled: r.enabled,
-        tool_history_days: r.tool_history_days,
-        chat_days: r.chat_days,
-        sessions_days: r.sessions_days,
-        analytics_days: r.analytics_days,
-        behavior_days: r.behavior_days,
-        observations_days: r.observations_days,
-    }
-}
-
 /// Run data cleanup with dry-run preview by default.
 async fn cleanup<C: ToolContext>(
     ctx: &C,
@@ -879,7 +545,7 @@ async fn cleanup<C: ToolContext>(
         // Preview mode: show what WOULD be deleted
         let config = MiraConfig::load();
         let retention = config.retention;
-        let retention_clone = clone_retention(&retention);
+        let retention_clone = retention.clone();
 
         let candidates = ctx
             .pool()
@@ -953,7 +619,7 @@ async fn cleanup<C: ToolContext>(
         let config = MiraConfig::load();
         let retention = config.retention;
         let retention_enabled = retention.is_enabled();
-        let retention_clone = clone_retention(&retention);
+        let retention_clone = retention.clone();
 
         let (retention_deleted, orphans_deleted) = ctx
             .pool()
@@ -1093,8 +759,14 @@ async fn get_health_trends<C: ToolContext>(
 
     // Calculate trend by comparing first and last snapshot avg_debt_score
     let trend = if chronological.len() >= 2 {
-        let first = chronological.first().unwrap().avg_debt_score;
-        let last = chronological.last().unwrap().avg_debt_score;
+        let Some(first_snap) = chronological.first() else {
+            unreachable!()
+        };
+        let Some(last_snap) = chronological.last() else {
+            unreachable!()
+        };
+        let first = first_snap.avg_debt_score;
+        let last = last_snap.avg_debt_score;
         if first == 0.0 {
             Some("stable".to_string())
         } else {
@@ -1112,10 +784,7 @@ async fn get_health_trends<C: ToolContext>(
     };
 
     // Build human-readable message
-    let mut output = format!(
-        "## Health Trends ({} snapshots)\n\n",
-        chronological.len()
-    );
+    let mut output = format!("## Health Trends ({} snapshots)\n\n", chronological.len());
 
     if let Some(ref t) = trend {
         output.push_str(&format!("Overall trend: **{}**\n\n", t));
@@ -1139,8 +808,12 @@ async fn get_health_trends<C: ToolContext>(
 
     // Show delta summary if we have multiple snapshots
     if chronological.len() >= 2 {
-        let first = chronological.first().unwrap();
-        let last = chronological.last().unwrap();
+        let Some(first) = chronological.first() else {
+            unreachable!()
+        };
+        let Some(last) = chronological.last() else {
+            unreachable!()
+        };
         output.push_str(&format!(
             "\nDelta: avg debt {:.1} \u{2192} {:.1}, modules {} \u{2192} {}, findings {} \u{2192} {}\n",
             first.avg_debt_score,
@@ -1206,8 +879,7 @@ async fn get_session_lineage<C: ToolContext>(
     }
 
     // Build a set of session IDs for quick lookup when determining indentation
-    let session_ids: std::collections::HashSet<&str> =
-        rows.iter().map(|r| r.id.as_str()).collect();
+    let session_ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
 
     // Format human-readable output with lineage indentation
     let mut output = format!("## Session Lineage ({} sessions)\n\n", rows.len());
@@ -1220,7 +892,7 @@ async fn get_session_lineage<C: ToolContext>(
             .as_ref()
             .map(|b| format!(" (branch: {})", b))
             .unwrap_or_default();
-        let age = format_age(&row.last_activity);
+        let age = super::insights::format_age(&row.last_activity);
         let goal_info = match row.goal_count {
             Some(n) if n > 0 => format!(" -- {} goal{}", n, if n == 1 { "" } else { "s" }),
             _ => String::new(),
@@ -1389,20 +1061,4 @@ async fn get_capabilities<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>
             capabilities: caps,
         })),
     }))
-}
-
-/// Format an insight timestamp as a human-readable age suffix.
-fn format_age(timestamp: &str) -> String {
-    let age_days = compute_age_days(timestamp);
-    if age_days < 1.0 {
-        " (today)".to_string()
-    } else if age_days < 2.0 {
-        " (yesterday)".to_string()
-    } else if age_days < 7.0 {
-        format!(" ({} days ago)", age_days as i64)
-    } else if age_days < 14.0 {
-        " (last week)".to_string()
-    } else {
-        format!(" ({} weeks ago)", (age_days / 7.0) as i64)
-    }
 }

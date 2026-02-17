@@ -7,43 +7,48 @@
 use crate::error::MiraError;
 use crate::mcp::CachedTaskResult;
 use crate::mcp::MiraServer;
-use crate::mcp::requests::SessionAction;
 use crate::mcp::responses::{
     Json, TaskSummary, TasksData, TasksListData, TasksOutput, TasksStatusData,
 };
 use crate::utils::truncate;
 use rmcp::task_manager::ToolCallTaskResult;
+use serde::Deserialize;
 use std::time::{Duration, Instant};
 
 /// How long completed task results are retained in the cache.
 const CACHE_RETENTION: Duration = Duration::from_secs(5 * 60);
 
+/// Action enum for the tasks tool (decoupled from SessionAction).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAction {
+    /// List all running and recently completed tasks
+    List,
+    /// Get status and result of a specific task
+    Get,
+    /// Cancel a running task
+    Cancel,
+}
+
 pub async fn handle_tasks(
     server: &MiraServer,
-    action: SessionAction,
+    action: TaskAction,
     task_id: Option<String>,
 ) -> Result<Json<TasksOutput>, MiraError> {
     match action {
-        SessionAction::TasksList => handle_list(server).await,
-        SessionAction::TasksGet => {
+        TaskAction::List => handle_list(server).await,
+        TaskAction::Get => {
             let task_id = task_id.ok_or_else(|| {
-                MiraError::InvalidInput(
-                    "task_id is required for session(action=tasks_get)".to_string(),
-                )
+                MiraError::InvalidInput("task_id is required for tasks(action=get)".to_string())
             })?;
             handle_get(server, &task_id).await
         }
-        SessionAction::TasksCancel => {
+        TaskAction::Cancel => {
             let task_id = task_id.ok_or_else(|| {
-                MiraError::InvalidInput(
-                    "task_id is required for session(action=tasks_cancel)".to_string(),
-                )
+                MiraError::InvalidInput("task_id is required for tasks(action=cancel)".to_string())
             })?;
             handle_cancel(server, &task_id).await
         }
-        _ => Err(MiraError::InvalidInput(
-            "Invalid action for tasks handler".to_string(),
-        )),
     }
 }
 
@@ -192,7 +197,7 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
     if let Some(idx) = position {
         let Some(task_result) = freshly_completed.into_iter().nth(idx) else {
             return Err(MiraError::InvalidInput(format!(
-                "Task '{}' not found. Use session(action=\"tasks_list\") to see available tasks.",
+                "Task '{}' not found. Use tasks(action=\"list\") to see available tasks.",
                 task_id
             )));
         };
@@ -236,7 +241,7 @@ async fn handle_get(server: &MiraServer, task_id: &str) -> Result<Json<TasksOutp
     }
 
     Err(MiraError::InvalidInput(format!(
-        "Task '{}' not found. Use session(action=\"tasks_list\") to see available tasks.",
+        "Task '{}' not found. Use tasks(action=\"list\") to see available tasks.",
         task_id
     )))
 }
@@ -310,7 +315,7 @@ async fn handle_cancel(server: &MiraServer, task_id: &str) -> Result<Json<TasksO
         }))
     } else {
         Err(MiraError::InvalidInput(format!(
-            "Task '{}' not found or already completed. Use session(action=\"tasks_list\") to see current tasks.",
+            "Task '{}' not found or already completed. Use tasks(action=\"list\") to see current tasks.",
             task_id
         )))
     }

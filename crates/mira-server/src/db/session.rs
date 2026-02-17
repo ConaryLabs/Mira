@@ -82,31 +82,72 @@ pub fn get_recent_sessions_sync(
 }
 
 /// Get session history (sync version for pool.interact)
+///
+/// When `project_id` is provided, the query joins on the sessions table to verify
+/// the session belongs to the given project (prevents cross-project data access).
 pub fn get_session_history_sync(
     conn: &Connection,
     session_id: &str,
     limit: usize,
 ) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, session_id, tool_name, arguments, result_summary, full_result, success, created_at
-         FROM tool_history
-         WHERE session_id = ?
-         ORDER BY created_at DESC, id DESC
-         LIMIT ?",
-    )?;
-    let rows = stmt.query_map(params![session_id, limit as i64], |row| {
-        Ok(ToolHistoryEntry {
-            id: row.get(0)?,
-            session_id: row.get(1)?,
-            tool_name: row.get(2)?,
-            arguments: row.get(3)?,
-            result_summary: row.get(4)?,
-            full_result: row.get(5)?,
-            success: row.get::<_, i32>(6)? != 0,
-            created_at: row.get(7)?,
-        })
-    })?;
-    rows.collect()
+    get_session_history_scoped_sync(conn, session_id, None, limit)
+}
+
+/// Get session history with optional project_id scoping.
+///
+/// If `project_id` is `Some`, joins on sessions to ensure the session belongs
+/// to the given project. If `None`, behaves like the unscoped version.
+pub fn get_session_history_scoped_sync(
+    conn: &Connection,
+    session_id: &str,
+    project_id: Option<i64>,
+    limit: usize,
+) -> rusqlite::Result<Vec<ToolHistoryEntry>> {
+    if let Some(pid) = project_id {
+        let mut stmt = conn.prepare(
+            "SELECT th.id, th.session_id, th.tool_name, th.arguments, th.result_summary,
+                    th.full_result, th.success, th.created_at
+             FROM tool_history th
+             JOIN sessions s ON s.id = th.session_id
+             WHERE th.session_id = ?1 AND s.project_id = ?2
+             ORDER BY th.created_at DESC, th.id DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![session_id, pid, limit as i64], |row| {
+            Ok(ToolHistoryEntry {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                tool_name: row.get(2)?,
+                arguments: row.get(3)?,
+                result_summary: row.get(4)?,
+                full_result: row.get(5)?,
+                success: row.get::<_, i32>(6)? != 0,
+                created_at: row.get(7)?,
+            })
+        })?;
+        rows.collect()
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, tool_name, arguments, result_summary, full_result, success, created_at
+             FROM tool_history
+             WHERE session_id = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?",
+        )?;
+        let rows = stmt.query_map(params![session_id, limit as i64], |row| {
+            Ok(ToolHistoryEntry {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                tool_name: row.get(2)?,
+                arguments: row.get(3)?,
+                result_summary: row.get(4)?,
+                full_result: row.get(5)?,
+                success: row.get::<_, i32>(6)? != 0,
+                created_at: row.get(7)?,
+            })
+        })?;
+        rows.collect()
+    }
 }
 
 /// Build session recap - sync version for pool.interact()

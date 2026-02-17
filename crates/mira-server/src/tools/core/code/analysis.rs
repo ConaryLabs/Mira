@@ -514,14 +514,10 @@ pub async fn get_conventions<C: ToolContext>(
             }))
         }
         None => {
-            let message =
-                maybe_queue_health_scan(ctx, project_id, "module conventions").await;
+            let message = maybe_queue_health_scan(ctx, project_id, "module conventions").await;
             Ok(Json(CodeOutput {
                 action: "conventions".into(),
-                message: format!(
-                    "No conventions found for file '{}'. {}",
-                    file_path, message
-                ),
+                message: format!("No conventions found for file '{}'. {}", file_path, message),
                 data: Some(CodeData::Conventions(ConventionsData {
                     module_id: String::new(),
                     module_name: String::new(),
@@ -555,7 +551,12 @@ pub async fn get_debt_delta<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>,
         .await?;
 
     if snapshots.len() < 2 {
-        let message = maybe_queue_health_scan(ctx, project_id, "health snapshots for delta comparison (need at least 2)").await;
+        let message = maybe_queue_health_scan(
+            ctx,
+            project_id,
+            "health snapshots for delta comparison (need at least 2)",
+        )
+        .await;
         return Ok(Json(CodeOutput {
             action: "debt_delta".into(),
             message,
@@ -637,10 +638,7 @@ pub async fn get_debt_delta<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>,
         "Aggregate: avg score {:.1} -> {:.1} (delta: {:+.1})\n",
         previous_snap.avg_debt_score, current_snap.avg_debt_score, avg_delta
     ));
-    response.push_str(&format!(
-        "Trend: {} ({} modules)\n\n",
-        trend, modules.len()
-    ));
+    response.push_str(&format!("Trend: {} ({} modules)\n\n", trend, modules.len()));
 
     // Tier distribution changes
     let all_tiers = ["A", "B", "C", "D", "F"];
@@ -672,10 +670,7 @@ pub async fn get_debt_delta<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>,
         response.push_str("Current module standings (worst first):\n");
         for m in modules.iter().take(20) {
             let path = m.module_path.as_deref().unwrap_or(&m.module_id);
-            response.push_str(&format!(
-                "  {} : [{}] score {:.1}\n",
-                path, m.tier, m.score
-            ));
+            response.push_str(&format!("  {} : [{}] score {:.1}\n", path, m.tier, m.score));
         }
         if modules.len() > 20 {
             response.push_str(&format!(

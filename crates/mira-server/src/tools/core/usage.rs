@@ -63,7 +63,10 @@ pub async fn usage_stats<C: ToolContext>(
     let stats: Vec<_> = all_stats.into_iter().take(limit).collect();
     let period = format_period(since_days);
 
-    let mut output = format!("LLM Usage by {} ({}, limit {})\n\n", group_by, period, limit);
+    let mut output = format!(
+        "LLM Usage by {} ({}, limit {})\n\n",
+        group_by, period, limit
+    );
     output.push_str(&format!(
         "{:<30} {:>8} {:>12} {:>10}\n",
         group_by.to_uppercase(),
@@ -99,35 +102,13 @@ pub async fn usage_stats<C: ToolContext>(
     Ok(output)
 }
 
-/// List recent LLM usage records
+/// Deprecated: duplicate of usage_stats with hardcoded group_by="role".
+/// Kept for backward compatibility with session dispatcher.
+/// TODO: Remove SessionAction::UsageList and this function.
 pub async fn usage_list<C: ToolContext>(
     ctx: &C,
     since_days: Option<u32>,
     limit: Option<i64>,
 ) -> Result<String, MiraError> {
-    let project_id = ctx.project_id().await;
-    let since_days = since_days.or(Some(30));
-
-    let stats = ctx
-        .pool()
-        .run(move |conn| query_llm_usage_stats(conn, "role", project_id, since_days))
-        .await?;
-
-    if stats.is_empty() {
-        return Ok("No usage data found. Usage data is recorded after MCP tool calls. Try using some tools first.".to_string());
-    }
-
-    let period = format_period(since_days);
-    let limit = limit.unwrap_or(50).max(0) as usize;
-
-    let mut output = format!("Recent LLM Usage by Role ({}, limit {})\n\n", period, limit);
-
-    for stat in stats.iter().take(limit) {
-        output.push_str(&format!(
-            "- {}: {} requests, {} tokens, ${:.4}\n",
-            stat.group_key, stat.total_requests, stat.total_tokens, stat.total_cost
-        ));
-    }
-
-    Ok(output)
+    usage_stats(ctx, Some("role".to_string()), since_days, limit).await
 }

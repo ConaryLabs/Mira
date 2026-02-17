@@ -16,7 +16,7 @@ pub struct MiraConfig {
 }
 
 /// Data retention configuration section
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct RetentionConfig {
     /// Master switch -- no auto-cleanup unless explicitly enabled
     #[serde(default)]

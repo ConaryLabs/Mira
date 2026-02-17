@@ -12,6 +12,7 @@ mod diff;
 mod documentation;
 mod goal;
 mod index;
+mod insights;
 mod memory;
 mod project;
 mod recipe;
@@ -25,6 +26,7 @@ pub use diff::*;
 pub use documentation::*;
 pub use goal::*;
 pub use index::*;
+pub use insights::*;
 pub use memory::*;
 pub use project::*;
 pub use recipe::*;
@@ -118,6 +120,10 @@ mod tests {
         assert!(
             schema_for_output::<SessionOutput>().is_ok(),
             "SessionOutput"
+        );
+        assert!(
+            schema_for_output::<InsightsOutput>().is_ok(),
+            "InsightsOutput"
         );
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
         assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");

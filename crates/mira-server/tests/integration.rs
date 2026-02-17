@@ -12,6 +12,7 @@ use mira::tools::core::{
     get_project, get_session_recap, get_symbols, goal, handle_recipe, handle_session, index,
     recall, remember, search_code, session_start, set_project, summarize_codebase,
 };
+use mira::tools::tasks::TaskAction;
 use std::sync::Arc;
 use test_utils::TestContext;
 
@@ -505,7 +506,7 @@ async fn test_session_history_current() {
     let req = SessionRequest {
         action: SessionAction::CurrentSession,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -542,7 +543,7 @@ async fn test_session_history_current() {
     let req = SessionRequest {
         action: SessionAction::CurrentSession,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -584,7 +585,7 @@ async fn test_session_history_list_sessions() {
     let req = SessionRequest {
         action: SessionAction::ListSessions,
         session_id: None,
-        task_id: None,
+
         limit: Some(10),
         group_by: None,
         since_days: None,
@@ -2098,7 +2099,6 @@ async fn test_documentation_list_filter_by_status() {
 // ============================================================================
 
 use mira::mcp::MiraServer;
-use mira::mcp::requests::SessionAction;
 use rmcp::task_manager::{OperationDescriptor, OperationMessage, ToolCallTaskResult};
 
 /// Helper to create a MiraServer with in-memory DBs for task tests
@@ -2119,7 +2119,7 @@ async fn make_task_server() -> MiraServer {
 #[tokio::test]
 async fn test_tasks_list_empty() {
     let server = make_task_server().await;
-    let output = mira::tools::tasks::handle_tasks(&server, SessionAction::TasksList, None)
+    let output = mira::tools::tasks::handle_tasks(&server, TaskAction::List, None)
         .await
         .expect("tasks list should succeed");
     assert!(
@@ -2134,7 +2134,7 @@ async fn test_tasks_get_not_found() {
     let server = make_task_server().await;
     let result = mira::tools::tasks::handle_tasks(
         &server,
-        SessionAction::TasksGet,
+        TaskAction::Get,
         Some("nonexistent-id".to_string()),
     )
     .await;
@@ -2151,7 +2151,7 @@ async fn test_tasks_cancel_not_found() {
     let server = make_task_server().await;
     let result = mira::tools::tasks::handle_tasks(
         &server,
-        SessionAction::TasksCancel,
+        TaskAction::Cancel,
         Some("nonexistent-id".to_string()),
     )
     .await;
@@ -2166,7 +2166,7 @@ async fn test_tasks_cancel_not_found() {
 #[tokio::test]
 async fn test_tasks_get_missing_task_id() {
     let server = make_task_server().await;
-    let result = mira::tools::tasks::handle_tasks(&server, SessionAction::TasksGet, None).await;
+    let result = mira::tools::tasks::handle_tasks(&server, TaskAction::Get, None).await;
     let err = result.err().expect("expected error");
     assert!(
         err.to_string().contains("task_id is required"),
@@ -2205,7 +2205,7 @@ async fn test_tasks_lifecycle() {
     }
 
     // List — should show one working task
-    let output = mira::tools::tasks::handle_tasks(&server, SessionAction::TasksList, None)
+    let output = mira::tools::tasks::handle_tasks(&server, TaskAction::List, None)
         .await
         .expect("tasks list should succeed");
     assert!(
@@ -2218,10 +2218,9 @@ async fn test_tasks_lifecycle() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Get — should return completed result
-    let output =
-        mira::tools::tasks::handle_tasks(&server, SessionAction::TasksGet, Some(task_id.clone()))
-            .await
-            .expect("tasks get should succeed");
+    let output = mira::tools::tasks::handle_tasks(&server, TaskAction::Get, Some(task_id.clone()))
+        .await
+        .expect("tasks get should succeed");
     assert!(
         msg!(output).contains("completed"),
         "Expected 'completed' status, got: {}",
@@ -2264,13 +2263,10 @@ async fn test_tasks_cancel_running() {
     }
 
     // Cancel
-    let output = mira::tools::tasks::handle_tasks(
-        &server,
-        SessionAction::TasksCancel,
-        Some(task_id.clone()),
-    )
-    .await
-    .expect("cancel should succeed");
+    let output =
+        mira::tools::tasks::handle_tasks(&server, TaskAction::Cancel, Some(task_id.clone()))
+            .await
+            .expect("cancel should succeed");
     assert!(
         msg!(output).contains("cancelled"),
         "Expected 'cancelled' message, got: {}",
@@ -2278,10 +2274,9 @@ async fn test_tasks_cancel_running() {
     );
 
     // Get after cancel — should show cancelled status
-    let output =
-        mira::tools::tasks::handle_tasks(&server, SessionAction::TasksGet, Some(task_id.clone()))
-            .await
-            .expect("get after cancel should succeed");
+    let output = mira::tools::tasks::handle_tasks(&server, TaskAction::Get, Some(task_id.clone()))
+        .await
+        .expect("get after cancel should succeed");
     assert!(
         msg!(output).contains("cancelled"),
         "Expected 'cancelled' status after cancel, got: {}",
@@ -3202,7 +3197,7 @@ async fn test_dismiss_insight_success() {
     let req = SessionRequest {
         action: SessionAction::DismissInsight,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -3260,7 +3255,7 @@ async fn test_dismiss_insight_cross_project_blocked() {
     let req = SessionRequest {
         action: SessionAction::DismissInsight,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -3311,7 +3306,7 @@ async fn test_dismiss_insight_non_insight_pattern_blocked() {
     let req = SessionRequest {
         action: SessionAction::DismissInsight,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -3344,7 +3339,7 @@ async fn test_dismiss_insight_requires_project() {
     let req = SessionRequest {
         action: SessionAction::DismissInsight,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -3490,7 +3485,7 @@ async fn test_insights_empty_no_data_shows_setup_instructions() {
     let req = SessionRequest {
         action: SessionAction::Insights,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -3543,7 +3538,7 @@ async fn test_insights_empty_with_snapshot_shows_healthy() {
     let req = SessionRequest {
         action: SessionAction::Insights,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -3596,7 +3591,7 @@ async fn test_insights_empty_with_filters_shows_filter_message() {
     let req = SessionRequest {
         action: SessionAction::Insights,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: None,
@@ -3624,7 +3619,7 @@ async fn test_insights_empty_with_filters_shows_filter_message() {
     let req2 = SessionRequest {
         action: SessionAction::Insights,
         session_id: None,
-        task_id: None,
+
         limit: None,
         group_by: None,
         since_days: Some(1),
@@ -3647,7 +3642,7 @@ async fn test_insights_empty_with_filters_shows_filter_message() {
     let req3 = SessionRequest {
         action: SessionAction::Insights,
         session_id: None,
-        task_id: None,
+
         limit: Some(0),
         group_by: None,
         since_days: None,

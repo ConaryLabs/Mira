@@ -166,14 +166,14 @@ impl OllamaEmbeddings {
                             data.into_iter().map(|d| d.embedding).collect();
 
                         // Auto-detect dimensions from first response
-                        if let Some(first) = embeddings.first() {
-                            if first.len() != self.dimensions {
-                                debug!(
-                                    "Ollama embedding dimensions: expected {}, got {} — using actual",
-                                    self.dimensions,
-                                    first.len()
-                                );
-                            }
+                        if let Some(first) = embeddings.first()
+                            && first.len() != self.dimensions
+                        {
+                            debug!(
+                                "Ollama embedding dimensions: expected {}, got {} — using actual",
+                                self.dimensions,
+                                first.len()
+                            );
                         }
 
                         return Ok(embeddings);
@@ -203,11 +203,7 @@ mod tests {
 
     #[test]
     fn test_default_dimensions() {
-        let client = OllamaEmbeddings::new(
-            "http://localhost:11434".to_string(),
-            None,
-            None,
-        );
+        let client = OllamaEmbeddings::new("http://localhost:11434".to_string(), None, None);
         assert_eq!(client.dimensions(), DEFAULT_DIMENSIONS);
         assert_eq!(client.model_name(), DEFAULT_MODEL);
     }
@@ -225,11 +221,7 @@ mod tests {
 
     #[test]
     fn test_base_url_normalization() {
-        let client = OllamaEmbeddings::new(
-            "http://localhost:11434/".to_string(),
-            None,
-            None,
-        );
+        let client = OllamaEmbeddings::new("http://localhost:11434/".to_string(), None, None);
         assert_eq!(client.base_url, "http://localhost:11434");
     }
 }

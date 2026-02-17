@@ -250,10 +250,10 @@ impl DatabasePool {
         };
 
         // Backup before migrations (file-based DBs only)
-        if let Some(ref db_path) = db_pool.path {
-            if let Err(e) = Self::backup_before_migration(db_path) {
-                tracing::warn!("Pre-migration backup failed (continuing anyway): {}", e);
-            }
+        if let Some(ref db_path) = db_pool.path
+            && let Err(e) = Self::backup_before_migration(db_path)
+        {
+            tracing::warn!("Pre-migration backup failed (continuing anyway): {}", e);
         }
 
         match kind {
@@ -439,17 +439,13 @@ impl DatabasePool {
         }
 
         // Open a direct connection for the backup (pool isn't ready yet)
-        let conn =
-            rusqlite::Connection::open(path).context("Failed to open DB for backup")?;
+        let conn = rusqlite::Connection::open(path).context("Failed to open DB for backup")?;
 
         // Remove old backup if it exists (VACUUM INTO fails if target exists)
         let _ = fs::remove_file(&backup_path);
 
-        conn.execute(
-            "VACUUM INTO ?1",
-            [backup_path.to_string_lossy().as_ref()],
-        )
-        .context("Failed to create pre-migration backup")?;
+        conn.execute("VACUUM INTO ?1", [backup_path.to_string_lossy().as_ref()])
+            .context("Failed to create pre-migration backup")?;
 
         tracing::info!("Created pre-migration backup: {}", backup_path.display());
         Ok(())
@@ -867,6 +863,9 @@ mod tests {
         DatabasePool::backup_before_migration(&db_path).expect("Should succeed for nonexistent DB");
 
         let backup_path = db_path.with_extension("db.pre-migration");
-        assert!(!backup_path.exists(), "No backup should be created for nonexistent DB");
+        assert!(
+            !backup_path.exists(),
+            "No backup should be created for nonexistent DB"
+        );
     }
 }

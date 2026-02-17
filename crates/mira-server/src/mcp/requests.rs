@@ -275,12 +275,6 @@ pub enum SessionAction {
     Insights,
     /// Dismiss an insight by ID (insight_source required: 'pondering' or 'doc_gap')
     DismissInsight,
-    /// List all running and recently completed tasks
-    TasksList,
-    /// Get status and result of a specific task
-    TasksGet,
-    /// Cancel a running task
-    TasksCancel,
     /// Show database storage status and retention policy
     StorageStatus,
     /// Run data cleanup (dry_run by default)
@@ -298,13 +292,11 @@ pub enum SessionAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), health_trends (show health snapshot trends over time), session_lineage (show session history with resume chains)"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), health_trends (show health snapshot trends over time), session_lineage (show session history with resume chains)"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]
     pub session_id: Option<String>,
-    #[schemars(description = "Task ID (for tasks_get/tasks_cancel)")]
-    pub task_id: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
     #[schemars(
@@ -627,10 +619,6 @@ pub struct McpIndexRequest {
 pub enum McpSessionAction {
     /// Get session recap (preferences, recent context, goals)
     Recap,
-    /// Query unified insights digest (pondering, proactive, doc gaps)
-    Insights,
-    /// Dismiss an insight by ID (insight_source required: 'pondering' or 'doc_gap')
-    DismissInsight,
     /// Show current session
     CurrentSession,
 }
@@ -639,8 +627,6 @@ impl From<McpSessionAction> for SessionAction {
     fn from(a: McpSessionAction) -> Self {
         match a {
             McpSessionAction::Recap => SessionAction::Recap,
-            McpSessionAction::Insights => SessionAction::Insights,
-            McpSessionAction::DismissInsight => SessionAction::DismissInsight,
             McpSessionAction::CurrentSession => SessionAction::CurrentSession,
         }
     }
@@ -649,9 +635,50 @@ impl From<McpSessionAction> for SessionAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpSessionRequest {
     #[schemars(
-        description = "Action: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight; requires insight_source), current_session (show current)"
+        description = "Action: recap (preferences + context + goals), current_session (show current)"
     )]
     pub action: McpSessionAction,
+    #[schemars(description = "Max results")]
+    pub limit: Option<i64>,
+}
+
+// Fields intentionally set to None belong to actions removed from MCP
+// (list_sessions, get_history, usage_*, storage_status, cleanup, insights).
+// If adding a new MCP action that needs these fields, add them to McpSessionRequest too.
+impl From<McpSessionRequest> for SessionRequest {
+    fn from(r: McpSessionRequest) -> Self {
+        Self {
+            action: r.action.into(),
+            session_id: None,
+            limit: r.limit,
+            group_by: None,
+            since_days: None,
+            insight_source: None,
+            min_confidence: None,
+            insight_id: None,
+            dry_run: None,
+            category: None,
+        }
+    }
+}
+
+// ── Insights (extracted from session) ──
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpInsightsAction {
+    /// Query unified insights digest (pondering, proactive, doc gaps)
+    Insights,
+    /// Dismiss an insight by ID (insight_source required: 'pondering' or 'doc_gap')
+    DismissInsight,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct McpInsightsRequest {
+    #[schemars(
+        description = "Action: insights (background analysis digest), dismiss_insight (remove resolved insight; insight_source required: 'pondering' or 'doc_gap')"
+    )]
+    pub action: McpInsightsAction,
     #[schemars(
         description = "Filter insights by source: pondering/proactive/doc_gap (for insights action). Required for dismiss_insight: 'pondering' or 'doc_gap'"
     )]
@@ -666,15 +693,14 @@ pub struct McpSessionRequest {
     pub since_days: Option<u32>,
 }
 
-// Fields intentionally set to None belong to actions removed from MCP
-// (list_sessions, get_history, usage_*, tasks_*, storage_status, cleanup).
-// If adding a new MCP action that needs these fields, add them to McpSessionRequest too.
-impl From<McpSessionRequest> for SessionRequest {
-    fn from(r: McpSessionRequest) -> Self {
+impl From<McpInsightsRequest> for SessionRequest {
+    fn from(r: McpInsightsRequest) -> Self {
         Self {
-            action: r.action.into(),
+            action: match r.action {
+                McpInsightsAction::Insights => SessionAction::Insights,
+                McpInsightsAction::DismissInsight => SessionAction::DismissInsight,
+            },
             session_id: None,
-            task_id: None,
             limit: r.limit,
             group_by: None,
             since_days: r.since_days,
@@ -701,21 +727,32 @@ mod tests {
     }
 
     #[test]
-    fn session_action_dismiss_insight() {
-        let a: McpSessionAction = serde_json::from_value(json!("dismiss_insight")).unwrap();
-        assert!(matches!(a, McpSessionAction::DismissInsight));
-    }
-
-    #[test]
     fn session_action_recap() {
         let a: McpSessionAction = serde_json::from_value(json!("recap")).unwrap();
         assert!(matches!(a, McpSessionAction::Recap));
     }
 
     #[test]
-    fn session_action_insights() {
-        let a: McpSessionAction = serde_json::from_value(json!("insights")).unwrap();
-        assert!(matches!(a, McpSessionAction::Insights));
+    fn session_action_rejects_insights() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("insights"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'insights' (now standalone tool)"
+        );
+    }
+
+    // ── McpInsightsAction deserialization ─────────────────────────────
+
+    #[test]
+    fn insights_action_insights() {
+        let a: McpInsightsAction = serde_json::from_value(json!("insights")).unwrap();
+        assert!(matches!(a, McpInsightsAction::Insights));
+    }
+
+    #[test]
+    fn insights_action_dismiss_insight() {
+        let a: McpInsightsAction = serde_json::from_value(json!("dismiss_insight")).unwrap();
+        assert!(matches!(a, McpInsightsAction::DismissInsight));
     }
 
     // ── McpProjectAction deserialization ──────────────────────────────
@@ -842,28 +879,19 @@ mod tests {
     #[test]
     fn code_action_rejects_dead_code() {
         let result = serde_json::from_value::<McpCodeAction>(json!("dead_code"));
-        assert!(
-            result.is_err(),
-            "McpCodeAction should reject 'dead_code'"
-        );
+        assert!(result.is_err(), "McpCodeAction should reject 'dead_code'");
     }
 
     #[test]
     fn code_action_rejects_conventions() {
         let result = serde_json::from_value::<McpCodeAction>(json!("conventions"));
-        assert!(
-            result.is_err(),
-            "McpCodeAction should reject 'conventions'"
-        );
+        assert!(result.is_err(), "McpCodeAction should reject 'conventions'");
     }
 
     #[test]
     fn code_action_rejects_debt_delta() {
         let result = serde_json::from_value::<McpCodeAction>(json!("debt_delta"));
-        assert!(
-            result.is_err(),
-            "McpCodeAction should reject 'debt_delta'"
-        );
+        assert!(result.is_err(), "McpCodeAction should reject 'debt_delta'");
     }
 
     #[test]
@@ -976,7 +1004,33 @@ mod tests {
     #[test]
     fn session_request_conversion() {
         let mcp = McpSessionRequest {
-            action: McpSessionAction::Insights,
+            action: McpSessionAction::Recap,
+            limit: Some(10),
+        };
+
+        let full: SessionRequest = mcp.into();
+
+        // Fields that pass through
+        assert!(matches!(full.action, SessionAction::Recap));
+        assert_eq!(full.limit, Some(10));
+
+        // Fields intentionally None (belong to removed MCP actions)
+        assert!(full.session_id.is_none());
+        assert!(full.group_by.is_none());
+        assert!(full.since_days.is_none());
+        assert!(full.insight_source.is_none());
+        assert!(full.min_confidence.is_none());
+        assert!(full.insight_id.is_none());
+        assert!(full.dry_run.is_none());
+        assert!(full.category.is_none());
+    }
+
+    // ── From<McpInsightsRequest> for SessionRequest ───────────────────
+
+    #[test]
+    fn insights_request_conversion() {
+        let mcp = McpInsightsRequest {
+            action: McpInsightsAction::Insights,
             insight_source: Some("pondering".into()),
             min_confidence: Some(0.7),
             insight_id: Some(42),
@@ -986,7 +1040,6 @@ mod tests {
 
         let full: SessionRequest = mcp.into();
 
-        // Fields that pass through
         assert!(matches!(full.action, SessionAction::Insights));
         assert_eq!(full.insight_source.as_deref(), Some("pondering"));
         assert_eq!(full.min_confidence, Some(0.7));
@@ -994,9 +1047,8 @@ mod tests {
         assert_eq!(full.limit, Some(10));
         assert_eq!(full.since_days, Some(7));
 
-        // Fields intentionally None (belong to removed MCP actions)
+        // Fields intentionally None
         assert!(full.session_id.is_none());
-        assert!(full.task_id.is_none());
         assert!(full.group_by.is_none());
         assert!(full.dry_run.is_none());
         assert!(full.category.is_none());

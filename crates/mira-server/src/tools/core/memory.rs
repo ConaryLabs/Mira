@@ -323,9 +323,7 @@ pub async fn handle_memory<C: ToolContext>(
         }
         MemoryAction::Export => export_memories(ctx).await,
         MemoryAction::Purge => purge_memories(ctx, req.confirm).await,
-        MemoryAction::Entities => {
-            list_entities(ctx, req.query, req.limit).await
-        }
+        MemoryAction::Entities => list_entities(ctx, req.query, req.limit).await,
     }
 }
 
@@ -1046,9 +1044,7 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
 }
 
 /// Export all project memories as structured JSON
-pub async fn export_memories<C: ToolContext>(
-    ctx: &C,
-) -> Result<Json<MemoryOutput>, MiraError> {
+pub async fn export_memories<C: ToolContext>(ctx: &C) -> Result<Json<MemoryOutput>, MiraError> {
     let pi = get_project_info(ctx).await;
     let project_id = pi.id;
     let project_name = pi.context.as_ref().and_then(|c| c.name.clone());
@@ -1201,7 +1197,8 @@ pub async fn list_entities<C: ToolContext>(
     let entities: Vec<EntityItem> = ctx
         .pool()
         .run(move |conn| {
-            let (sql, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ref q) = query {
+            let (sql, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ref q) = query
+            {
                 let pattern = format!("%{}%", q);
                 (
                     "SELECT me.id, me.canonical_name, me.entity_type, me.display_name,
@@ -1212,7 +1209,8 @@ pub async fn list_entities<C: ToolContext>(
                        AND me.canonical_name LIKE ?2
                      GROUP BY me.id
                      ORDER BY linked_facts DESC
-                     LIMIT ?3".to_string(),
+                     LIMIT ?3"
+                        .to_string(),
                     vec![
                         Box::new(project_id) as Box<dyn rusqlite::ToSql>,
                         Box::new(pattern),
@@ -1228,7 +1226,8 @@ pub async fn list_entities<C: ToolContext>(
                      WHERE me.project_id IS ?1
                      GROUP BY me.id
                      ORDER BY linked_facts DESC
-                     LIMIT ?2".to_string(),
+                     LIMIT ?2"
+                        .to_string(),
                     vec![
                         Box::new(project_id) as Box<dyn rusqlite::ToSql>,
                         Box::new(limit as i64),
@@ -1243,8 +1242,7 @@ pub async fn list_entities<C: ToolContext>(
                         id: row.get(0)?,
                         canonical_name: row.get(1)?,
                         entity_type: row.get(2)?,
-                        display_name: row.get::<_, Option<String>>(3)?
-                            .unwrap_or_default(),
+                        display_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
                         linked_facts: row.get(4)?,
                     })
                 })?
@@ -1449,10 +1447,7 @@ mod tests {
             detect_secret("xoxb-1234567890-abcdefgh"),
             Some("Slack token")
         );
-        assert_eq!(
-            detect_secret("xoxp-some-slack-token"),
-            Some("Slack token")
-        );
+        assert_eq!(detect_secret("xoxp-some-slack-token"), Some("Slack token"));
     }
 
     #[test]

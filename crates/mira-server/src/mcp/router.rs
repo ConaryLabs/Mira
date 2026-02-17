@@ -114,13 +114,25 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session management and insights. Actions: recap (preferences + context + goals), insights (background analysis digest), dismiss_insight (remove resolved insight; insight_source required: 'pondering' or 'doc_gap'), current_session (show current).",
+        description = "Session management. Actions: recap (preferences + context + goals), current_session (show current).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
             .expect("SessionOutput schema")
     )]
     async fn session(
         &self,
         Parameters(req): Parameters<McpSessionRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(tools::handle_session(self, req.into()).await)
+    }
+
+    #[tool(
+        description = "Session insights and background analysis. Actions: insights (background analysis digest), dismiss_insight (remove resolved insight; insight_source required: 'pondering' or 'doc_gap').",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::InsightsOutput>()
+            .expect("InsightsOutput schema")
+    )]
+    async fn insights(
+        &self,
+        Parameters(req): Parameters<McpInsightsRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         tool_result(tools::handle_session(self, req.into()).await)
     }

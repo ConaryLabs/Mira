@@ -8,16 +8,15 @@ use std::process::Command;
 use crate::cartographer;
 use crate::db::documentation::count_doc_tasks_by_status;
 use crate::db::{
-    StoreMemoryParams, StoreObservationParams, get_health_alerts_sync,
-    get_or_create_project_sync, get_preferences_sync, get_project_briefing_sync,
-    get_recent_sessions_sync, get_session_stats_sync, mark_session_for_briefing_sync,
-    save_active_project_sync, search_memories_text_sync, set_server_state_sync,
-    store_memory_sync, store_observation_sync, update_project_name_sync,
-    upsert_session_with_branch_sync,
+    StoreMemoryParams, StoreObservationParams, get_health_alerts_sync, get_or_create_project_sync,
+    get_preferences_sync, get_project_briefing_sync, get_recent_sessions_sync,
+    get_session_stats_sync, mark_session_for_briefing_sync, save_active_project_sync,
+    search_memories_text_sync, set_server_state_sync, store_memory_sync, store_observation_sync,
+    update_project_name_sync, upsert_session_with_branch_sync,
 };
-use crate::mcp::elicitation;
 use crate::error::MiraError;
 use crate::git::get_git_branch;
+use crate::mcp::elicitation;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     ProjectData, ProjectGetData, ProjectOutput, ProjectSetData, ProjectStartData,
@@ -450,9 +449,7 @@ pub async fn session_start<C: ToolContext>(
         // First session — try onboarding via elicitation
         let onboarding_done = run_first_session_onboarding(ctx, project_id, &sid).await;
         if onboarding_done {
-            response.push_str(
-                "\nFirst session — onboarding preferences saved.\n",
-            );
+            response.push_str("\nFirst session — onboarding preferences saved.\n");
         } else {
             response.push_str(
                 "\nFirst session for this project. Tip: use session(action=\"recap\") for context, or memory(action=\"remember\", content=\"...\") to store a decision.\n",
