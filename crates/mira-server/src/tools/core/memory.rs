@@ -1,5 +1,6 @@
 // crates/mira-server/src/tools/core/memory.rs
-//! Unified memory tools (recall, remember, forget, list)
+//! Unified memory tool with CRUD, export, entity, and archive operations
+//! (recall, remember, forget, list, archive, export, purge, entities, export_claude_local)
 
 use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::error::MiraError;

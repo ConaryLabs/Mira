@@ -104,7 +104,6 @@ pub async fn usage_stats<C: ToolContext>(
 
 /// Deprecated: duplicate of usage_stats with hardcoded group_by="role".
 /// Kept for backward compatibility with session dispatcher.
-/// TODO: Remove SessionAction::UsageList and this function.
 pub async fn usage_list<C: ToolContext>(
     ctx: &C,
     since_days: Option<u32>,

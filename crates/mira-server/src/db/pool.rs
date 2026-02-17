@@ -3,8 +3,18 @@
 //
 // # Async Database Access Patterns
 //
-// ## Primary Pattern: pool.interact()
-// Use `pool.interact()` for MCP tool handlers and other code that has access to a `DatabasePool`:
+// ## Preferred Pattern: pool.run()
+// Use `pool.run()` for MCP tool handlers — it handles error conversion to
+// `MiraError` automatically:
+// ```ignore
+// let result = ctx.pool()
+//     .run(move |conn| some_function(conn))
+//     .await?;
+// ```
+//
+// ## Lower-Level: pool.interact()
+// Use `pool.interact()` when you need `anyhow::Result` instead of `MiraError`,
+// e.g. in migrations, background tasks, or internal helpers:
 // ```ignore
 // let result = ctx.pool().interact(move |conn| {
 //     some_sync_function(conn, arg1, arg2)
@@ -13,7 +23,8 @@
 //
 // ## Common Pitfalls
 //
-// 1. **Don't block the async runtime**: Always use `pool.interact()` for database access.
+// 1. **Don't block the async runtime**: Always use `pool.run()` or
+//    `pool.interact()` for database access.
 //
 // 2. **Type inference**: Rust needs help inferring types for closures. If you get
 //    "type annotations needed", add explicit types to the return value:

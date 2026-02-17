@@ -39,7 +39,7 @@ Semantic memory storage with evidence-based confidence tracking.
 | scope | TEXT | `project`, `personal`, or `team` |
 | key | TEXT | Unique key for upsert operations |
 | content | TEXT | The fact/preference content |
-| fact_type | TEXT | `general`, `preference`, `decision`, `context` |
+| fact_type | TEXT | `general`, `preference`, `decision`, `context`, `pattern`, `persona` |
 | category | TEXT | Optional grouping (e.g., `coding`, `tooling`) |
 | confidence | REAL | 0.0-1.0, defaults to 0.8 for user-created memories |
 | has_embedding | INTEGER | 1 if fact has embedding in vec_memory |
@@ -152,6 +152,8 @@ Tool call history per session.
 | full_result | TEXT | Complete tool result for recall |
 | success | INTEGER | 1 if successful |
 | created_at | TEXT | Timestamp |
+
+> **Security note:** This table may contain sensitive data from tool outputs. For example, if Claude reads a file containing API keys or credentials, that content ends up in `result_summary` and `full_result`. Unlike `memory_facts` (which applies secret detection), `tool_history` stores results as-is. Treat `~/.mira/mira.db` as a sensitive file.
 
 ---
 

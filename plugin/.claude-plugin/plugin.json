@@ -19,6 +19,7 @@
     "./skills/recap",
     "./skills/search",
     "./skills/remember",
+    "./skills/recall",
     "./skills/insights",
     "./skills/diff",
     "./skills/experts",

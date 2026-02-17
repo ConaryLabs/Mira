@@ -12,8 +12,6 @@ Mira uses a modular structure to keep always-loaded context small:
 
 ## Setup
 
-> **Note:** `mira init` is planned but not yet implemented. For now, create these files manually.
-
 Create these files in your project:
 
 ### 1. `CLAUDE.md` (root) — Always loaded

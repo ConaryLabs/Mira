@@ -201,14 +201,14 @@ Mira integrates with Claude Code via **hooks** that trigger at key moments durin
 | **SessionStart** | When session begins | Captures session ID, initializes tracking |
 | **UserPromptSubmit** | When user submits a prompt | Injects proactive context automatically |
 | **PreToolUse** | Before Grep/Glob/Read execution | Injects relevant code context and suggests semantic alternatives |
-| **PostToolUse** | After file mutations (`Write\|Edit\|NotebookEdit`) | Tracks behavior for pattern mining |
+| **PostToolUse** | After file mutations (`Write\|Edit\|NotebookEdit\|Bash`) | Tracks behavior for pattern mining |
 | **PreCompact** | Before context compaction | Preserves important context before summarization |
 | **Stop** | When session ends | Saves session state, auto-exports memories to CLAUDE.local.md, checks goal progress |
 | **SessionEnd** | On user interrupt | Snapshots tasks for continuity |
 | **SubagentStart** | When subagent spawns | Injects relevant context for subagent tasks |
 | **SubagentStop** | When subagent completes | Captures discoveries from subagent work |
 | **PermissionRequest** | On permission check | Auto-approve tools based on stored rules |
-| **PostToolFailure** | After tool failure | Tracks failures, recalls relevant memories after repeated failures |
+| **PostToolUseFailure** | After tool failure | Tracks failures, recalls relevant memories after repeated failures |
 | **TaskCompleted** | When task completes | Logs completions, auto-completes matching goal milestones |
 | **TeammateIdle** | When teammate goes idle | Logs idle events for team activity tracking |
 
@@ -356,3 +356,42 @@ Here's how the concepts connect:
 ```
 
 The Intelligence Engine continuously updates Code Intelligence and Memory. Sessions tie everything together with provenance and history.
+
+---
+
+## Local Data Storage
+
+All data Mira collects is stored locally in `~/.mira/`. Nothing leaves your machine unless you explicitly configure an external API (e.g., OpenAI for embeddings, DeepSeek for background intelligence).
+
+### What Mira Stores
+
+| Data | Where | Purpose |
+|------|-------|---------|
+| **User prompt text** | `session_behavior_log` | Pattern mining and proactive context |
+| **Tool calls with arguments and result summaries** | `tool_history` | Session recall, pondering, behavior analysis |
+| **File access patterns** | `session_behavior_log`, `team_file_ownership` | Workflow pattern detection, team conflict detection |
+| **Query embeddings** | `vec_memory`, `vec_code` (vector tables in `mira.db` / `mira-code.db`) | Semantic search |
+| **Mined behavior patterns** | `behavior_patterns` | Proactive suggestions |
+| **Session summaries and snapshots** | `sessions`, `session_snapshots` | Session resume and recap |
+
+### Security Considerations
+
+- The `~/.mira/` directory is created with `0700` permissions (owner-only access)
+- Database files use `0600` permissions (owner read/write only)
+- Memory storage (`memory_facts`) applies secret detection — content that looks like API keys, tokens, or passwords is rejected
+- `tool_history` does **not** apply secret detection — if Claude reads a file containing credentials, that content may end up in `tool_history.result_summary`. Treat `~/.mira/mira.db` as a sensitive file
+- Project `.env` files are never loaded (prevents malicious repos from overriding API keys)
+
+---
+
+## MCP Resources
+
+Mira exposes read-only data via the MCP Resource protocol. These are data access points usable by any MCP-compatible client (not just Claude Code).
+
+| Resource URI | Type | Description |
+|--------------|------|-------------|
+| `mira://goals` | Static | List of all active goals with progress percentages |
+| `mira://memories/recent` | Static | Most recent 20 memory facts (project-scoped) |
+| `mira://goals/{id}` | Template | Individual goal with its milestones |
+
+Resources are read-only and scoped to the active project. They complement the `goal` and `memory` tools — use resources for passive data display (e.g., in a dashboard or sidebar) and tools for interactive operations.

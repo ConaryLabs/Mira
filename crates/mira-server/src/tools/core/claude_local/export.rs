@@ -1,6 +1,7 @@
 use crate::db::{RankedMemory, fetch_ranked_memories_for_export_sync};
 use crate::error::MiraError;
 use crate::tools::core::ToolContext;
+use std::collections::HashSet;
 use std::path::Path;
 
 /// Total byte budget for CLAUDE.local.md content (~2K tokens)
@@ -72,6 +73,7 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
     // We'll account for headers only for sections that end up non-empty,
     // so track header costs separately
     let mut consecutive_skips = 0;
+    let mut seen_content: HashSet<String> = HashSet::new();
 
     for mem in memories {
         if consecutive_skips >= 10 {
@@ -79,11 +81,25 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
         }
 
         let content = super::truncate_content(&mem.content, MAX_MEMORY_BYTES);
-        let entry_line = format!("- {}\n", content);
-        let entry_bytes = entry_line.len();
 
+        // Determine section first so dedup can be scoped per section.
+        // This allows the same content prefix to appear in both Preferences
+        // and Decisions if it genuinely belongs to both.
         let section_name =
             super::classify_by_type_and_category(&mem.fact_type, mem.category.as_deref());
+
+        // Deduplicate per-section: key = "section:prefix100".
+        // Only mark seen after a successful budget fit to avoid a too-large
+        // hotter entry poisoning the key and blocking a smaller entry that
+        // would have fit.
+        let dedup_key: String = content.chars().take(100).collect();
+        let composite_key = format!("{}:{}", section_name, dedup_key);
+        if seen_content.contains(&composite_key) {
+            continue;
+        }
+
+        let entry_line = format!("- {}\n", content);
+        let entry_bytes = entry_line.len();
 
         // Find the section bucket
         let section = sections.iter_mut().find(|(name, _)| *name == section_name);
@@ -103,6 +119,10 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
         if total_cost <= budget_remaining {
             budget_remaining -= total_cost;
             entries.push(entry_line);
+            // Mark seen ONLY after successful budget add. Inserting before the
+            // budget check would cause a too-large entry to poison the key,
+            // blocking a smaller same-section entry that would have fit.
+            seen_content.insert(composite_key);
             consecutive_skips = 0;
         } else if entry_bytes > budget_remaining {
             // This entry won't fit even without header cost — skip it
@@ -283,6 +303,53 @@ mod tests {
         let result = build_budgeted_export(&memories);
         assert!(result.contains("## Decisions"));
         assert!(result.contains("- Chose REST over GraphQL"));
+    }
+
+    #[test]
+    fn test_budgeted_export_deduplicates_identical_content() {
+        let memories = vec![
+            make_memory("Same content here", "general", None, 10.0),
+            make_memory("Same content here", "general", None, 8.0),
+            make_memory("Different content", "general", None, 6.0),
+        ];
+        let result = build_budgeted_export(&memories);
+        // "Same content here" should appear exactly once
+        let count = result.matches("Same content here").count();
+        assert_eq!(count, 1, "Duplicate content should be deduplicated");
+        assert!(result.contains("Different content"));
+    }
+
+    #[test]
+    fn test_budgeted_export_deduplicates_truncated_variants() {
+        // Two memories with same prefix but different suffixes beyond 500 bytes
+        // After truncation to MAX_MEMORY_BYTES, they share the same first 100 chars
+        let base = "A".repeat(100);
+        let mem1 = format!("{}BBB", base);
+        let mem2 = format!("{}CCC", base);
+        let memories = vec![
+            make_memory(&mem1, "decision", Some("decision"), 10.0),
+            make_memory(&mem2, "decision", Some("decision"), 8.0),
+        ];
+        let result = build_budgeted_export(&memories);
+        // Only the higher-hotness one should appear (mem1 with BBB)
+        assert!(result.contains("BBB"));
+        assert!(!result.contains("CCC"));
+    }
+
+    #[test]
+    fn test_budgeted_export_dedup_is_per_section() {
+        // Two memories with identical first 100 chars but different sections
+        // should both appear (Codex finding L1 / QA-hardening M1).
+        let content = "A".repeat(100);
+        let memories = vec![
+            make_memory(&content, "preference", Some("preference"), 10.0),
+            make_memory(&content, "decision", Some("decision"), 8.0),
+        ];
+        let result = build_budgeted_export(&memories);
+        assert!(result.contains("## Preferences"), "Preference entry should be present");
+        assert!(result.contains("## Decisions"), "Decision entry should be present");
+        let entry_count = result.lines().filter(|l| l.starts_with("- ")).count();
+        assert_eq!(entry_count, 2, "Same content in different sections should not be deduped");
     }
 
     #[test]

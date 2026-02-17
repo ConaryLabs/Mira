@@ -120,6 +120,41 @@ We use conventional commits:
 - Include reproduction steps for bugs
 - Be specific about expected vs actual behavior
 
+## Mira-Specific Patterns
+
+### DatabasePool (Two-Database Architecture)
+
+Mira uses **two separate SQLite databases**:
+- `mira.db` — main data (memories, sessions, goals, behavior patterns)
+- `mira-code.db` — code index (symbols, call graph, embeddings, FTS)
+
+Always use `ctx.pool()` for main DB access and `ctx.code_pool()` for code DB access. **Never use `Database` directly** — all access goes through `DatabasePool` for proper connection management.
+
+### Builder Pattern
+
+All config structs use the builder pattern. Follow this convention when adding new configuration types.
+
+### MCP Tool Handlers
+
+- Tool handler implementations live in `crates/mira-server/src/tools/core/` (one module per tool)
+- Request/response types are in `crates/mira-server/src/mcp/requests.rs`
+- Tool routing is in `crates/mira-server/src/mcp/router.rs`
+
+When adding or modifying tools, coordinate changes across all three locations.
+
+### Local Development
+
+The project `.mcp.json` points to `target/debug/mira`. To develop Mira while using it locally:
+
+1. Make your changes
+2. Run `cargo build`
+3. Restart Claude Code to pick up the new binary
+
+## Further Reading
+
+- [docs/DESIGN.md](docs/DESIGN.md) — Architecture and design decisions
+- [docs/CONCEPTS.md](docs/CONCEPTS.md) — Mental model and core concepts
+
 ## Questions?
 
 Open an issue or start a [discussion](https://github.com/ConaryLabs/Mira/discussions). We're happy to help!

@@ -228,7 +228,7 @@ pub fn run() -> Result<()> {
         .as_deref()
         .and_then(|cwd| resolve_project(&main_conn, cwd));
 
-    let (project_id, project_name) = match project {
+    let (project_id, _) = match project {
         Some((id, name)) => (id, name),
         None => {
             // No project found — show minimal line
@@ -252,12 +252,7 @@ pub fn run() -> Result<()> {
     // Build output: Mira Name · ⚡model · 🎯 goals · 💡 insights · ...
     let mut parts = Vec::new();
 
-    // 1. Project name (no label)
-    if !project_name.is_empty() {
-        parts.push(project_name.clone());
-    }
-
-    // 2. LLM model info
+    // 1. LLM model info
     if let Some((_provider, model)) = get_llm_info() {
         parts.push(format!("⚡{DIM}{model}{RESET}"));
     }

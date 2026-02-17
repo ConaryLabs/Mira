@@ -12,8 +12,8 @@ use rusqlite::Connection;
 ///
 /// chunk_size=256 reduces per-chunk waste from 6 MB (default 1024) to 1.5 MB.
 /// sqlite-vec uses brute-force scan for KNN, so chunk_size doesn't meaningfully
-/// affect query performance at our scale (~5K vectors).
-/// TODO: Benchmark if vector count grows significantly past 50K.
+/// affect query performance at our scale (~5K vectors). May need benchmarking
+/// if vector count grows significantly past 50K.
 pub const VEC_CODE_CREATE_SQL: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
     embedding float[1536],
     +file_path TEXT,

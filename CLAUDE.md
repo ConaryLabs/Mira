@@ -9,6 +9,8 @@ For full session context, call `session(action="recap")`. Use `memory(action="re
 
 **Automatic bridging:** Mira hooks capture session source (`startup` vs `resume`), pending tasks, and working directory. Session history shows `[startup]` or `[resume←previous_id]`.
 
+**Notation:** `tool(action="x", param="y")` refers to MCP tool calls. For example, `memory(action="recall", query="...")` calls the `memory` MCP tool with `action="recall"`. These are not shell commands.
+
 ## Anti-Patterns
 
 **NEVER** do these in the Mira codebase:
@@ -68,7 +70,6 @@ mira debug-carto     # Debug cartographer module detection
 
 API keys are in `~/.mira/.env` (optional with MCP Sampling):
 - `DEEPSEEK_API_KEY` - Background LLM tasks (pondering, summaries)
-- `ZHIPU_API_KEY` - Alternative LLM provider (GLM-5)
 - `OPENAI_API_KEY` - Embeddings (OpenAI text-embedding-3-small)
 - `OLLAMA_HOST` - Local LLM for background tasks (no API key needed)
 
@@ -119,7 +120,7 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | `SubagentStart` | Injects relevant memories and active goals for subagent context |
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PermissionRequest` | Auto-approve tools based on stored rules |
-| `PostToolFailure` | Tracks tool failures, recalls relevant memories after 3+ repeated failures |
+| `PostToolUseFailure` | Tracks tool failures, recalls relevant memories after 3+ repeated failures |
 | `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |
 | `TeammateIdle` | Logs teammate idle events for team activity tracking |
 

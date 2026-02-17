@@ -86,15 +86,13 @@ Configure Mira as an MCP server in `.mcp.json`:
   "mcpServers": {
     "mira": {
       "command": "/path/to/mira",
-      "args": ["serve"],
-      "env": {
-        "DEEPSEEK_API_KEY": "sk-...",
-        "OPENAI_API_KEY": "sk-..."
-      }
+      "args": ["serve"]
     }
   }
 }
 ```
+
+> **Security warning:** Do not put API keys in `.mcp.json` if it is committed to git. Use `~/.mira/.env` instead (see Section 1). If you need to pass environment variables (e.g., for CI or ephemeral setups), you can add an `"env": {}` block, but keep secrets out of version control.
 
 ### Options
 
@@ -102,7 +100,7 @@ Configure Mira as an MCP server in `.mcp.json`:
 |-------|-------------|
 | `command` | Path to Mira binary (or just `mira` if in PATH) |
 | `args` | Always `["serve"]` for MCP mode |
-| `env` | Environment variables to pass to Mira |
+| `env` | (Optional) Environment variables to pass to Mira — see security warning above |
 
 ### Location
 
@@ -162,7 +160,7 @@ The installer adds all hooks to `~/.claude/settings.json` using `jq` for JSON ma
 | `SubagentStart` | `mira hook subagent-start` | 3s | Inject context when subagents spawn |
 | `SubagentStop` | `mira hook subagent-stop` | 3s | Capture discoveries from subagent work |
 | `PermissionRequest` | `mira hook permission` | 3s | Auto-approve tools based on stored rules |
-| `PostToolFailure` | `mira hook post-tool-failure` | 5s | Track failures, recall memories after repeated failures |
+| `PostToolUseFailure` | `mira hook post-tool-failure` | 5s | Track failures, recall memories after repeated failures |
 | `TaskCompleted` | `mira hook task-completed` | 5s | Log completions, auto-complete goal milestones |
 | `TeammateIdle` | `mira hook teammate-idle` | 5s | Log teammate idle events for team tracking |
 
@@ -210,10 +208,11 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 - Injects relevant code context
 
 **PostToolUse**
-- Fires after Write/Edit/NotebookEdit tools complete
-- Tracks file access patterns for behavior mining
-- Queues modified files for re-indexing
-- Provides contextual hints about changed files
+- Fires after Write/Edit/NotebookEdit/Bash tools complete
+- Tracks file access patterns and logs behavior for proactive intelligence
+- Detects file-modifying Bash commands (mv, cp, rm, redirects, etc.)
+- Detects file conflicts with teammates in Agent Teams
+- Note: re-indexing of modified files runs on a background timer, not triggered directly by this hook
 
 **PreCompact**
 - Fires before context summarization
@@ -234,6 +233,32 @@ If you need to configure hooks manually, add to `~/.claude/settings.json`:
 - Fires when a subagent completes
 - Captures useful discoveries from subagent work
 - Stores insights for future sessions
+
+**PermissionRequest**
+- Fires when Claude Code asks the user to approve a tool invocation
+- Checks the `permission_rules` table in `~/.mira/mira.db` for a matching rule
+- If a rule matches, auto-approves the tool without prompting the user
+
+#### Permission Rule Mechanics
+
+Rules are stored in the `permission_rules` SQLite table (`~/.mira/mira.db`). There is currently no CLI or MCP tool for managing rules — they must be added via direct SQLite manipulation:
+
+```sql
+-- Example: auto-approve all Read tool calls
+INSERT INTO permission_rules (tool_name, pattern, match_type)
+VALUES ('Read', '*', 'glob');
+```
+
+**Schema:** `id`, `tool_name`, `pattern`, `match_type` (default `'prefix'`), `scope` (default `'global'`), `created_at`.
+
+**Match types:**
+- `exact` — pattern must match the tool input exactly
+- `prefix` — tool input must start with the pattern
+- `glob` — supports `*` (matches everything) and `prefix*` (prefix matching)
+
+Matching is performed against both the canonical JSON serialization of the tool input and each individual field value (e.g., a `file_path` or `command` string).
+
+> **Security warning:** A broad rule like `tool_name='Bash', pattern='*', match_type='glob'` would auto-approve **all** Bash commands, including destructive ones (`rm -rf /`, `git push --force`, etc.). Always use narrow, specific patterns.
 
 ---
 
@@ -277,25 +302,33 @@ If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is av
 
 ## 7. Ignoring Files
 
-Create `.miraignore` in your project root to exclude files from indexing:
+Create `.miraignore` in your project root to exclude directories from indexing.
+
+**Location:** Project root (next to `.mcp.json`, `CLAUDE.md`, etc.)
+
+**Syntax:**
+- One directory name per line (e.g., `my_data`, `generated`)
+- Lines starting with `#` are comments
+- Blank lines are ignored
+- Trailing slashes are treated as part of the name, so use bare names (e.g., `vendor` not `vendor/`)
+- **Negation patterns (`!`) are NOT supported**
+- **Glob patterns (e.g., `*.min.js`) are NOT supported** — entries are matched as exact directory names
 
 ```
 # Dependencies
-node_modules/
-target/
-vendor/
+vendor
 
 # Build artifacts
-dist/
-build/
-*.min.js
+dist
+build
 
-# Large files
-*.pb
-*.bin
+# Large data
+fixtures
 ```
 
-The syntax is similar to `.gitignore`. Mira also respects `.gitignore` patterns.
+**Interaction with `.gitignore`:** Mira independently respects `.gitignore` patterns via the `ignore` crate's `WalkBuilder`. Files ignored by `.gitignore` are always skipped regardless of `.miraignore`. The `.miraignore` file adds **additional** exclusions on top of `.gitignore`.
+
+**Built-in exclusions:** Mira automatically skips common directories (`node_modules`, `target`, `.git`, `dist`, `build`, `vendor`, `__pycache__`, `.next`, `.venv`, etc.) and all hidden directories (starting with `.`). Language-specific directories are also skipped when the project language is detected. See the full list in `crates/mira-server/src/config/ignore.rs`.
 
 ---
 

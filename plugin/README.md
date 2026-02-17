@@ -22,7 +22,7 @@ claude plugin install mira@mira
 
 The `mira` binary is **auto-downloaded** on first launch and **auto-updated** daily — no manual intervention needed. The wrapper script (`plugin/bin/mira-wrapper`) handles downloading the correct binary for your platform to `~/.mira/bin/mira`, checks for new versions every 24 hours, and verifies downloads via SHA256 checksums.
 
-**Version pinning:** Set `MIRA_VERSION_PIN=0.6.9` to lock to a specific version and skip auto-updates.
+**Version pinning:** Set `MIRA_VERSION_PIN=0.8.3` to lock to a specific version and skip auto-updates.
 
 After the first launch, configure providers:
 
@@ -73,6 +73,7 @@ claude --plugin-dir /path/to/Mira/plugin
 | `/mira:diff [--from REF] [--to REF]` | Semantic diff analysis |
 | `/mira:insights` | Surface background analysis |
 | `/mira:remember <content>` | Quick memory storage |
+| `/mira:recall [query]` | Browse or search stored memories |
 | `/mira:experts` | Expert consultation via Agent Teams |
 | `/mira:full-cycle` | End-to-end review, implementation, and QA |
 | `/mira:qa-hardening` | Production readiness review |

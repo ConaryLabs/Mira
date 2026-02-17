@@ -203,6 +203,7 @@ The **MCP server** (cargo install / build from source) provides the core tools. 
 | `/mira:goals` | List and manage cross-session goals |
 | `/mira:search <query>` | Semantic code search |
 | `/mira:remember <text>` | Quick memory storage |
+| `/mira:recall [query]` | Browse or search stored memories |
 | `/mira:diff` | Semantic analysis of recent changes |
 | `/mira:insights` | Surface background analysis |
 | `/mira:experts` | Expert consultation via Agent Teams |
@@ -224,6 +225,8 @@ The **MCP server** (cargo install / build from source) provides the core tools. 
 | Background insights | Tool usage analysis, friction detection | LLM-powered pattern extraction |
 | Goal tracking | Full | Full |
 | Agent team coordination | Full | Full |
+| Error pattern learning | Remembers how errors were fixed across sessions — Claude gets the solution faster next time | Same |
+| Memory poisoning defense | Prompt injection attempts in memory writes are detected and flagged | Same |
 
 ## Troubleshooting
 
@@ -241,12 +244,18 @@ Ensure `OPENAI_API_KEY` is set in `~/.mira/.env`. OpenAI provides the embeddings
 
 Project context is auto-initialized from Claude Code's working directory. Verify Mira is running with `project(action="get")` and that the working directory matches your project root.
 
-### Debug commands
+### CLI Commands
 
 ```bash
-mira debug-session   # Debug project(action="start") output
-mira debug-carto     # Debug cartographer module detection
-mira setup --check   # Validate current configuration
+mira setup                # Interactive configuration wizard
+mira setup --check        # Validate current configuration
+mira debug-session        # Debug project(action="start") output
+mira debug-carto          # Debug cartographer module detection
+mira config show          # Display current configuration
+mira config set <k> <v>   # Update a configuration value
+mira statusline           # Formatted status line for Claude Code's status bar (installed automatically)
+mira cleanup              # Data retention dry-run (sessions, analytics, chat, behavior)
+mira cleanup --execute    # Actually delete accumulated data (add --yes to skip confirmation)
 ```
 
 ## Documentation

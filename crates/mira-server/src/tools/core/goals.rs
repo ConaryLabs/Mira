@@ -729,7 +729,7 @@ async fn action_sessions<C: ToolContext>(
 // ============================================================================
 
 /// Unified goal tool with actions: create, bulk_create, list, get, update, progress, delete,
-/// add_milestone, complete_milestone, delete_milestone
+/// add_milestone, complete_milestone, delete_milestone, sessions
 pub async fn goal<C: ToolContext>(
     ctx: &C,
     req: GoalRequest,
