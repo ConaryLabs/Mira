@@ -167,6 +167,8 @@ struct PreToolInput {
     tool_name: String,
     pattern: Option<String>,
     path: Option<String>,
+    /// File path for Edit/Write tools (extracted from tool_input.file_path)
+    file_path: Option<String>,
 }
 
 impl PreToolInput {
@@ -188,6 +190,12 @@ impl PreToolInput {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        // Extract file_path for Edit/Write tools
+        let file_path = tool_input
+            .and_then(|ti| ti.get("file_path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         Self {
             tool_name: json
                 .get("tool_name")
@@ -196,19 +204,24 @@ impl PreToolInput {
                 .to_string(),
             pattern,
             path,
+            file_path,
         }
     }
 }
 
 /// Run PreToolUse hook
 ///
-/// This hook fires before Grep/Glob tools execute. We:
-/// 1. Extract the search pattern
-/// 2. Query Mira for relevant memories about that code area
-/// 3. Inject context via additionalContext if found
+/// This hook fires before Grep/Glob/Read/Edit/Write tools execute. We:
+/// 1. For Grep/Glob/Read: extract search pattern and inject relevant memories
+/// 2. For Edit/Write: check if the target file is a known change hotspot and warn
 pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
     let pre_input = PreToolInput::from_json(&input);
+
+    // Handle Edit/Write: check for change pattern warnings (fast, no embeddings)
+    if pre_input.tool_name == "Edit" || pre_input.tool_name == "Write" {
+        return handle_edit_write_patterns(&input, &pre_input).await;
+    }
 
     // Only process Grep/Glob/Read operations
     let dominated_tools = ["Grep", "Glob", "Read"];
@@ -338,6 +351,145 @@ fn build_search_query(input: &PreToolInput) -> String {
     parts.join(" ")
 }
 
+/// Handle Edit/Write tools: check if the target file is a known change hotspot.
+///
+/// Queries `behavior_patterns` for `change_pattern` entries whose `pattern_data`
+/// mentions the target file path. Only does a simple SQL query (no embeddings)
+/// to stay within the hook timeout.
+async fn handle_edit_write_patterns(
+    _input: &serde_json::Value,
+    pre_input: &PreToolInput,
+) -> Result<()> {
+    let file_path = match &pre_input.file_path {
+        Some(fp) if !fp.is_empty() => fp.clone(),
+        _ => {
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    };
+
+    let _timer = HookTimer::start("PreToolUse:pattern_check");
+
+    // Open DB directly (lightweight, no embeddings needed)
+    let db_path = crate::hooks::get_db_path();
+    let pool = match crate::db::pool::DatabasePool::open_hook(&db_path).await {
+        Ok(p) => p,
+        Err(_) => {
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+    };
+
+    // Resolve project
+    let (project_id, _) = crate::hooks::resolve_project(&std::sync::Arc::new(pool)).await;
+    let Some(project_id) = project_id else {
+        write_hook_output(&serde_json::json!({}));
+        return Ok(());
+    };
+
+    // Query for change patterns that mention this file
+    let fp = file_path.clone();
+    let pool2 = {
+        let db_path = crate::hooks::get_db_path();
+        match crate::db::pool::DatabasePool::open_hook(&db_path).await {
+            Ok(p) => std::sync::Arc::new(p),
+            Err(_) => {
+                write_hook_output(&serde_json::json!({}));
+                return Ok(());
+            }
+        }
+    };
+
+    let warnings: Vec<String> = pool2
+        .interact(move |conn| {
+            let sql = r#"
+                SELECT pattern_data, occurrence_count
+                FROM behavior_patterns
+                WHERE project_id = ?1
+                  AND pattern_type = 'change_pattern'
+                  AND pattern_data LIKE ?2
+                ORDER BY occurrence_count DESC
+                LIMIT 3
+            "#;
+            // Use the filename (not full path) for broader matching
+            let filename = Path::new(&fp)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(&fp);
+            let like_pattern = format!("%{}%", filename);
+
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                Err(_) => return Ok::<_, anyhow::Error>(Vec::new()),
+            };
+            let rows = stmt
+                .query_map(rusqlite::params![project_id, like_pattern], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map(|rows| {
+                    rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            let mut warnings = Vec::new();
+            for (pattern_data_str, occurrence_count) in rows {
+                if let Some(data) =
+                    crate::proactive::patterns::PatternData::from_json(&pattern_data_str)
+                {
+                    if let crate::proactive::patterns::PatternData::ChangePattern {
+                        pattern_subtype,
+                        outcome_stats,
+                        ..
+                    } = data
+                    {
+                        let warning = match pattern_subtype.as_str() {
+                            "module_hotspot" => format!(
+                                "hotspot: modified {} times, {}/{} changes needed follow-up fixes",
+                                occurrence_count,
+                                outcome_stats.follow_up_fix,
+                                outcome_stats.total,
+                            ),
+                            "size_risk" => format!(
+                                "size risk: {}/{} changes to this area needed follow-up fixes",
+                                outcome_stats.follow_up_fix, outcome_stats.total,
+                            ),
+                            "co_change_gap" => format!(
+                                "co-change pattern: this file is usually changed with related files ({}/{} had issues when changed alone)",
+                                outcome_stats.follow_up_fix, outcome_stats.total,
+                            ),
+                            other => format!(
+                                "{}: modified {} times",
+                                other, occurrence_count,
+                            ),
+                        };
+                        warnings.push(warning);
+                    }
+                }
+            }
+            Ok(warnings)
+        })
+        .await
+        .unwrap_or_default();
+
+    let output = if warnings.is_empty() {
+        serde_json::json!({})
+    } else {
+        let context = format!(
+            "[Mira/patterns] \u{26a0} {}",
+            warnings.join("; "),
+        );
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": context
+            }
+        })
+    };
+
+    write_hook_output(&output);
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -368,6 +520,7 @@ mod tests {
         assert!(input.tool_name.is_empty());
         assert!(input.pattern.is_none());
         assert!(input.path.is_none());
+        assert!(input.file_path.is_none());
     }
 
     #[test]
@@ -436,6 +589,7 @@ mod tests {
             tool_name: "Grep".into(),
             pattern: Some("authentication".into()),
             path: None,
+            file_path: None,
         };
         assert_eq!(build_search_query(&input), "authentication");
     }
@@ -446,6 +600,7 @@ mod tests {
             tool_name: "Grep".into(),
             pattern: Some("fn\\s+\\w+.*handler".into()),
             path: None,
+            file_path: None,
         };
         let result = build_search_query(&input);
         assert!(!result.contains("\\s+"));
@@ -461,6 +616,7 @@ mod tests {
             tool_name: "Grep".into(),
             pattern: Some("^pub fn$".into()),
             path: None,
+            file_path: None,
         };
         let result = build_search_query(&input);
         assert!(!result.contains('^'));
@@ -474,6 +630,7 @@ mod tests {
             tool_name: "Glob".into(),
             pattern: None,
             path: Some("src/hooks/session.rs".into()),
+            file_path: None,
         };
         let result = build_search_query(&input);
         assert_eq!(result, "session.rs");
@@ -485,6 +642,7 @@ mod tests {
             tool_name: "Glob".into(),
             pattern: None,
             path: Some("./src/lib".into()),
+            file_path: None,
         };
         let result = build_search_query(&input);
         // ".", "src", and "lib" are all filtered out, so result might be empty
@@ -498,6 +656,7 @@ mod tests {
             tool_name: "Grep".into(),
             pattern: None,
             path: None,
+            file_path: None,
         };
         assert!(build_search_query(&input).is_empty());
     }
@@ -508,6 +667,7 @@ mod tests {
             tool_name: "Grep".into(),
             pattern: Some("handler".into()),
             path: Some("src/hooks/session.rs".into()),
+            file_path: None,
         };
         let result = build_search_query(&input);
         assert!(result.contains("handler"));
@@ -520,9 +680,57 @@ mod tests {
             tool_name: "Grep".into(),
             pattern: Some(".*".into()),
             path: None,
+            file_path: None,
         };
         let result = build_search_query(&input);
         // ".*" becomes " " after cleanup, which trims to empty
         assert!(result.is_empty());
+    }
+
+    // ── Edit/Write file_path extraction ───────────────────────────────────
+
+    #[test]
+    fn pre_input_extracts_file_path_for_edit() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": "/home/user/project/src/main.rs",
+                "old_string": "foo",
+                "new_string": "bar"
+            }
+        }));
+        assert_eq!(input.tool_name, "Edit");
+        assert_eq!(
+            input.file_path.as_deref(),
+            Some("/home/user/project/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn pre_input_extracts_file_path_for_write() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": "/home/user/project/new_file.rs",
+                "content": "fn main() {}"
+            }
+        }));
+        assert_eq!(input.tool_name, "Write");
+        assert_eq!(
+            input.file_path.as_deref(),
+            Some("/home/user/project/new_file.rs")
+        );
+    }
+
+    #[test]
+    fn pre_input_no_file_path_for_grep() {
+        let input = PreToolInput::from_json(&serde_json::json!({
+            "tool_name": "Grep",
+            "tool_input": {
+                "pattern": "fn main",
+                "path": "/home/user/project/src"
+            }
+        }));
+        assert!(input.file_path.is_none());
     }
 }

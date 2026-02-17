@@ -115,12 +115,18 @@ pub enum MemoryAction {
     Archive,
     /// Export Mira memories to CLAUDE.local.md
     ExportClaudeLocal,
+    /// Export all project memories as structured JSON
+    Export,
+    /// Delete all memories for the current project
+    Purge,
+    /// Query entity graph for the current project
+    Entities,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MemoryRequest {
     #[schemars(
-        description = "Action: remember, recall, list, forget, archive, export_claude_local"
+        description = "Action: remember, recall, list, forget, archive, export_claude_local, export, purge, entities"
     )]
     pub action: MemoryAction,
     #[schemars(description = "Content to remember (required for remember)")]
@@ -145,6 +151,8 @@ pub struct MemoryRequest {
     pub limit: Option<i64>,
     #[schemars(description = "Number of results to skip (for pagination)")]
     pub offset: Option<i64>,
+    #[schemars(description = "Confirm destructive action (required for purge)")]
+    pub confirm: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -283,6 +291,8 @@ pub enum SessionAction {
     HealthTrends,
     /// Show session history with resume chains (CLI-only)
     SessionLineage,
+    /// Show capability status: what features are available vs degraded (CLI-only)
+    Capabilities,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -435,6 +445,8 @@ pub enum McpMemoryAction {
     Forget,
     /// Archive a memory (exclude from auto-export, keep for history)
     Archive,
+    /// Query entity graph for the current project
+    Entities,
 }
 
 impl From<McpMemoryAction> for MemoryAction {
@@ -445,13 +457,16 @@ impl From<McpMemoryAction> for MemoryAction {
             McpMemoryAction::List => MemoryAction::List,
             McpMemoryAction::Forget => MemoryAction::Forget,
             McpMemoryAction::Archive => MemoryAction::Archive,
+            McpMemoryAction::Entities => MemoryAction::Entities,
         }
     }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpMemoryRequest {
-    #[schemars(description = "Action: remember, recall, list, forget, archive")]
+    #[schemars(
+        description = "Action: remember (store a fact), recall (search by similarity), list (paginated browse), forget (delete by ID), archive (exclude from auto-export, keep for history), entities (query entity graph)"
+    )]
     pub action: McpMemoryAction,
     #[schemars(description = "Content to remember (required for remember)")]
     pub content: Option<String>,
@@ -491,6 +506,7 @@ impl From<McpMemoryRequest> for MemoryRequest {
             scope: r.scope,
             limit: r.limit,
             offset: r.offset,
+            confirm: None, // CLI-only field, not exposed via MCP
         }
     }
 }
@@ -779,6 +795,30 @@ mod tests {
     }
 
     #[test]
+    fn memory_action_rejects_export() {
+        let result = serde_json::from_value::<McpMemoryAction>(json!("export"));
+        assert!(
+            result.is_err(),
+            "McpMemoryAction should reject 'export' (CLI-only)"
+        );
+    }
+
+    #[test]
+    fn memory_action_rejects_purge() {
+        let result = serde_json::from_value::<McpMemoryAction>(json!("purge"));
+        assert!(
+            result.is_err(),
+            "McpMemoryAction should reject 'purge' (CLI-only)"
+        );
+    }
+
+    #[test]
+    fn memory_action_entities() {
+        let a: McpMemoryAction = serde_json::from_value(json!("entities")).unwrap();
+        assert!(matches!(a, McpMemoryAction::Entities));
+    }
+
+    #[test]
     fn code_action_rejects_dependencies() {
         let result = serde_json::from_value::<McpCodeAction>(json!("dependencies"));
         assert!(
@@ -922,6 +962,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn session_action_rejects_capabilities() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("capabilities"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'capabilities'"
+        );
+    }
+
     // ── From<McpSessionRequest> for SessionRequest ───────────────────
 
     #[test]
@@ -984,6 +1033,8 @@ mod tests {
         assert_eq!(full.scope.as_deref(), Some("project"));
         assert_eq!(full.limit, Some(25));
         assert_eq!(full.offset, Some(10));
+        // CLI-only fields are None when coming from MCP
+        assert!(full.confirm.is_none());
     }
 
     #[test]

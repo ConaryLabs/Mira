@@ -5,7 +5,8 @@ use crate::db::{StoreMemoryParams, store_memory_sync};
 use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    ListData, ListMemoryItem, MemoryData, MemoryItem, MemoryOutput, RecallData, RememberData,
+    EntitiesData, EntityItem, ExportData, ExportMemoryItem, ListData, ListMemoryItem, MemoryData,
+    MemoryItem, MemoryOutput, PurgeData, RecallData, RememberData,
 };
 use crate::search::embedding_to_bytes;
 use crate::tools::core::{ToolContext, get_project_info};
@@ -101,6 +102,27 @@ static SECRET_PATTERNS: LazyLock<Vec<(&str, Regex)>> = LazyLock::new(|| {
             "Generic secret",
             Regex::new(r#"(?i)(secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-/.]{20,}"#)
                 .expect("valid regex"),
+        ),
+        (
+            "Stripe key",
+            Regex::new(r"(?i)(sk_live_|pk_live_|sk_test_|pk_test_)[a-zA-Z0-9]{20,}")
+                .expect("valid regex"),
+        ),
+        (
+            "Slack token",
+            Regex::new(r"xox[baprs]-[a-zA-Z0-9\-]{10,}").expect("valid regex"),
+        ),
+        (
+            "Anthropic API key",
+            Regex::new(r"sk-ant-[a-zA-Z0-9\-]{20,}").expect("valid regex"),
+        ),
+        (
+            "Database URL",
+            Regex::new(r"(?i)(postgres|mysql|mongodb|redis)://\S+@\S+").expect("valid regex"),
+        ),
+        (
+            "npm token",
+            Regex::new(r"npm_[a-zA-Z0-9]{20,}").expect("valid regex"),
         ),
     ]
 });
@@ -298,6 +320,11 @@ pub async fn handle_memory<C: ToolContext>(
                 message,
                 data: None,
             }))
+        }
+        MemoryAction::Export => export_memories(ctx).await,
+        MemoryAction::Purge => purge_memories(ctx, req.confirm).await,
+        MemoryAction::Entities => {
+            list_entities(ctx, req.query, req.limit).await
         }
     }
 }
@@ -925,10 +952,20 @@ pub async fn forget<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutpu
     let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
     verify_memory_access(&scope_info, project_id, user_id.as_deref(), team_id)?;
 
-    // Delete from both SQL and vector table via connection pool
+    // Delete from both SQL and vector table, then clean up orphaned entities
     let deleted = ctx
         .pool()
-        .run(move |conn| delete_memory_sync(conn, id))
+        .run(move |conn| {
+            let d = delete_memory_sync(conn, id)?;
+            if d {
+                // CASCADE removes memory_entity_links; now remove entities with no remaining links
+                conn.execute(
+                    "DELETE FROM memory_entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM memory_entity_links)",
+                    [],
+                )?;
+            }
+            Ok::<bool, rusqlite::Error>(d)
+        })
         .await?;
 
     if deleted {
@@ -1006,6 +1043,231 @@ pub async fn archive<C: ToolContext>(ctx: &C, id: i64) -> Result<Json<MemoryOutp
             id
         )))
     }
+}
+
+/// Export all project memories as structured JSON
+pub async fn export_memories<C: ToolContext>(
+    ctx: &C,
+) -> Result<Json<MemoryOutput>, MiraError> {
+    let pi = get_project_info(ctx).await;
+    let project_id = pi.id;
+    let project_name = pi.context.as_ref().and_then(|c| c.name.clone());
+    let user_id = ctx.get_user_identity();
+    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
+
+    let uid = user_id.clone();
+    let memories: Vec<ExportMemoryItem> = ctx
+        .pool()
+        .run(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, content, fact_type, category,
+                        COALESCE(scope, 'project') as scope, key, branch,
+                        confidence, created_at, updated_at
+                 FROM memory_facts
+                 WHERE (project_id IS ?1 OR project_id IS NULL)
+                   AND COALESCE(suspicious, 0) = 0
+                   AND COALESCE(status, 'active') != 'archived'
+                   AND (
+                     COALESCE(scope, 'project') = 'project'
+                     OR (scope = 'personal' AND COALESCE(user_id, '') = COALESCE(?2, ''))
+                     OR (scope = 'team' AND COALESCE(team_id, 0) = COALESCE(?3, 0))
+                   )
+                 ORDER BY created_at DESC",
+            )?;
+
+            let rows = stmt
+                .query_map(
+                    rusqlite::params![project_id, uid.as_deref(), team_id],
+                    |row| {
+                        Ok(ExportMemoryItem {
+                            id: row.get(0)?,
+                            content: row.get(1)?,
+                            fact_type: row.get(2)?,
+                            category: row.get(3)?,
+                            scope: row.get(4)?,
+                            key: row.get(5)?,
+                            branch: row.get(6)?,
+                            confidence: row.get(7)?,
+                            created_at: row.get(8)?,
+                            updated_at: row.get(9)?,
+                        })
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok::<Vec<ExportMemoryItem>, rusqlite::Error>(rows)
+        })
+        .await?;
+
+    let total = memories.len();
+    let exported_at = chrono::Utc::now().to_rfc3339();
+
+    Ok(Json(MemoryOutput {
+        action: "export".into(),
+        message: format!("Exported {} memories.", total),
+        data: Some(MemoryData::Export(ExportData {
+            memories,
+            total,
+            project_name,
+            exported_at,
+        })),
+    }))
+}
+
+/// Delete all memories for the current project
+pub async fn purge_memories<C: ToolContext>(
+    ctx: &C,
+    confirm: Option<bool>,
+) -> Result<Json<MemoryOutput>, MiraError> {
+    let project_id = ctx.project_id().await;
+
+    let Some(pid) = project_id else {
+        return Err(MiraError::InvalidInput(
+            "Cannot purge: no active project. Use project(action=\"start\") first.".to_string(),
+        ));
+    };
+
+    // Count memories first
+    let count: usize = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1",
+                [pid],
+                |row| row.get::<_, usize>(0),
+            )
+        })
+        .await?;
+
+    if confirm != Some(true) {
+        return Err(MiraError::InvalidInput(format!(
+            "Use confirm=true to delete all {} memories for this project",
+            count
+        )));
+    }
+
+    // Delete from vec_memory first (references memory_facts rowids),
+    // then from memory_facts
+    let deleted_count: usize = ctx
+        .pool()
+        .run(move |conn| {
+            let tx = conn.unchecked_transaction()?;
+
+            // Delete vector embeddings for matching facts
+            tx.execute(
+                "DELETE FROM vec_memory WHERE rowid IN (SELECT id FROM memory_facts WHERE project_id = ?1)",
+                [pid],
+            )?;
+
+            // Delete the facts themselves (CASCADE removes memory_entity_links)
+            let deleted = tx.execute(
+                "DELETE FROM memory_facts WHERE project_id = ?1",
+                [pid],
+            )?;
+
+            // Clean up orphaned entities (no remaining links)
+            tx.execute(
+                "DELETE FROM memory_entities WHERE project_id IS ?1
+                 AND id NOT IN (SELECT DISTINCT entity_id FROM memory_entity_links)",
+                [pid],
+            )?;
+
+            tx.commit()?;
+            Ok::<usize, rusqlite::Error>(deleted)
+        })
+        .await?;
+
+    // Invalidate fuzzy cache
+    if let Some(cache) = ctx.fuzzy_cache() {
+        cache.invalidate_memory(project_id).await;
+    }
+
+    Ok(Json(MemoryOutput {
+        action: "purge".into(),
+        message: format!("Purged {} memories for this project.", deleted_count),
+        data: Some(MemoryData::Purge(PurgeData { deleted_count })),
+    }))
+}
+
+/// Query entity graph for the current project
+pub async fn list_entities<C: ToolContext>(
+    ctx: &C,
+    query: Option<String>,
+    limit: Option<i64>,
+) -> Result<Json<MemoryOutput>, MiraError> {
+    let project_id = ctx.project_id().await;
+    let limit = (limit.unwrap_or(50).clamp(1, 200)) as usize;
+
+    let entities: Vec<EntityItem> = ctx
+        .pool()
+        .run(move |conn| {
+            let (sql, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ref q) = query {
+                let pattern = format!("%{}%", q);
+                (
+                    "SELECT me.id, me.canonical_name, me.entity_type, me.display_name,
+                            COUNT(mel.fact_id) as linked_facts
+                     FROM memory_entities me
+                     JOIN memory_entity_links mel ON mel.entity_id = me.id
+                     WHERE me.project_id IS ?1
+                       AND me.canonical_name LIKE ?2
+                     GROUP BY me.id
+                     ORDER BY linked_facts DESC
+                     LIMIT ?3".to_string(),
+                    vec![
+                        Box::new(project_id) as Box<dyn rusqlite::ToSql>,
+                        Box::new(pattern),
+                        Box::new(limit as i64),
+                    ],
+                )
+            } else {
+                (
+                    "SELECT me.id, me.canonical_name, me.entity_type, me.display_name,
+                            COUNT(mel.fact_id) as linked_facts
+                     FROM memory_entities me
+                     JOIN memory_entity_links mel ON mel.entity_id = me.id
+                     WHERE me.project_id IS ?1
+                     GROUP BY me.id
+                     ORDER BY linked_facts DESC
+                     LIMIT ?2".to_string(),
+                    vec![
+                        Box::new(project_id) as Box<dyn rusqlite::ToSql>,
+                        Box::new(limit as i64),
+                    ],
+                )
+            };
+
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(params), |row| {
+                    Ok(EntityItem {
+                        id: row.get(0)?,
+                        canonical_name: row.get(1)?,
+                        entity_type: row.get(2)?,
+                        display_name: row.get::<_, Option<String>>(3)?
+                            .unwrap_or_default(),
+                        linked_facts: row.get(4)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok::<Vec<EntityItem>, rusqlite::Error>(rows)
+        })
+        .await?;
+
+    let total = entities.len();
+    let mut response = format!("Found {} entities:\n", total);
+    for e in &entities {
+        response.push_str(&format!(
+            "  [{}] {} ({}) — {} linked memories\n",
+            e.id, e.canonical_name, e.entity_type, e.linked_facts
+        ));
+    }
+
+    Ok(Json(MemoryOutput {
+        action: "entities".into(),
+        message: response,
+        data: Some(MemoryData::Entities(EntitiesData { entities, total })),
+    }))
 }
 
 #[cfg(test)]
@@ -1169,6 +1431,55 @@ mod tests {
         assert_eq!(
             detect_secret("secret = abcdefghijklmnopqrstuvwxyz"),
             Some("Generic secret")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_stripe_key() {
+        // Build test strings at runtime to avoid GitHub push protection false positives
+        let live_key = format!("sk_live_{}", "a".repeat(24));
+        let test_key = format!("pk_test_{}", "b".repeat(24));
+        assert_eq!(detect_secret(&live_key), Some("Stripe key"));
+        assert_eq!(detect_secret(&test_key), Some("Stripe key"));
+    }
+
+    #[test]
+    fn detect_secret_catches_slack_token() {
+        assert_eq!(
+            detect_secret("xoxb-1234567890-abcdefgh"),
+            Some("Slack token")
+        );
+        assert_eq!(
+            detect_secret("xoxp-some-slack-token"),
+            Some("Slack token")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_anthropic_api_key() {
+        assert_eq!(
+            detect_secret("sk-ant-abcdefghijklmnopqrstuvwxyz"),
+            Some("Anthropic API key")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_database_url() {
+        assert_eq!(
+            detect_secret("postgres://user:password@localhost:5432/mydb"),
+            Some("Database URL")
+        );
+        assert_eq!(
+            detect_secret("mongodb://admin:secret@mongo.example.com/prod"),
+            Some("Database URL")
+        );
+    }
+
+    #[test]
+    fn detect_secret_catches_npm_token() {
+        assert_eq!(
+            detect_secret("npm_abcdefghijklmnopqrstuvwxyz"),
+            Some("npm token")
         );
     }
 

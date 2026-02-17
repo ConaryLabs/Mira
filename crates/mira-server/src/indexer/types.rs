@@ -7,6 +7,7 @@ pub struct IndexStats {
     pub symbols: usize,
     pub chunks: usize,
     pub errors: usize,
+    pub skipped: usize,
 }
 
 /// A code chunk with content and location info

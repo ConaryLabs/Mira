@@ -249,6 +249,13 @@ impl DatabasePool {
             memory_uri,
         };
 
+        // Backup before migrations (file-based DBs only)
+        if let Some(ref db_path) = db_pool.path {
+            if let Err(e) = Self::backup_before_migration(db_path) {
+                tracing::warn!("Pre-migration backup failed (continuing anyway): {}", e);
+            }
+        }
+
         match kind {
             DbKind::Main => db_pool.run_migrations().await?,
             DbKind::Code => db_pool.run_code_migrations().await?,
@@ -415,6 +422,37 @@ impl DatabasePool {
     /// Get the database file path (None for in-memory).
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Create a backup of the database before running migrations.
+    /// Uses SQLite's VACUUM INTO for an atomic, consistent backup.
+    /// Only backs up file-based databases (skips in-memory).
+    /// Keeps at most one backup per database (overwrites previous).
+    fn backup_before_migration(path: &Path) -> Result<()> {
+        use std::fs;
+
+        let backup_path = path.with_extension("db.pre-migration");
+
+        // Only backup if the source DB file exists (not first run)
+        if !path.exists() {
+            return Ok(());
+        }
+
+        // Open a direct connection for the backup (pool isn't ready yet)
+        let conn =
+            rusqlite::Connection::open(path).context("Failed to open DB for backup")?;
+
+        // Remove old backup if it exists (VACUUM INTO fails if target exists)
+        let _ = fs::remove_file(&backup_path);
+
+        conn.execute(
+            "VACUUM INTO ?1",
+            [backup_path.to_string_lossy().as_ref()],
+        )
+        .context("Failed to create pre-migration backup")?;
+
+        tracing::info!("Created pre-migration backup: {}", backup_path.display());
+        Ok(())
     }
 
     /// Run main schema migrations.
@@ -782,5 +820,53 @@ mod tests {
             .expect("Count failed");
 
         assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn test_backup_before_migration() {
+        // Create a temp directory with a test SQLite database
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let db_path = dir.path().join("test.db");
+
+        // Create a real SQLite database with some data
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("Failed to create test DB");
+            conn.execute_batch(
+                "CREATE TABLE test_table (id INTEGER PRIMARY KEY, value TEXT);
+                 INSERT INTO test_table (value) VALUES ('hello');",
+            )
+            .expect("Failed to populate test DB");
+        }
+
+        // Run backup
+        DatabasePool::backup_before_migration(&db_path).expect("Backup should succeed");
+
+        // Verify backup file exists
+        let backup_path = db_path.with_extension("db.pre-migration");
+        assert!(backup_path.exists(), "Backup file should exist");
+
+        // Verify backup contains valid SQLite data
+        {
+            let conn = rusqlite::Connection::open(&backup_path)
+                .expect("Backup should be a valid SQLite DB");
+            let value: String = conn
+                .query_row("SELECT value FROM test_table WHERE id = 1", [], |row| {
+                    row.get(0)
+                })
+                .expect("Should be able to read from backup");
+            assert_eq!(value, "hello");
+        }
+    }
+
+    #[test]
+    fn test_backup_before_migration_skips_nonexistent_db() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let db_path = dir.path().join("nonexistent.db");
+
+        // Should return Ok without creating any file
+        DatabasePool::backup_before_migration(&db_path).expect("Should succeed for nonexistent DB");
+
+        let backup_path = db_path.with_extension("db.pre-migration");
+        assert!(!backup_path.exists(), "No backup should be created for nonexistent DB");
     }
 }

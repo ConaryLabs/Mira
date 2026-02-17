@@ -17,6 +17,11 @@ use rayon::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Maximum file size for indexing (1 MB). Files larger than this are
+/// typically generated code, minified bundles, or data files that
+/// provide poor symbol/semantic value and risk OOM.
+const MAX_INDEX_FILE_BYTES: u64 = 1_024 * 1_024;
+
 /// Collect files to index, filtering by extension and ignoring patterns
 fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
@@ -37,6 +42,24 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
     for result in walker.walk_paths() {
         match result {
             Ok(path) => {
+                // Skip files that are too large (generated code, minified bundles, etc.)
+                match path.metadata() {
+                    Ok(meta) if meta.len() > MAX_INDEX_FILE_BYTES => {
+                        tracing::debug!(
+                            "Skipping large file ({} bytes): {}",
+                            meta.len(),
+                            path.display()
+                        );
+                        stats.skipped += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to stat {}: {}", path.display(), e);
+                        stats.errors += 1;
+                        continue;
+                    }
+                    _ => {}
+                }
                 files.push(path);
             }
             Err(e) => {
@@ -266,6 +289,7 @@ pub async fn index_project(
         symbols: 0,
         chunks: 0,
         errors: 0,
+        skipped: 0,
     };
 
     tracing::info!("Collecting files...");
@@ -320,19 +344,64 @@ pub async fn index_project(
 
     if stats.errors > 0 {
         tracing::warn!(
-            "Indexing complete with errors: {} files, {} symbols, {} chunks, {} errors",
+            "Indexing complete with errors: {} files, {} symbols, {} chunks, {} errors, {} skipped",
             stats.files,
             stats.symbols,
             stats.chunks,
-            stats.errors
+            stats.errors,
+            stats.skipped
         );
     } else {
         tracing::info!(
-            "Indexing complete: {} files, {} symbols, {} chunks",
+            "Indexing complete: {} files, {} symbols, {} chunks, {} skipped",
             stats.files,
             stats.symbols,
-            stats.chunks
+            stats.chunks,
+            stats.skipped
         );
     }
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_collect_files_skips_large_files() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+        // Create a small .rs file (should be included)
+        let small_path = dir.path().join("small.rs");
+        std::fs::write(&small_path, "fn main() {}").expect("Failed to write small file");
+
+        // Create a large .rs file (> 1MB, should be skipped)
+        let large_path = dir.path().join("large.rs");
+        let large_content = "x".repeat(MAX_INDEX_FILE_BYTES as usize + 1);
+        std::fs::write(&large_path, large_content).expect("Failed to write large file");
+
+        let mut stats = IndexStats {
+            files: 0,
+            symbols: 0,
+            chunks: 0,
+            errors: 0,
+            skipped: 0,
+        };
+
+        let files = collect_files_to_index(dir.path(), &mut stats);
+
+        // Only the small file should be collected
+        assert_eq!(files.len(), 1, "Only small file should be collected");
+        assert!(
+            files[0].ends_with("small.rs"),
+            "Collected file should be small.rs, got: {:?}",
+            files[0]
+        );
+        assert_eq!(stats.skipped, 1, "Large file should be counted as skipped");
+    }
+
+    #[test]
+    fn test_max_index_file_bytes_is_one_mb() {
+        assert_eq!(MAX_INDEX_FILE_BYTES, 1_024 * 1_024);
+    }
 }

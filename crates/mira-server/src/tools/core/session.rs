@@ -12,9 +12,10 @@ use crate::error::MiraError;
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    ErrorPatternItem, ErrorPatternsData, HealthSnapshotItem, HealthTrendsData, HistoryEntry,
-    InsightItem, InsightsData, LineageSession, SessionCurrentData, SessionData,
-    SessionHistoryData, SessionLineageData, SessionListData, SessionOutput, SessionSummary,
+    CapabilitiesData, CapabilityStatus, ErrorPatternItem, ErrorPatternsData, HealthSnapshotItem,
+    HealthTrendsData, HistoryEntry, InsightItem, InsightsData, LineageSession, SessionCurrentData,
+    SessionData, SessionHistoryData, SessionLineageData, SessionListData, SessionOutput,
+    SessionSummary,
 };
 use crate::tools::core::session_notes;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
@@ -87,6 +88,7 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::ErrorPatterns => get_error_patterns(ctx, req.limit).await,
         SessionAction::HealthTrends => get_health_trends(ctx, req.limit).await,
         SessionAction::SessionLineage => get_session_lineage(ctx, req.limit).await,
+        SessionAction::Capabilities => get_capabilities(ctx).await,
         SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
             // Tasks actions need MiraServer directly, not ToolContext
             // This branch is unreachable in MCP (router intercepts) but needed for CLI
@@ -1264,6 +1266,127 @@ async fn get_session_lineage<C: ToolContext>(
         data: Some(SessionData::SessionLineage(SessionLineageData {
             sessions: items,
             total,
+        })),
+    }))
+}
+
+/// Report which features are available, degraded, or unavailable.
+///
+/// Checks embeddings, LLM provider, fuzzy cache, and code index status.
+/// CLI-only action — not exposed via MCP schema.
+async fn get_capabilities<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>, MiraError> {
+    let mut caps = Vec::new();
+
+    // Semantic search (requires embeddings)
+    let has_embeddings = ctx.embeddings().is_some();
+    caps.push(CapabilityStatus {
+        name: "semantic_search".into(),
+        status: if has_embeddings {
+            "available"
+        } else {
+            "unavailable"
+        }
+        .into(),
+        detail: if !has_embeddings {
+            Some("Set OPENAI_API_KEY for semantic search".into())
+        } else {
+            None
+        },
+    });
+
+    // Background LLM (requires LLM provider)
+    let has_llm = ctx.llm_factory().has_any_capability();
+    caps.push(CapabilityStatus {
+        name: "background_llm".into(),
+        status: if has_llm { "available" } else { "unavailable" }.into(),
+        detail: if !has_llm {
+            Some("Set DEEPSEEK_API_KEY or configure Ollama for background intelligence".into())
+        } else {
+            None
+        },
+    });
+
+    // Fuzzy search (requires cache)
+    let has_fuzzy = ctx.fuzzy_cache().is_some();
+    caps.push(CapabilityStatus {
+        name: "fuzzy_search".into(),
+        status: if has_fuzzy {
+            "available"
+        } else {
+            "unavailable"
+        }
+        .into(),
+        detail: None,
+    });
+
+    // Code index (requires indexed symbols in code DB for this project)
+    let project_id = ctx.project_id().await;
+    let code_indexed = ctx
+        .code_pool()
+        .run(move |conn| {
+            let count = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM code_symbols WHERE project_id IS ?1",
+                    rusqlite::params![project_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0);
+            Ok::<_, MiraError>(count > 0)
+        })
+        .await
+        .unwrap_or(false);
+    caps.push(CapabilityStatus {
+        name: "code_index".into(),
+        status: if code_indexed {
+            "available"
+        } else {
+            "unavailable"
+        }
+        .into(),
+        detail: if !code_indexed {
+            Some("Run index(action='project') to enable code intelligence".into())
+        } else {
+            None
+        },
+    });
+
+    // MCP sampling (client supports createMessage)
+    let has_sampling = ctx.has_sampling();
+    caps.push(CapabilityStatus {
+        name: "mcp_sampling".into(),
+        status: if has_sampling {
+            "available"
+        } else {
+            "unavailable"
+        }
+        .into(),
+        detail: if !has_sampling {
+            Some("MCP client does not support sampling/createMessage".into())
+        } else {
+            None
+        },
+    });
+
+    // Format message
+    let mut msg = String::from("Capability status:\n");
+    for cap in &caps {
+        let icon = match cap.status.as_str() {
+            "available" => "\u{2713}",
+            "degraded" => "~",
+            _ => "\u{2717}",
+        };
+        msg.push_str(&format!("  {} {} ({})", icon, cap.name, cap.status));
+        if let Some(ref detail) = cap.detail {
+            msg.push_str(&format!(" \u{2014} {}", detail));
+        }
+        msg.push('\n');
+    }
+
+    Ok(Json(SessionOutput {
+        action: "capabilities".into(),
+        message: msg,
+        data: Some(SessionData::Capabilities(CapabilitiesData {
+            capabilities: caps,
         })),
     }))
 }

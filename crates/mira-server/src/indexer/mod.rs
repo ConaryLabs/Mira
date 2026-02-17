@@ -42,6 +42,7 @@ mod tests {
             symbols: 0,
             chunks: 0,
             errors: 0,
+            skipped: 0,
         };
         assert_eq!(stats.files, 0);
         assert_eq!(stats.errors, 0);

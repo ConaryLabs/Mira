@@ -18,6 +18,7 @@ pub enum SessionData {
     ErrorPatterns(ErrorPatternsData),
     HealthTrends(HealthTrendsData),
     SessionLineage(SessionLineageData),
+    Capabilities(CapabilitiesData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -145,4 +146,17 @@ pub struct LineageSession {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal_count: Option<i64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CapabilitiesData {
+    pub capabilities: Vec<CapabilityStatus>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CapabilityStatus {
+    pub name: String,
+    pub status: String, // "available", "degraded", "unavailable"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
