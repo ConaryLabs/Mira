@@ -6,9 +6,9 @@ use rusqlite::OptionalExtension;
 use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    CodeData, CodeOutput, ConventionsData, DeadCodeData, DebtFactor, DependenciesData,
-    DependencyEdge, ModulePatterns, PatternEntry, PatternsData, TechDebtData, TechDebtModule,
-    TechDebtTier, UnreferencedSymbol,
+    CodeData, CodeOutput, ConventionsData, DeadCodeData, DebtDeltaData, DebtDeltaSummary,
+    DebtFactor, DependenciesData, DependencyEdge, ModulePatterns, ModuleStanding, PatternEntry,
+    PatternsData, TechDebtData, TechDebtModule, TechDebtTier, UnreferencedSymbol,
 };
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 
@@ -364,7 +364,7 @@ pub async fn get_dead_code<C: ToolContext>(
         .await
         .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
 
-    let limit = limit.unwrap_or(50).min(200) as usize;
+    let limit = limit.unwrap_or(50).clamp(1, 200) as usize;
 
     let symbols = ctx
         .code_pool()
@@ -377,7 +377,8 @@ pub async fn get_dead_code<C: ToolContext>(
                    AND s.name NOT IN ('main', 'new', 'default', 'from', 'into', 'drop', 'fmt', 'clone', 'eq', 'hash', 'deref')
                    AND NOT EXISTS (
                      SELECT 1 FROM call_graph cg
-                     WHERE cg.callee = s.name AND cg.project_id = ?1
+                     JOIN code_symbols cs ON cg.caller_id = cs.id
+                     WHERE cg.callee_name = s.name AND cs.project_id = ?1
                    )
                  ORDER BY s.file_path, s.start_line
                  LIMIT ?2",
@@ -453,16 +454,15 @@ pub async fn get_conventions<C: ToolContext>(
 
     let fp = file_path.clone();
     let result = ctx
-        .code_pool()
+        .pool()
         .run(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT cm.module_id, m.name, cm.error_handling, cm.test_pattern,
+                "SELECT cm.module_id, cm.module_path, cm.error_handling, cm.test_pattern,
                         cm.naming, cm.key_imports, cm.detected_patterns
                  FROM module_conventions cm
-                 JOIN codebase_modules m ON cm.module_id = m.module_id AND cm.project_id = m.project_id
                  WHERE cm.project_id = ?1
-                   AND ?2 LIKE m.module_id || '%'
-                 ORDER BY LENGTH(m.module_id) DESC
+                   AND ?2 LIKE cm.module_path || '%'
+                 ORDER BY LENGTH(cm.module_path) DESC
                  LIMIT 1",
             )?;
 
@@ -534,4 +534,160 @@ pub async fn get_conventions<C: ToolContext>(
             }))
         }
     }
+}
+
+/// Show per-module tech debt changes between the two most recent health snapshots.
+/// Current per-module scores come from tech_debt_scores (MAIN db, UPSERT — latest only).
+/// Aggregate historical delta comes from health_snapshots (MAIN db).
+pub async fn get_debt_delta<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, MiraError> {
+    use crate::background::code_health::scoring::tier_label;
+
+    let project_id = ctx
+        .project_id()
+        .await
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+
+    // Fetch 2 most recent health snapshots from MAIN db
+    let pid = project_id;
+    let snapshots = ctx
+        .pool()
+        .run(move |conn| crate::db::get_health_history_sync(conn, pid, 2))
+        .await?;
+
+    if snapshots.len() < 2 {
+        let message = maybe_queue_health_scan(ctx, project_id, "health snapshots for delta comparison (need at least 2)").await;
+        return Ok(Json(CodeOutput {
+            action: "debt_delta".into(),
+            message,
+            data: Some(CodeData::DebtDelta(DebtDeltaData {
+                modules: vec![],
+                summary: DebtDeltaSummary {
+                    previous_avg: 0.0,
+                    current_avg: 0.0,
+                    avg_delta: 0.0,
+                    trend: "unknown".to_string(),
+                    module_count: 0,
+                },
+            })),
+        }));
+    }
+
+    let current_snap = &snapshots[0];
+    let previous_snap = &snapshots[1];
+
+    // Fetch current per-module scores from MAIN db (tech_debt_scores)
+    let pid = project_id;
+    let scores = ctx
+        .pool()
+        .run(move |conn| crate::db::tech_debt::get_debt_scores_sync(conn, pid))
+        .await?;
+
+    // Parse tier_distribution JSON from snapshots to get previous per-tier counts
+    // tier_distribution is a JSON string like {"A":5,"B":3,"C":1}
+    let prev_tiers: std::collections::HashMap<String, i64> =
+        serde_json::from_str(&previous_snap.tier_distribution).unwrap_or_default();
+    let curr_tiers: std::collections::HashMap<String, i64> =
+        serde_json::from_str(&current_snap.tier_distribution).unwrap_or_default();
+
+    // Aggregate delta from snapshots
+    let avg_delta = current_snap.avg_debt_score - previous_snap.avg_debt_score;
+
+    // Build per-module current standings (no per-module history available)
+    let mut modules: Vec<ModuleStanding> = Vec::new();
+
+    for score in &scores {
+        modules.push(ModuleStanding {
+            module_id: score.module_id.clone(),
+            module_path: Some(score.module_path.clone()),
+            score: score.overall_score,
+            tier: score.tier.clone(),
+        });
+    }
+
+    // Sort by score descending (worst modules first)
+    modules.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let trend = if avg_delta < -5.0 {
+        "improving"
+    } else if avg_delta > 5.0 {
+        "degrading"
+    } else {
+        "stable"
+    };
+
+    let summary = DebtDeltaSummary {
+        previous_avg: previous_snap.avg_debt_score,
+        current_avg: current_snap.avg_debt_score,
+        avg_delta,
+        trend: trend.to_string(),
+        module_count: modules.len(),
+    };
+
+    // Build human-readable message
+    let mut response = format!(
+        "Tech Debt Delta (between {} and {}):\n\n",
+        previous_snap.snapshot_at, current_snap.snapshot_at
+    );
+
+    response.push_str(&format!(
+        "Aggregate: avg score {:.1} -> {:.1} (delta: {:+.1})\n",
+        previous_snap.avg_debt_score, current_snap.avg_debt_score, avg_delta
+    ));
+    response.push_str(&format!(
+        "Trend: {} ({} modules)\n\n",
+        trend, modules.len()
+    ));
+
+    // Tier distribution changes
+    let all_tiers = ["A", "B", "C", "D", "F"];
+    let mut tier_changes = Vec::new();
+    for tier in &all_tiers {
+        let prev = prev_tiers.get(*tier).copied().unwrap_or(0);
+        let curr = curr_tiers.get(*tier).copied().unwrap_or(0);
+        if prev != curr {
+            tier_changes.push(format!(
+                "  {} ({}): {} -> {}",
+                tier,
+                tier_label(tier),
+                prev,
+                curr
+            ));
+        }
+    }
+    if !tier_changes.is_empty() {
+        response.push_str("Tier distribution changes:\n");
+        for line in &tier_changes {
+            response.push_str(line);
+            response.push('\n');
+        }
+        response.push('\n');
+    }
+
+    // Show current module standings (worst first, capped at 20)
+    if !modules.is_empty() {
+        response.push_str("Current module standings (worst first):\n");
+        for m in modules.iter().take(20) {
+            let path = m.module_path.as_deref().unwrap_or(&m.module_id);
+            response.push_str(&format!(
+                "  {} : [{}] score {:.1}\n",
+                path, m.tier, m.score
+            ));
+        }
+        if modules.len() > 20 {
+            response.push_str(&format!(
+                "\n  ({} more modules not shown)\n",
+                modules.len() - 20
+            ));
+        }
+    }
+
+    Ok(Json(CodeOutput {
+        action: "debt_delta".into(),
+        message: response,
+        data: Some(CodeData::DebtDelta(DebtDeltaData { modules, summary })),
+    }))
 }

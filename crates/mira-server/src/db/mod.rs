@@ -180,11 +180,11 @@ pub use search::{
     get_symbol_bounds_sync, semantic_code_search_sync, symbol_like_search_sync,
 };
 pub use session::{
-    build_session_recap_sync, close_session_sync, create_session_ext_sync, create_session_sync,
-    get_history_after_sync, get_recent_sessions_sync, get_session_behavior_summary_sync,
-    get_session_history_sync, get_session_stats_sync, get_session_tool_summary_sync,
-    get_sessions_needing_summary_sync, get_stale_sessions_sync, log_tool_call_sync,
-    touch_session_sync, update_session_summary_sync,
+    LineageRow, build_session_recap_sync, close_session_sync, create_session_ext_sync,
+    create_session_sync, get_history_after_sync, get_recent_sessions_sync,
+    get_session_behavior_summary_sync, get_session_history_sync, get_session_lineage_sync,
+    get_session_stats_sync, get_session_tool_summary_sync, get_sessions_needing_summary_sync,
+    get_stale_sessions_sync, log_tool_call_sync, touch_session_sync, update_session_summary_sync,
 };
 pub use session_goals::{
     count_sessions_for_goal_sync, delete_session_goals_for_goal_sync, get_goals_for_session_sync,

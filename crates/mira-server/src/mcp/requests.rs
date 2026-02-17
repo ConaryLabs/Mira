@@ -170,12 +170,14 @@ pub enum CodeAction {
     DeadCode,
     /// Show detected conventions for a module
     Conventions,
+    /// Show per-module tech debt changes between health snapshots
+    DebtDelta,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CodeRequest {
     #[schemars(
-        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff, dead_code, conventions"
+        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff, dead_code, conventions, debt_delta"
     )]
     pub action: CodeAction,
     #[schemars(description = "Search query (required for search)")]
@@ -277,12 +279,16 @@ pub enum SessionAction {
     Cleanup,
     /// Show learned error patterns and fixes
     ErrorPatterns,
+    /// Show health snapshot trends over time (CLI-only)
+    HealthTrends,
+    /// Show session history with resume chains (CLI-only)
+    SessionLineage,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes)"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, tasks_list, tasks_get, tasks_cancel, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), health_trends (show health snapshot trends over time), session_lineage (show session history with resume chains)"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]
@@ -812,6 +818,15 @@ mod tests {
     }
 
     #[test]
+    fn code_action_rejects_debt_delta() {
+        let result = serde_json::from_value::<McpCodeAction>(json!("debt_delta"));
+        assert!(
+            result.is_err(),
+            "McpCodeAction should reject 'debt_delta'"
+        );
+    }
+
+    #[test]
     fn index_action_rejects_compact() {
         let result = serde_json::from_value::<McpIndexAction>(json!("compact"));
         assert!(result.is_err(), "McpIndexAction should reject 'compact'");
@@ -886,6 +901,24 @@ mod tests {
         assert!(
             result.is_err(),
             "McpSessionAction should reject 'error_patterns'"
+        );
+    }
+
+    #[test]
+    fn session_action_rejects_health_trends() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("health_trends"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'health_trends'"
+        );
+    }
+
+    #[test]
+    fn session_action_rejects_session_lineage() {
+        let result = serde_json::from_value::<McpSessionAction>(json!("session_lineage"));
+        assert!(
+            result.is_err(),
+            "McpSessionAction should reject 'session_lineage'"
         );
     }
 

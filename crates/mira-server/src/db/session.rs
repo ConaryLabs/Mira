@@ -470,3 +470,49 @@ pub fn get_history_after_sync(
     })?;
     rows.collect()
 }
+
+/// Row returned by session lineage query
+#[derive(Debug, Clone)]
+pub struct LineageRow {
+    pub id: String,
+    pub source: Option<String>,
+    pub resumed_from: Option<String>,
+    pub branch: Option<String>,
+    pub started_at: String,
+    pub last_activity: String,
+    pub status: String,
+    pub goal_count: Option<i64>,
+}
+
+/// Get session lineage for a project — sessions with resume chain info and goal counts.
+/// Results ordered by last_activity DESC, grouped to aggregate goal count per session.
+pub fn get_session_lineage_sync(
+    conn: &Connection,
+    project_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<LineageRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.source, s.resumed_from, s.branch,
+                s.started_at, s.last_activity, s.status,
+                COUNT(DISTINCT sg.goal_id) AS goal_count
+         FROM sessions s
+         LEFT JOIN session_goals sg ON sg.session_id = s.id
+         WHERE s.project_id = ?1
+         GROUP BY s.id
+         ORDER BY s.last_activity DESC, s.rowid DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![project_id, limit as i64], |row| {
+        Ok(LineageRow {
+            id: row.get(0)?,
+            source: row.get(1)?,
+            resumed_from: row.get(2)?,
+            branch: row.get(3)?,
+            started_at: row.get(4)?,
+            last_activity: row.get(5)?,
+            status: row.get(6)?,
+            goal_count: row.get(7)?,
+        })
+    })?;
+    rows.collect()
+}

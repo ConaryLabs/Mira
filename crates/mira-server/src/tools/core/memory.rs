@@ -759,7 +759,7 @@ pub async fn list_memories<C: ToolContext>(
             // Count total matching rows
             let total: usize = conn.query_row(
                 "SELECT COUNT(*) FROM memory_facts
-                 WHERE project_id IS ?1
+                 WHERE (project_id IS ?1 OR project_id IS NULL)
                    AND COALESCE(suspicious, 0) = 0
                    AND COALESCE(status, 'active') != 'archived'
                    AND (
@@ -778,7 +778,7 @@ pub async fn list_memories<C: ToolContext>(
                 "SELECT id, content, fact_type, category,
                         COALESCE(scope, 'project') as scope, key, created_at
                  FROM memory_facts
-                 WHERE project_id IS ?1
+                 WHERE (project_id IS ?1 OR project_id IS NULL)
                    AND COALESCE(suspicious, 0) = 0
                    AND COALESCE(status, 'active') != 'archived'
                    AND (

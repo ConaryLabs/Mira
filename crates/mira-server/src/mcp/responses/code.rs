@@ -1,3 +1,6 @@
+// crates/mira-server/src/mcp/responses/code.rs
+// Response types for the unified code tool
+
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -16,6 +19,7 @@ pub enum CodeData {
     TechDebt(TechDebtData),
     DeadCode(DeadCodeData),
     Conventions(ConventionsData),
+    DebtDelta(DebtDeltaData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -158,4 +162,30 @@ pub struct ConventionsData {
     pub naming: Option<String>,
     pub key_imports: Option<String>,
     pub detected_patterns: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DebtDeltaData {
+    pub modules: Vec<ModuleStanding>,
+    pub summary: DebtDeltaSummary,
+}
+
+/// Current module debt standing (no per-module history available)
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ModuleStanding {
+    pub module_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
+    pub score: f64,
+    pub tier: String,
+}
+
+/// Aggregate delta from health snapshots (accurate project-level trend)
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DebtDeltaSummary {
+    pub previous_avg: f64,
+    pub current_avg: f64,
+    pub avg_delta: f64,
+    pub trend: String,
+    pub module_count: usize,
 }

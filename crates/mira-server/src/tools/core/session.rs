@@ -5,16 +5,16 @@ use crate::config::file::{MiraConfig, RetentionConfig};
 use crate::db::retention::{cleanup_orphans, count_retention_candidates, run_data_retention_sync};
 use crate::db::{
     build_session_recap_sync, compute_age_days, create_session_ext_sync, dismiss_insight_sync,
-    get_error_patterns_sync, get_recent_sessions_sync, get_session_history_sync,
-    get_unified_insights_sync,
+    get_error_patterns_sync, get_health_history_sync, get_recent_sessions_sync,
+    get_session_history_sync, get_session_lineage_sync, get_unified_insights_sync,
 };
 use crate::error::MiraError;
 use crate::hooks::session::{read_claude_session_id, read_source_info};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    ErrorPatternItem, ErrorPatternsData, HistoryEntry, InsightItem, InsightsData,
-    SessionCurrentData, SessionData, SessionHistoryData, SessionListData, SessionOutput,
-    SessionSummary,
+    ErrorPatternItem, ErrorPatternsData, HealthSnapshotItem, HealthTrendsData, HistoryEntry,
+    InsightItem, InsightsData, LineageSession, SessionCurrentData, SessionData,
+    SessionHistoryData, SessionLineageData, SessionListData, SessionOutput, SessionSummary,
 };
 use crate::tools::core::session_notes;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
@@ -85,6 +85,8 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::StorageStatus => storage_status(ctx).await,
         SessionAction::Cleanup => cleanup(ctx, req.dry_run, req.category).await,
         SessionAction::ErrorPatterns => get_error_patterns(ctx, req.limit).await,
+        SessionAction::HealthTrends => get_health_trends(ctx, req.limit).await,
+        SessionAction::SessionLineage => get_session_lineage(ctx, req.limit).await,
         SessionAction::TasksList | SessionAction::TasksGet | SessionAction::TasksCancel => {
             // Tasks actions need MiraServer directly, not ToolContext
             // This branch is unreachable in MCP (router intercepts) but needed for CLI
@@ -1050,6 +1052,217 @@ async fn get_error_patterns<C: ToolContext>(
         message: output,
         data: Some(SessionData::ErrorPatterns(ErrorPatternsData {
             patterns: items,
+            total,
+        })),
+    }))
+}
+
+/// Query health snapshot trends for the active project.
+async fn get_health_trends<C: ToolContext>(
+    ctx: &C,
+    limit: Option<i64>,
+) -> Result<Json<SessionOutput>, MiraError> {
+    let project = ctx.get_project().await;
+    let project_id = project
+        .as_ref()
+        .map(|p| p.id)
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+
+    let limit = limit.unwrap_or(10).clamp(1, 50) as usize;
+
+    let snapshots = ctx
+        .pool()
+        .run(move |conn| get_health_history_sync(conn, project_id, limit))
+        .await?;
+
+    if snapshots.is_empty() {
+        return Ok(Json(SessionOutput {
+            action: "health_trends".into(),
+            message: "No health snapshots found.\n\nRun a health scan first: `mira tool index '{\"action\":\"health\"}'`".to_string(),
+            data: Some(SessionData::HealthTrends(HealthTrendsData {
+                snapshots: vec![],
+                trend: None,
+            })),
+        }));
+    }
+
+    // Snapshots are newest-first from DB; reverse for chronological display
+    let chronological: Vec<_> = snapshots.iter().rev().collect();
+
+    // Calculate trend by comparing first and last snapshot avg_debt_score
+    let trend = if chronological.len() >= 2 {
+        let first = chronological.first().unwrap().avg_debt_score;
+        let last = chronological.last().unwrap().avg_debt_score;
+        if first == 0.0 {
+            Some("stable".to_string())
+        } else {
+            let delta_pct = ((last - first) / first) * 100.0;
+            if delta_pct < -5.0 {
+                Some("improving".to_string())
+            } else if delta_pct > 5.0 {
+                Some("degrading".to_string())
+            } else {
+                Some("stable".to_string())
+            }
+        }
+    } else {
+        None
+    };
+
+    // Build human-readable message
+    let mut output = format!(
+        "## Health Trends ({} snapshots)\n\n",
+        chronological.len()
+    );
+
+    if let Some(ref t) = trend {
+        output.push_str(&format!("Overall trend: **{}**\n\n", t));
+    }
+
+    output.push_str("| Date | Modules | Avg Debt | Max Debt | Warnings | TODOs | Findings |\n");
+    output.push_str("|------|---------|----------|----------|----------|-------|----------|\n");
+
+    for snap in &chronological {
+        output.push_str(&format!(
+            "| {} | {} | {:.1} | {:.1} | {} | {} | {} |\n",
+            snap.snapshot_at,
+            snap.module_count,
+            snap.avg_debt_score,
+            snap.max_debt_score,
+            snap.warning_count,
+            snap.todo_count,
+            snap.total_finding_count,
+        ));
+    }
+
+    // Show delta summary if we have multiple snapshots
+    if chronological.len() >= 2 {
+        let first = chronological.first().unwrap();
+        let last = chronological.last().unwrap();
+        output.push_str(&format!(
+            "\nDelta: avg debt {:.1} \u{2192} {:.1}, modules {} \u{2192} {}, findings {} \u{2192} {}\n",
+            first.avg_debt_score,
+            last.avg_debt_score,
+            first.module_count,
+            last.module_count,
+            first.total_finding_count,
+            last.total_finding_count,
+        ));
+    }
+
+    let items: Vec<HealthSnapshotItem> = chronological
+        .iter()
+        .map(|snap| HealthSnapshotItem {
+            snapshot_at: snap.snapshot_at.clone(),
+            module_count: snap.module_count,
+            avg_debt_score: snap.avg_debt_score,
+            max_debt_score: snap.max_debt_score,
+            tier_distribution: snap.tier_distribution.clone(),
+            warning_count: snap.warning_count,
+            todo_count: snap.todo_count,
+            total_finding_count: snap.total_finding_count,
+        })
+        .collect();
+
+    Ok(Json(SessionOutput {
+        action: "health_trends".into(),
+        message: output,
+        data: Some(SessionData::HealthTrends(HealthTrendsData {
+            snapshots: items,
+            trend,
+        })),
+    }))
+}
+
+/// Query session lineage (resume chains) for the active project.
+async fn get_session_lineage<C: ToolContext>(
+    ctx: &C,
+    limit: Option<i64>,
+) -> Result<Json<SessionOutput>, MiraError> {
+    let project = ctx.get_project().await;
+    let project_id = project
+        .as_ref()
+        .map(|p| p.id)
+        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+
+    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+
+    let rows = ctx
+        .pool()
+        .run(move |conn| get_session_lineage_sync(conn, project_id, limit))
+        .await?;
+
+    if rows.is_empty() {
+        return Ok(Json(SessionOutput {
+            action: "session_lineage".into(),
+            message: "No sessions found for this project.".to_string(),
+            data: Some(SessionData::SessionLineage(SessionLineageData {
+                sessions: vec![],
+                total: 0,
+            })),
+        }));
+    }
+
+    // Build a set of session IDs for quick lookup when determining indentation
+    let session_ids: std::collections::HashSet<&str> =
+        rows.iter().map(|r| r.id.as_str()).collect();
+
+    // Format human-readable output with lineage indentation
+    let mut output = format!("## Session Lineage ({} sessions)\n\n", rows.len());
+
+    for row in &rows {
+        let short_id = truncate_at_boundary(&row.id, 8);
+        let source_tag = row.source.as_deref().unwrap_or("startup");
+        let branch_info = row
+            .branch
+            .as_ref()
+            .map(|b| format!(" (branch: {})", b))
+            .unwrap_or_default();
+        let age = format_age(&row.last_activity);
+        let goal_info = match row.goal_count {
+            Some(n) if n > 0 => format!(" -- {} goal{}", n, if n == 1 { "" } else { "s" }),
+            _ => String::new(),
+        };
+
+        // Indent resumed sessions that resume from a session in our result set
+        let is_resume_child = row
+            .resumed_from
+            .as_ref()
+            .is_some_and(|rf| session_ids.contains(rf.as_str()));
+
+        if is_resume_child {
+            output.push_str(&format!(
+                "  <- [{}] {}{}{}{}\n",
+                source_tag, short_id, branch_info, age, goal_info
+            ));
+        } else {
+            output.push_str(&format!(
+                "[{}] {}{}{}{}\n",
+                source_tag, short_id, branch_info, age, goal_info
+            ));
+        }
+    }
+
+    let items: Vec<LineageSession> = rows
+        .into_iter()
+        .map(|row| LineageSession {
+            id: row.id,
+            source: row.source,
+            resumed_from: row.resumed_from,
+            branch: row.branch,
+            started_at: row.started_at,
+            last_activity: row.last_activity,
+            status: row.status,
+            goal_count: row.goal_count,
+        })
+        .collect();
+
+    let total = items.len();
+    Ok(Json(SessionOutput {
+        action: "session_lineage".into(),
+        message: output,
+        data: Some(SessionData::SessionLineage(SessionLineageData {
+            sessions: items,
             total,
         })),
     }))

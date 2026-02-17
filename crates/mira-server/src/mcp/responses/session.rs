@@ -1,3 +1,6 @@
+// crates/mira-server/src/mcp/responses/session.rs
+// Session response types
+
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -13,6 +16,8 @@ pub enum SessionData {
     History(SessionHistoryData),
     Insights(InsightsData),
     ErrorPatterns(ErrorPatternsData),
+    HealthTrends(HealthTrendsData),
+    SessionLineage(SessionLineageData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -98,4 +103,46 @@ pub struct ErrorPatternItem {
     pub fix_description: Option<String>,
     pub occurrence_count: i64,
     pub last_seen: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct HealthTrendsData {
+    pub snapshots: Vec<HealthSnapshotItem>,
+    /// Overall trend direction: "improving", "degrading", or "stable"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trend: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct HealthSnapshotItem {
+    pub snapshot_at: String,
+    pub module_count: i64,
+    pub avg_debt_score: f64,
+    pub max_debt_score: f64,
+    pub tier_distribution: String,
+    pub warning_count: i64,
+    pub todo_count: i64,
+    pub total_finding_count: i64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SessionLineageData {
+    pub sessions: Vec<LineageSession>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LineageSession {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub started_at: String,
+    pub last_activity: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_count: Option<i64>,
 }

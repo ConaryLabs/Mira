@@ -144,5 +144,6 @@ pub async fn handle_code<C: ToolContext>(
             })?;
             get_conventions(ctx, file_path).await
         }
+        CodeAction::DebtDelta => get_debt_delta(ctx).await,
     }
 }
