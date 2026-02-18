@@ -226,6 +226,10 @@ impl OllamaEmbeddings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn test_default_dimensions() {
@@ -249,5 +253,90 @@ mod tests {
     fn test_base_url_normalization() {
         let client = OllamaEmbeddings::new("http://localhost:11434/".to_string(), None, None);
         assert_eq!(client.base_url, "http://localhost:11434");
+    }
+
+    /// Mock server that returns 400 on the first request and 200 with a valid
+    /// embedding on the second, letting us verify the retry-with-halved-truncation
+    /// path works end-to-end.
+    #[tokio::test]
+    async fn test_retry_halves_truncation_on_400() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        // Spawn mock server
+        let counter = call_count.clone();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 65536];
+                let n = stream.read(&mut buf).await.unwrap();
+                let request = String::from_utf8_lossy(&buf[..n]);
+
+                let attempt = counter.fetch_add(1, Ordering::SeqCst);
+
+                // Extract the JSON body after the blank line
+                let body_start = request.find("\r\n\r\n").unwrap() + 4;
+                let body_json = &request[body_start..];
+
+                if attempt == 0 {
+                    // Verify first request has input near MAX_TEXT_CHARS
+                    let parsed: serde_json::Value = serde_json::from_str(body_json).unwrap();
+                    let input_len = parsed["input"].as_str().unwrap().len();
+                    assert!(
+                        input_len > MAX_TEXT_CHARS / 2,
+                        "First attempt input should be near MAX_TEXT_CHARS, got {input_len}"
+                    );
+
+                    let resp = "HTTP/1.1 400 Bad Request\r\n\
+                                Content-Type: application/json\r\n\
+                                Content-Length: 52\r\n\r\n\
+                                {\"error\":\"input length exceeds context length 8192\"}";
+                    stream.write_all(resp.as_bytes()).await.unwrap();
+                } else {
+                    // Verify retry has shorter input (halved limit)
+                    let parsed: serde_json::Value = serde_json::from_str(body_json).unwrap();
+                    let input_len = parsed["input"].as_str().unwrap().len();
+                    assert!(
+                        input_len <= MAX_TEXT_CHARS / 2,
+                        "Retry input should be <= {}, got {input_len}",
+                        MAX_TEXT_CHARS / 2
+                    );
+
+                    let embedding = vec![0.1_f32; DEFAULT_DIMENSIONS];
+                    let body = serde_json::json!({
+                        "data": [{"embedding": embedding, "index": 0}],
+                        "model": DEFAULT_MODEL
+                    });
+                    let body_str = serde_json::to_string(&body).unwrap();
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\n\
+                         Content-Type: application/json\r\n\
+                         Content-Length: {}\r\n\r\n\
+                         {}",
+                        body_str.len(),
+                        body_str
+                    );
+                    stream.write_all(resp.as_bytes()).await.unwrap();
+                }
+                stream.flush().await.unwrap();
+            }
+        });
+
+        let client = OllamaEmbeddings::new(
+            format!("http://127.0.0.1:{port}"),
+            Some(DEFAULT_MODEL.to_string()),
+            Some(DEFAULT_DIMENSIONS),
+        );
+
+        // Input longer than MAX_TEXT_CHARS to trigger truncation
+        let long_input = "x".repeat(MAX_TEXT_CHARS + 5000);
+        let result = client.embed_texts(&[long_input]).await;
+
+        assert!(result.is_ok(), "Should succeed on retry: {:?}", result.err());
+        assert_eq!(result.unwrap()[0].len(), DEFAULT_DIMENSIONS);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2, "Should have made exactly 2 attempts");
+
+        server.await.unwrap();
     }
 }
