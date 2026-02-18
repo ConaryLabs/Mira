@@ -168,9 +168,8 @@ fi
 
 platform="$(detect_platform)"
 
-# Always use .tar.gz — the wrapper runs in a shell environment (sh/bash/Git Bash)
-# that has GNU tar available. Git Bash on Windows does NOT ship `unzip`, so .zip
-# would fail there. The .zip release artifacts remain for manual Windows downloads.
+# Prefer .tar.gz (available in Git Bash, sh, bash on all platforms).
+# Fall back to .zip for older releases that only ship Windows .zip.
 archive_ext="tar.gz"
 
 url="https://github.com/${REPO}/releases/download/v${target}/mira-${platform}.${archive_ext}"
@@ -186,7 +185,22 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 archive_file="${tmp_dir}/mira.${archive_ext}"
-fetch "$url" "$archive_file"
+if ! fetch "$url" "$archive_file" 2>/dev/null; then
+    # .tar.gz not available — try .zip fallback (older Windows releases)
+    case "$platform" in
+        *windows*)
+            archive_ext="zip"
+            url="https://github.com/${REPO}/releases/download/v${target}/mira-${platform}.${archive_ext}"
+            archive_file="${tmp_dir}/mira.${archive_ext}"
+            log "[mira] tar.gz not found, trying .zip fallback..."
+            fetch "$url" "$archive_file"
+            ;;
+        *)
+            log "[mira] ERROR: Download failed: ${url}"
+            exit 1
+            ;;
+    esac
+fi
 
 # Verify checksum BEFORE extraction — reject tampered archives early
 checksum_url="https://github.com/${REPO}/releases/download/v${target}/checksums.sha256"
@@ -218,7 +232,13 @@ else
 fi
 
 # Extract verified archive
-tar -xz -C "$tmp_dir" -f "$archive_file"
+if [ "$archive_ext" = "zip" ]; then
+    # .zip fallback — use PowerShell on Windows (always available, unlike unzip)
+    powershell.exe -NoProfile -Command "Expand-Archive -Force -Path '$(cygpath -w "$archive_file")' -DestinationPath '$(cygpath -w "$tmp_dir")'" 2>/dev/null \
+        || { log "[mira] ERROR: Failed to extract .zip archive"; exit 1; }
+else
+    tar -xz -C "$tmp_dir" -f "$archive_file"
+fi
 
 # Determine extracted binary name
 src_bin="${tmp_dir}/mira${MIRA_EXE_EXT}"
