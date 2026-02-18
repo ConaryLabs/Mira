@@ -282,6 +282,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_debug_recipe() {
+        let req = RecipeRequest {
+            action: RecipeAction::Get,
+            name: Some("debug".to_string()),
+        };
+        let Json(output) = handle_recipe(req).await.expect("get should succeed");
+        assert_eq!(output.action, "get");
+        match output.data {
+            Some(RecipeData::Get(data)) => {
+                assert_eq!(data.name, "debug");
+                assert_eq!(data.members.len(), 4);
+                assert_eq!(data.tasks.len(), 4);
+                assert_eq!(data.members[0].name, "symptom-analyzer");
+                assert_eq!(data.members[1].name, "root-cause-analyst");
+                assert_eq!(data.members[2].name, "fixer");
+                assert_eq!(data.members[3].name, "regression-tester");
+                assert!(data.coordination.contains("When to Use"));
+            }
+            _ => panic!("Expected RecipeData::Get"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_pr_review_recipe() {
+        let req = RecipeRequest {
+            action: RecipeAction::Get,
+            name: Some("pr-review".to_string()),
+        };
+        let Json(output) = handle_recipe(req).await.expect("get should succeed");
+        assert_eq!(output.action, "get");
+        match output.data {
+            Some(RecipeData::Get(data)) => {
+                assert_eq!(data.name, "pr-review");
+                assert_eq!(data.members.len(), 4);
+                assert_eq!(data.tasks.len(), 4);
+                assert_eq!(data.members[0].name, "correctness-reviewer");
+                assert_eq!(data.members[1].name, "convention-checker");
+                assert_eq!(data.members[2].name, "test-assessor");
+                assert_eq!(data.members[3].name, "doc-checker");
+                assert!(data.coordination.contains("When to Use"));
+            }
+            _ => panic!("Expected RecipeData::Get"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_test_gen_recipe() {
+        let req = RecipeRequest {
+            action: RecipeAction::Get,
+            name: Some("test-gen".to_string()),
+        };
+        let Json(output) = handle_recipe(req).await.expect("get should succeed");
+        assert_eq!(output.action, "get");
+        match output.data {
+            Some(RecipeData::Get(data)) => {
+                assert_eq!(data.name, "test-gen");
+                assert_eq!(data.members.len(), 4);
+                assert_eq!(data.tasks.len(), 4);
+                assert_eq!(data.members[0].name, "coverage-analyst");
+                assert_eq!(data.members[1].name, "test-writer");
+                assert_eq!(data.members[2].name, "edge-case-writer");
+                assert_eq!(data.members[3].name, "test-reviewer");
+                assert!(data.coordination.contains("When to Use"));
+            }
+            _ => panic!("Expected RecipeData::Get"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_get_recipe_not_found() {
         let req = RecipeRequest {
             action: RecipeAction::Get,

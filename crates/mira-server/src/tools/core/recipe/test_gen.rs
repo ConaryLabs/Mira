@@ -71,7 +71,7 @@ Use this when you want to improve test coverage for a module, or after qa-harden
 7. **Spawn both writers** in parallel using `Task` tool with `run_in_background=true` and `mode="bypassPermissions"`
    - Both writers need write access to create/edit test files
    - Divide the work: assign different modules/files to each writer to avoid simultaneous edits to the same file
-8. **Create and assign tasks** for both writers
+8. **Assign tasks** to both writers using `TaskUpdate` with `owner`
 9. **Monitor for compile errors** -- if one agent introduces a compile error the other didn't cause, send targeted fix via SendMessage with the exact error and suggested fix
 10. **Wait** for both writers to complete and report via SendMessage
 11. **Shut down** test-writer, edge-case-writer, and coverage-analyst

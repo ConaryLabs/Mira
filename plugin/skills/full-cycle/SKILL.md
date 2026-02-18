@@ -37,7 +37,7 @@ End-to-end expert review with automatic implementation and QA verification.
    TeamCreate(team_name="full-cycle-{timestamp}")
    ```
 
-5. **Spawn discovery experts** (members with names: architect, code-reviewer, security, scope-analyst, ux-strategist, plan-reviewer). Use `Task` tool for each:
+5. **Spawn discovery experts** (members with names: architect, code-reviewer, security, scope-analyst, ux-strategist, growth-strategist, project-health). Use `Task` tool for each:
    ```
    Task(
      subagent_type=member.agent_type,
@@ -56,7 +56,7 @@ End-to-end expert review with automatic implementation and QA verification.
    TaskUpdate(taskId=id, owner=task.assignee, status="in_progress")
    ```
 
-7. **Wait for findings**: All 6 discovery experts will send findings via SendMessage. Wait for all to finish, then shut them down.
+7. **Wait for findings**: All 7 discovery experts will send findings via SendMessage. Wait for all to finish, then shut them down.
 
 ---
 
@@ -138,6 +138,6 @@ End-to-end expert review with automatic implementation and QA verification.
 
 | Phase | Agents | Purpose |
 |-------|--------|---------|
-| Discovery | architect, code-reviewer, security, scope-analyst, ux-strategist, plan-reviewer | Find issues, propose improvements |
+| Discovery | architect, code-reviewer, security, scope-analyst, ux-strategist, growth-strategist, project-health | Find issues, propose improvements |
 | Implementation | dynamic (fixer-security, fixer-bugs, etc.) | Implement fixes in parallel |
 | QA | test-runner, ux-reviewer | Verify changes, catch regressions |
