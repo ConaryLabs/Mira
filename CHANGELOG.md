@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.5] - 2026-02-17
+
+### Fixed
+- **`mira index` CLI opens correct database** -- Standalone `mira index` command now opens `mira-code.db` instead of the main `mira.db`, matching the MCP handler behavior. (PR #4)
+- **Ollama context overflow on dense code** -- Lowered `MAX_TEXT_CHARS` from 32768 to 12000 to prevent 400 errors on token-dense inputs like C# with long PascalCase identifiers. (PR #6)
+- **Adaptive retry on Ollama context overflow** -- On a 400 response from Ollama embeddings, the retry now halves the truncation limit (12K to 6K chars), recovering from worst-case token density without losing embedding coverage for normal inputs.
+
+### Added
+- **Mock server test for Ollama retry path** -- Verifies the retry-with-halved-truncation behavior end-to-end using a local TCP mock that returns 400 then 200.
+
+---
+
 ## [0.8.4] - 2026-02-17
 
 ### Added
