@@ -506,3 +506,475 @@ pub fn clear_doc_impact_analysis(
     )
     .map(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::setup_test_connection;
+
+    fn setup_doc_db() -> (rusqlite::Connection, i64) {
+        let conn = setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+        (conn, pid)
+    }
+
+    fn make_gap(project_id: i64) -> DocGap {
+        DocGap {
+            project_id,
+            doc_type: "api".to_string(),
+            doc_category: "module".to_string(),
+            source_file_path: Some("src/main.rs".to_string()),
+            target_doc_path: "docs/api.md".to_string(),
+            priority: "medium".to_string(),
+            reason: "Missing API docs".to_string(),
+            source_signature_hash: None,
+        }
+    }
+
+    // ========================================================================
+    // Happy-path: create, get, list, complete doc tasks
+    // ========================================================================
+
+    #[test]
+    fn test_create_doc_task_returns_id() {
+        let (conn, pid) = setup_doc_db();
+        let gap = make_gap(pid);
+        let id = create_doc_task(&conn, &gap, Some("abc123")).expect("create should succeed");
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn test_get_doc_task_all_fields() {
+        let (conn, pid) = setup_doc_db();
+        let gap = make_gap(pid);
+        let id = create_doc_task(&conn, &gap, Some("commit1")).unwrap();
+
+        let task = get_doc_task(&conn, id).unwrap().unwrap();
+        assert_eq!(task.id, id);
+        assert_eq!(task.project_id, Some(pid));
+        assert_eq!(task.doc_type, "api");
+        assert_eq!(task.doc_category, "module");
+        assert_eq!(task.source_file_path.as_deref(), Some("src/main.rs"));
+        assert_eq!(task.target_doc_path, "docs/api.md");
+        assert_eq!(task.priority, "medium");
+        assert_eq!(task.status, "pending");
+        assert_eq!(task.reason.as_deref(), Some("Missing API docs"));
+        assert_eq!(task.git_commit.as_deref(), Some("commit1"));
+        assert!(task.skip_reason.is_none());
+        assert!(task.applied_at.is_none());
+    }
+
+    #[test]
+    fn test_get_pending_doc_tasks_ordered_by_priority() {
+        let (conn, pid) = setup_doc_db();
+
+        let low_gap = DocGap {
+            project_id: pid,
+            doc_type: "guide".to_string(),
+            doc_category: "overview".to_string(),
+            source_file_path: None,
+            target_doc_path: "docs/low.md".to_string(),
+            priority: "low".to_string(),
+            reason: "Low priority".to_string(),
+            source_signature_hash: None,
+        };
+        let high_gap = DocGap {
+            project_id: pid,
+            doc_type: "api".to_string(),
+            doc_category: "module".to_string(),
+            source_file_path: None,
+            target_doc_path: "docs/high.md".to_string(),
+            priority: "high".to_string(),
+            reason: "High priority".to_string(),
+            source_signature_hash: None,
+        };
+
+        create_doc_task(&conn, &low_gap, None).unwrap();
+        create_doc_task(&conn, &high_gap, None).unwrap();
+
+        let tasks = get_pending_doc_tasks(&conn, Some(pid), 10).unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].priority, "high");
+        assert_eq!(tasks[1].priority, "low");
+    }
+
+    #[test]
+    fn test_list_doc_tasks_with_status_filter() {
+        let (conn, pid) = setup_doc_db();
+        let gap = make_gap(pid);
+        let id = create_doc_task(&conn, &gap, None).unwrap();
+
+        // Initially pending
+        let pending = list_doc_tasks(&conn, Some(pid), Some("pending"), None, None).unwrap();
+        assert_eq!(pending.len(), 1);
+
+        // Complete it
+        mark_doc_task_completed(&conn, id).unwrap();
+
+        // Now filter by completed
+        let completed = list_doc_tasks(&conn, Some(pid), Some("completed"), None, None).unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].status, "completed");
+        assert!(completed[0].applied_at.is_some());
+
+        // Pending should be empty
+        let pending = list_doc_tasks(&conn, Some(pid), Some("pending"), None, None).unwrap();
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn test_mark_doc_task_completed_sets_applied_at() {
+        let (conn, pid) = setup_doc_db();
+        let gap = make_gap(pid);
+        let id = create_doc_task(&conn, &gap, None).unwrap();
+
+        mark_doc_task_completed(&conn, id).unwrap();
+
+        let task = get_doc_task(&conn, id).unwrap().unwrap();
+        assert_eq!(task.status, "completed");
+        assert!(task.applied_at.is_some());
+    }
+
+    #[test]
+    fn test_count_doc_tasks_by_status_with_data() {
+        let (conn, pid) = setup_doc_db();
+
+        let gap1 = make_gap(pid);
+        let id1 = create_doc_task(&conn, &gap1, None).unwrap();
+
+        let gap2 = DocGap {
+            target_doc_path: "docs/other.md".to_string(),
+            ..make_gap(pid)
+        };
+        create_doc_task(&conn, &gap2, None).unwrap();
+
+        mark_doc_task_completed(&conn, id1).unwrap();
+
+        let counts = count_doc_tasks_by_status(&conn, Some(pid)).unwrap();
+        let pending_count = counts
+            .iter()
+            .find(|(s, _)| s == "pending")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        let completed_count = counts
+            .iter()
+            .find(|(s, _)| s == "completed")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(pending_count, 1);
+        assert_eq!(completed_count, 1);
+    }
+
+    // ========================================================================
+    // Happy-path: inventory operations
+    // ========================================================================
+
+    #[test]
+    fn test_upsert_doc_inventory_and_get() {
+        let (conn, pid) = setup_doc_db();
+
+        let id = upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/readme.md",
+                doc_type: "guide",
+                doc_category: Some("overview"),
+                title: Some("README"),
+                source_signature_hash: Some("hash123"),
+                source_symbols: Some("fn main"),
+                git_commit: Some("abcdef"),
+            },
+        )
+        .unwrap();
+        assert!(id > 0);
+
+        let inventory = get_doc_inventory(&conn, pid).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].doc_path, "docs/readme.md");
+        assert_eq!(inventory[0].doc_type, "guide");
+        assert_eq!(inventory[0].doc_category.as_deref(), Some("overview"));
+        assert_eq!(inventory[0].title.as_deref(), Some("README"));
+        assert!(!inventory[0].is_stale);
+    }
+
+    #[test]
+    fn test_upsert_doc_inventory_updates_on_conflict() {
+        let (conn, pid) = setup_doc_db();
+
+        upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/api.md",
+                doc_type: "api",
+                doc_category: None,
+                title: Some("Old title"),
+                source_signature_hash: Some("old_hash"),
+                source_symbols: None,
+                git_commit: None,
+            },
+        )
+        .unwrap();
+
+        // Upsert same path => should update
+        upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/api.md",
+                doc_type: "api",
+                doc_category: Some("module"),
+                title: Some("New title"),
+                source_signature_hash: Some("new_hash"),
+                source_symbols: None,
+                git_commit: Some("commit2"),
+            },
+        )
+        .unwrap();
+
+        let inventory = get_doc_inventory(&conn, pid).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].title.as_deref(), Some("New title"));
+        assert_eq!(
+            inventory[0].source_signature_hash.as_deref(),
+            Some("new_hash")
+        );
+    }
+
+    #[test]
+    fn test_mark_doc_stale_and_get_stale_docs() {
+        let (conn, pid) = setup_doc_db();
+
+        upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/api.md",
+                doc_type: "api",
+                doc_category: None,
+                title: Some("API"),
+                source_signature_hash: Some("hash1"),
+                source_symbols: None,
+                git_commit: None,
+            },
+        )
+        .unwrap();
+
+        mark_doc_stale(&conn, pid, "docs/api.md", "source changed").unwrap();
+
+        let stale = get_stale_docs(&conn, pid).unwrap();
+        assert_eq!(stale.len(), 1);
+        assert!(stale[0].is_stale);
+        assert_eq!(stale[0].staleness_reason.as_deref(), Some("source changed"));
+    }
+
+    #[test]
+    fn test_clear_doc_impact_analysis_clears_staleness() {
+        let (conn, pid) = setup_doc_db();
+
+        upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/api.md",
+                doc_type: "api",
+                doc_category: None,
+                title: Some("API"),
+                source_signature_hash: Some("hash1"),
+                source_symbols: None,
+                git_commit: None,
+            },
+        )
+        .unwrap();
+
+        mark_doc_stale(&conn, pid, "docs/api.md", "changed").unwrap();
+        clear_doc_impact_analysis(&conn, pid, "docs/api.md").unwrap();
+
+        let stale = get_stale_docs(&conn, pid).unwrap();
+        assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn test_update_doc_impact_analysis() {
+        let (conn, pid) = setup_doc_db();
+
+        let id = upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/api.md",
+                doc_type: "api",
+                doc_category: None,
+                title: Some("API"),
+                source_signature_hash: Some("hash1"),
+                source_symbols: None,
+                git_commit: None,
+            },
+        )
+        .unwrap();
+
+        mark_doc_stale(&conn, pid, "docs/api.md", "source changed").unwrap();
+        update_doc_impact_analysis(&conn, id, "high", "Major API change").unwrap();
+
+        // Verify the stale doc now has analysis
+        let needing = get_stale_docs_needing_analysis(&conn, pid, 10).unwrap();
+        assert!(
+            needing.is_empty(),
+            "analyzed doc should not appear in needing-analysis list"
+        );
+    }
+
+    // ========================================================================
+    // mark_doc_task_skipped: skip with reason
+    // ========================================================================
+
+    #[test]
+    fn test_mark_doc_task_skipped_with_reason() {
+        let (conn, pid) = setup_doc_db();
+        let gap = make_gap(pid);
+        let task_id = create_doc_task(&conn, &gap, None).expect("create should succeed");
+
+        mark_doc_task_skipped(&conn, task_id, "Not relevant anymore").expect("skip should succeed");
+
+        let task = get_doc_task(&conn, task_id)
+            .expect("get should succeed")
+            .expect("task should exist");
+        assert_eq!(task.status, "skipped");
+        assert_eq!(task.skip_reason.as_deref(), Some("Not relevant anymore"));
+        // Original reason should be preserved
+        assert_eq!(task.reason.as_deref(), Some("Missing API docs"));
+    }
+
+    // ========================================================================
+    // reset_orphaned_doc_tasks edge case
+    // ========================================================================
+
+    #[test]
+    fn test_reset_orphaned_doc_tasks_no_completed_tasks() {
+        let (conn, pid) = setup_doc_db();
+
+        // Only pending tasks exist, no completed ones to check
+        let gap = make_gap(pid);
+        create_doc_task(&conn, &gap, None).expect("create should succeed");
+
+        let reset =
+            reset_orphaned_doc_tasks(&conn, pid, "/test/project").expect("reset should succeed");
+        assert_eq!(reset, 0, "no completed tasks means nothing to reset");
+    }
+
+    #[test]
+    fn test_reset_orphaned_doc_tasks_empty() {
+        let (conn, pid) = setup_doc_db();
+
+        let reset =
+            reset_orphaned_doc_tasks(&conn, pid, "/test/project").expect("reset should succeed");
+        assert_eq!(reset, 0, "no tasks at all means nothing to reset");
+    }
+
+    // ========================================================================
+    // get_stale_docs with zero-age docs (just inserted, not stale)
+    // ========================================================================
+
+    #[test]
+    fn test_get_stale_docs_none_stale() {
+        let (conn, pid) = setup_doc_db();
+
+        // Insert a non-stale inventory item
+        upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/readme.md",
+                doc_type: "guide",
+                doc_category: None,
+                title: Some("README"),
+                source_signature_hash: Some("abc123"),
+                source_symbols: None,
+                git_commit: Some("deadbeef"),
+            },
+        )
+        .expect("upsert should succeed");
+
+        let stale = get_stale_docs(&conn, pid).expect("get_stale should succeed");
+        assert!(stale.is_empty(), "freshly inserted doc should not be stale");
+    }
+
+    #[test]
+    fn test_get_inventory_for_stale_check_filters_already_stale() {
+        let (conn, pid) = setup_doc_db();
+
+        // Insert a doc and mark it stale
+        upsert_doc_inventory(
+            &conn,
+            &DocInventoryParams {
+                project_id: pid,
+                doc_path: "docs/api.md",
+                doc_type: "api",
+                doc_category: None,
+                title: Some("API"),
+                source_signature_hash: Some("hash1"),
+                source_symbols: None,
+                git_commit: None,
+            },
+        )
+        .expect("upsert should succeed");
+        mark_doc_stale(&conn, pid, "docs/api.md", "source changed")
+            .expect("mark stale should succeed");
+
+        // This should not return already-stale docs
+        let candidates =
+            get_inventory_for_stale_check(&conn, pid).expect("stale check should succeed");
+        assert!(
+            candidates.is_empty(),
+            "already-stale docs should not be returned for stale check"
+        );
+    }
+
+    // ========================================================================
+    // get_doc_task for nonexistent ID
+    // ========================================================================
+
+    #[test]
+    fn test_get_doc_task_nonexistent() {
+        let (conn, _pid) = setup_doc_db();
+
+        let task = get_doc_task(&conn, 99999).expect("get should succeed");
+        assert!(task.is_none(), "nonexistent task should return None");
+    }
+
+    // ========================================================================
+    // count_doc_tasks_by_status empty
+    // ========================================================================
+
+    #[test]
+    fn test_count_doc_tasks_by_status_empty() {
+        let (conn, pid) = setup_doc_db();
+
+        let counts = count_doc_tasks_by_status(&conn, Some(pid)).expect("count should succeed");
+        assert!(counts.is_empty(), "no tasks should return empty counts");
+    }
+
+    // ========================================================================
+    // create_doc_task duplicate (IGNORE behavior)
+    // ========================================================================
+
+    #[test]
+    fn test_create_doc_task_duplicate_returns_error_message() {
+        let (conn, pid) = setup_doc_db();
+        let gap = make_gap(pid);
+
+        let first = create_doc_task(&conn, &gap, None);
+        assert!(first.is_ok(), "first create should succeed");
+
+        let second = create_doc_task(&conn, &gap, None);
+        assert!(second.is_err(), "duplicate should return error");
+        let err = second.unwrap_err();
+        assert!(
+            err.contains("already exists"),
+            "error should mention already exists: {}",
+            err
+        );
+    }
+}

@@ -67,3 +67,79 @@ pub async fn process_memory_embeddings(
 
     Ok(stored)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::db::test_support::setup_test_pool;
+
+    // ========================================================================
+    // Empty facts list: early return path
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_process_memory_embeddings_empty_facts_list() {
+        let pool = setup_test_pool().await;
+
+        // Fresh DB has no memory facts needing embeddings.
+        // Verify the underlying query returns empty (the function itself
+        // requires an Arc<EmbeddingClient>, but the empty-list path returns
+        // Ok(0) before calling embed_batch).
+        let count: usize = pool
+            .run(|conn| {
+                let facts = crate::db::find_facts_without_embeddings_sync(conn, 50)?;
+                Ok::<_, rusqlite::Error>(facts.len())
+            })
+            .await
+            .expect("query should succeed");
+        assert_eq!(count, 0, "fresh DB should have no facts needing embeddings");
+    }
+
+    // ========================================================================
+    // Facts exist but all have embeddings: also returns 0
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_no_facts_without_embeddings_when_all_marked() {
+        let pool = setup_test_pool().await;
+
+        // Store a memory fact, then mark it as having an embedding
+        pool.run(|conn| {
+            let (pid, _) = crate::db::get_or_create_project_sync(conn, "/test/mem", Some("test"))?;
+            let fact_id = crate::db::store_memory_sync(
+                conn,
+                crate::db::StoreMemoryParams {
+                    project_id: Some(pid),
+                    key: None,
+                    content: "Test fact for embeddings",
+                    fact_type: "general",
+                    category: None,
+                    confidence: 0.9,
+                    session_id: None,
+                    user_id: None,
+                    scope: "project",
+                    branch: None,
+                    team_id: None,
+                    suspicious: false,
+                },
+            )?;
+            // Mark it as having an embedding
+            crate::db::mark_fact_has_embedding_sync(conn, fact_id)?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .expect("setup should succeed");
+
+        // Now query should find 0 facts needing embeddings
+        let count: usize = pool
+            .run(|conn| {
+                let facts = crate::db::find_facts_without_embeddings_sync(conn, 50)?;
+                Ok::<_, rusqlite::Error>(facts.len())
+            })
+            .await
+            .expect("query should succeed");
+        assert_eq!(
+            count, 0,
+            "all facts have embeddings, so none should need processing"
+        );
+    }
+}

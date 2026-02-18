@@ -139,3 +139,408 @@ pub fn update_goal_progress_from_milestones_sync(
     )?;
     Ok(progress)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::setup_test_connection;
+
+    // Helper: create a goal and return its id
+    fn create_test_goal(conn: &Connection) -> i64 {
+        crate::db::create_goal_sync(
+            conn,
+            Some(1), // project_id
+            "Test Goal",
+            None,
+            Some("in_progress"),
+            Some("medium"),
+            Some(0),
+        )
+        .expect("create goal should succeed")
+    }
+
+    // Helper: ensure project exists
+    fn ensure_project(conn: &Connection) -> i64 {
+        crate::db::get_or_create_project_sync(conn, "/test/project", Some("test"))
+            .expect("create project should succeed")
+            .0
+    }
+
+    // ========================================================================
+    // Happy-path CRUD tests
+    // ========================================================================
+
+    #[test]
+    fn test_create_milestone_returns_positive_id() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        let id = create_milestone_sync(&conn, goal_id, "First milestone", None)
+            .expect("create should succeed");
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn test_create_milestone_default_weight_is_one() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        let id = create_milestone_sync(&conn, goal_id, "Milestone", None)
+            .expect("create should succeed");
+        let ms = get_milestone_by_id_sync(&conn, id)
+            .expect("get should succeed")
+            .expect("milestone should exist");
+        assert_eq!(ms.weight, 1);
+    }
+
+    #[test]
+    fn test_create_milestone_custom_weight() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        let id = create_milestone_sync(&conn, goal_id, "Heavy milestone", Some(5))
+            .expect("create should succeed");
+        let ms = get_milestone_by_id_sync(&conn, id)
+            .expect("get should succeed")
+            .expect("milestone should exist");
+        assert_eq!(ms.weight, 5);
+        assert_eq!(ms.title, "Heavy milestone");
+    }
+
+    #[test]
+    fn test_get_milestones_for_goal_returns_ordered_by_id() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        create_milestone_sync(&conn, goal_id, "First", None).unwrap();
+        create_milestone_sync(&conn, goal_id, "Second", None).unwrap();
+        create_milestone_sync(&conn, goal_id, "Third", None).unwrap();
+
+        let milestones = get_milestones_for_goal_sync(&conn, goal_id).unwrap();
+        assert_eq!(milestones.len(), 3);
+        assert_eq!(milestones[0].title, "First");
+        assert_eq!(milestones[1].title, "Second");
+        assert_eq!(milestones[2].title, "Third");
+    }
+
+    #[test]
+    fn test_get_milestone_by_id_all_fields() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        let id = create_milestone_sync(&conn, goal_id, "Detailed", Some(3)).unwrap();
+        let ms = get_milestone_by_id_sync(&conn, id).unwrap().unwrap();
+
+        assert_eq!(ms.id, id);
+        assert_eq!(ms.goal_id, Some(goal_id));
+        assert_eq!(ms.title, "Detailed");
+        assert_eq!(ms.weight, 3);
+        assert!(!ms.completed);
+        assert!(ms.completed_at.is_none());
+        assert!(ms.completed_in_session_id.is_none());
+    }
+
+    #[test]
+    fn test_update_milestone_title_only() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+        let id = create_milestone_sync(&conn, goal_id, "Old title", Some(2)).unwrap();
+
+        update_milestone_sync(&conn, id, Some("New title"), None).unwrap();
+
+        let ms = get_milestone_by_id_sync(&conn, id).unwrap().unwrap();
+        assert_eq!(ms.title, "New title");
+        assert_eq!(ms.weight, 2); // unchanged
+    }
+
+    #[test]
+    fn test_update_milestone_weight_only() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+        let id = create_milestone_sync(&conn, goal_id, "Keep title", Some(1)).unwrap();
+
+        update_milestone_sync(&conn, id, None, Some(10)).unwrap();
+
+        let ms = get_milestone_by_id_sync(&conn, id).unwrap().unwrap();
+        assert_eq!(ms.title, "Keep title"); // unchanged
+        assert_eq!(ms.weight, 10);
+    }
+
+    #[test]
+    fn test_complete_milestone_sets_fields() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+        let id = create_milestone_sync(&conn, goal_id, "Complete me", None).unwrap();
+
+        let returned = complete_milestone_sync(&conn, id, Some("session-abc")).unwrap();
+        assert_eq!(returned, Some(goal_id));
+
+        let ms = get_milestone_by_id_sync(&conn, id).unwrap().unwrap();
+        assert!(ms.completed);
+        assert!(ms.completed_at.is_some());
+        assert_eq!(ms.completed_in_session_id, Some("session-abc".to_string()));
+    }
+
+    #[test]
+    fn test_delete_milestone_removes_it() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+        let id = create_milestone_sync(&conn, goal_id, "Delete me", None).unwrap();
+
+        let returned = delete_milestone_sync(&conn, id).unwrap();
+        assert_eq!(returned, Some(goal_id));
+
+        let ms = get_milestone_by_id_sync(&conn, id).unwrap();
+        assert!(ms.is_none());
+    }
+
+    #[test]
+    fn test_calculate_progress_partial_completion() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        let id1 = create_milestone_sync(&conn, goal_id, "Done", Some(1)).unwrap();
+        create_milestone_sync(&conn, goal_id, "Not done", Some(1)).unwrap();
+        complete_milestone_sync(&conn, id1, None).unwrap();
+
+        let progress = calculate_goal_progress_sync(&conn, goal_id).unwrap();
+        assert_eq!(progress, 50);
+    }
+
+    #[test]
+    fn test_calculate_progress_weighted_milestones() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        // weight=3 completed, weight=7 not => 30%
+        let id1 = create_milestone_sync(&conn, goal_id, "Light", Some(3)).unwrap();
+        create_milestone_sync(&conn, goal_id, "Heavy", Some(7)).unwrap();
+        complete_milestone_sync(&conn, id1, None).unwrap();
+
+        let progress = calculate_goal_progress_sync(&conn, goal_id).unwrap();
+        assert_eq!(progress, 30);
+    }
+
+    #[test]
+    fn test_calculate_progress_all_complete_is_100() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        let id1 = create_milestone_sync(&conn, goal_id, "A", Some(2)).unwrap();
+        let id2 = create_milestone_sync(&conn, goal_id, "B", Some(3)).unwrap();
+        complete_milestone_sync(&conn, id1, None).unwrap();
+        complete_milestone_sync(&conn, id2, None).unwrap();
+
+        let progress = calculate_goal_progress_sync(&conn, goal_id).unwrap();
+        assert_eq!(progress, 100);
+    }
+
+    #[test]
+    fn test_update_goal_progress_writes_to_goals_table() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        let id1 = create_milestone_sync(&conn, goal_id, "Done", Some(1)).unwrap();
+        create_milestone_sync(&conn, goal_id, "Pending", Some(1)).unwrap();
+        complete_milestone_sync(&conn, id1, None).unwrap();
+
+        let progress = update_goal_progress_from_milestones_sync(&conn, goal_id).unwrap();
+        assert_eq!(progress, 50);
+
+        // Verify it was written to the goals table
+        let stored: i32 = conn
+            .query_row(
+                "SELECT progress_percent FROM goals WHERE id = ?",
+                [goal_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, 50);
+    }
+
+    // ========================================================================
+    // calculate_goal_progress_sync edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_calculate_progress_no_milestones() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        // No milestones at all: total_weight == 0 => should return 0
+        let progress = calculate_goal_progress_sync(&conn, goal_id)
+            .expect("calculate progress should succeed");
+        assert_eq!(progress, 0, "progress with no milestones should be 0");
+    }
+
+    #[test]
+    fn test_calculate_progress_with_zero_weight_milestones() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        // Create milestones with weight=0: total_weight sums to 0
+        create_milestone_sync(&conn, goal_id, "Zero weight A", Some(0))
+            .expect("create milestone should succeed");
+        create_milestone_sync(&conn, goal_id, "Zero weight B", Some(0))
+            .expect("create milestone should succeed");
+
+        // total_weight == 0 => should return 0 (no division by zero)
+        let progress = calculate_goal_progress_sync(&conn, goal_id)
+            .expect("calculate progress should succeed");
+        assert_eq!(
+            progress, 0,
+            "progress with all zero-weight milestones should be 0, not panic"
+        );
+    }
+
+    #[test]
+    fn test_calculate_progress_nonexistent_goal() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+
+        // Goal ID 99999 does not exist: query returns COALESCE(SUM(weight),0) = 0
+        let progress = calculate_goal_progress_sync(&conn, 99999)
+            .expect("calculate progress should succeed even for nonexistent goal");
+        assert_eq!(progress, 0);
+    }
+
+    // ========================================================================
+    // get_milestone_by_id_sync with nonexistent ID
+    // ========================================================================
+
+    #[test]
+    fn test_get_milestone_by_id_nonexistent() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+
+        let result = get_milestone_by_id_sync(&conn, 99999).expect("get by id should succeed");
+        assert!(result.is_none(), "nonexistent milestone should return None");
+    }
+
+    // ========================================================================
+    // complete_milestone_sync with nonexistent ID
+    // ========================================================================
+
+    #[test]
+    fn test_complete_milestone_nonexistent() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+
+        // Completing a nonexistent milestone: UPDATE affects 0 rows,
+        // then SELECT goal_id returns None
+        let result = complete_milestone_sync(&conn, 99999, Some("session-1"))
+            .expect("complete should succeed");
+        assert!(
+            result.is_none(),
+            "completing nonexistent milestone should return None"
+        );
+    }
+
+    #[test]
+    fn test_complete_already_completed_milestone() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+        let ms_id = create_milestone_sync(&conn, goal_id, "Done task", None)
+            .expect("create milestone should succeed");
+
+        // Complete it once
+        let result1 = complete_milestone_sync(&conn, ms_id, Some("s1"))
+            .expect("first complete should succeed");
+        assert_eq!(result1, Some(goal_id));
+
+        // Complete it again (idempotent — just overwrites completed_at)
+        let result2 = complete_milestone_sync(&conn, ms_id, Some("s2"))
+            .expect("second complete should succeed");
+        assert_eq!(result2, Some(goal_id));
+
+        // Verify it's still completed
+        let ms = get_milestone_by_id_sync(&conn, ms_id)
+            .expect("get should succeed")
+            .expect("milestone should exist");
+        assert!(ms.completed);
+    }
+
+    // ========================================================================
+    // delete_milestone_sync with nonexistent ID
+    // ========================================================================
+
+    #[test]
+    fn test_delete_milestone_nonexistent() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+
+        // Deleting nonexistent: SELECT returns None, DELETE affects 0 rows
+        let result = delete_milestone_sync(&conn, 99999).expect("delete should succeed");
+        assert!(
+            result.is_none(),
+            "deleting nonexistent milestone should return None"
+        );
+    }
+
+    // ========================================================================
+    // get_milestones_for_goal_sync with empty list
+    // ========================================================================
+
+    #[test]
+    fn test_get_milestones_for_nonexistent_goal() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+
+        let milestones =
+            get_milestones_for_goal_sync(&conn, 99999).expect("get milestones should succeed");
+        assert!(milestones.is_empty());
+    }
+
+    // ========================================================================
+    // update_milestone_sync with nonexistent ID (no-op)
+    // ========================================================================
+
+    #[test]
+    fn test_update_milestone_nonexistent() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+
+        // Updating nonexistent milestone: UPDATE affects 0 rows, returns Ok(())
+        let result = update_milestone_sync(&conn, 99999, Some("new title"), Some(5));
+        assert!(result.is_ok(), "update nonexistent should not error");
+    }
+
+    // ========================================================================
+    // update_goal_progress_from_milestones_sync edge case
+    // ========================================================================
+
+    #[test]
+    fn test_update_goal_progress_zero_weight_milestones() {
+        let conn = setup_test_connection();
+        let _pid = ensure_project(&conn);
+        let goal_id = create_test_goal(&conn);
+
+        create_milestone_sync(&conn, goal_id, "Zero A", Some(0)).expect("create should succeed");
+        create_milestone_sync(&conn, goal_id, "Zero B", Some(0)).expect("create should succeed");
+
+        // Complete one of them
+        let ms = get_milestones_for_goal_sync(&conn, goal_id).expect("get should succeed");
+        complete_milestone_sync(&conn, ms[0].id, None).expect("complete should succeed");
+
+        // Progress should be 0 (total_weight == 0)
+        let progress = update_goal_progress_from_milestones_sync(&conn, goal_id)
+            .expect("update progress should succeed");
+        assert_eq!(progress, 0);
+    }
+}

@@ -830,4 +830,133 @@ mod tests {
         assert!(!is_stdlib_call("hash_map_builder"));
         assert!(!is_stdlib_call("string_parser"));
     }
+
+    // ============================================================================
+    // Edge case: empty call graph
+    // ============================================================================
+
+    #[test]
+    fn test_find_callers_empty_call_graph() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        // No symbols or edges at all
+        let results = find_callers(&conn, Some(project_id), "anything", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_find_callees_empty_call_graph() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let results = find_callees(&conn, Some(project_id), "anything", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_crossref_search_no_match_returns_none() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        // Query that doesn't match any crossref pattern
+        let result = crossref_search(&conn, "explain this code", Some(project_id), 10);
+        assert!(result.is_none(), "non-crossref query should return None");
+    }
+
+    // ============================================================================
+    // Edge case: extract_crossref_target with edge inputs
+    // ============================================================================
+
+    #[test]
+    fn test_extract_crossref_target_pattern_with_only_whitespace_name() {
+        // "who calls " followed by only whitespace => name becomes empty after trim
+        let result = extract_crossref_target("who calls    ");
+        assert!(
+            result.is_none(),
+            "whitespace-only target should return None"
+        );
+    }
+
+    #[test]
+    fn test_extract_crossref_target_with_special_characters() {
+        // Name with underscores and numbers should work
+        let result = extract_crossref_target("callers of my_func_2");
+        assert_eq!(
+            result,
+            Some(("my_func_2".to_string(), CrossRefType::Caller))
+        );
+    }
+
+    #[test]
+    fn test_extract_crossref_what_does_call_without_call_suffix() {
+        // "what does X" without " call" suffix should NOT match callee
+        let result = extract_crossref_target("what does process do");
+        assert!(
+            result.is_none(),
+            "what does X without 'call' suffix should not match"
+        );
+    }
+
+    // ============================================================================
+    // Edge case: format_crossref_results with single result
+    // ============================================================================
+
+    #[test]
+    fn test_format_crossref_results_single_result_numbering() {
+        let results = vec![CrossRefResult {
+            symbol_name: "only_caller".to_string(),
+            file_path: "src/single.rs".to_string(),
+            ref_type: CrossRefType::Caller,
+            call_count: 1,
+        }];
+        let output = format_crossref_results("target", CrossRefType::Caller, &results);
+        assert!(output.contains("1. `only_caller`"));
+        assert!(output.contains("(1x)"));
+    }
+
+    // ============================================================================
+    // Edge case: find_callees with all stdlib calls (all filtered out)
+    // ============================================================================
+
+    #[test]
+    fn test_find_callees_all_stdlib_returns_empty() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let fn_id = seed_symbol(&conn, project_id, "my_fn", "src/lib.rs", "function", 1, 10);
+        // All callees are stdlib
+        seed_call_edge(&conn, fn_id, "clone");
+        seed_call_edge(&conn, fn_id, "unwrap");
+        seed_call_edge(&conn, fn_id, "to_string");
+        seed_call_edge(&conn, fn_id, "map");
+
+        let results = find_callees(&conn, Some(project_id), "my_fn", 10);
+        assert!(
+            results.is_empty(),
+            "all-stdlib callees should be filtered out"
+        );
+    }
+
+    // ============================================================================
+    // Edge case: find_callers with limit=0
+    // ============================================================================
+
+    #[test]
+    fn test_find_callers_limit_zero() {
+        let conn = setup_connection_with_code_schema();
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        let a_id = seed_symbol(&conn, project_id, "a", "src/a.rs", "function", 1, 5);
+        seed_call_edge(&conn, a_id, "target");
+
+        // limit=0 should return empty
+        let results = find_callers(&conn, Some(project_id), "target", 0);
+        assert!(results.is_empty(), "limit=0 should return empty");
+    }
 }

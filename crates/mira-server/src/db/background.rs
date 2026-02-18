@@ -591,3 +591,299 @@ pub fn get_project_ids_needing_summaries_sync(conn: &Connection) -> rusqlite::Re
         .collect();
     Ok(ids)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::setup_test_connection;
+
+    fn setup_conn_with_project() -> (Connection, i64) {
+        let conn = setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/path", Some("test")).unwrap();
+        (conn, pid)
+    }
+
+    /// Add code schema tables needed by background functions
+    fn add_code_tables(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS code_symbols (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                symbol_type TEXT NOT NULL,
+                start_line INTEGER,
+                end_line INTEGER,
+                signature TEXT,
+                indexed_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS codebase_modules (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                module_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                purpose TEXT,
+                exports TEXT,
+                depends_on TEXT,
+                symbol_count INTEGER DEFAULT 0,
+                line_count INTEGER DEFAULT 0,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, module_id)
+            );
+            CREATE TABLE IF NOT EXISTS pending_embeddings (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER,
+                file_path TEXT NOT NULL,
+                chunk_content TEXT NOT NULL,
+                start_line INTEGER NOT NULL DEFAULT 1,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );",
+        )
+        .unwrap();
+    }
+
+    // ========================================================================
+    // Scan info / system observations
+    // ========================================================================
+
+    #[test]
+    fn test_get_scan_info_not_found() {
+        let (conn, pid) = setup_conn_with_project();
+        let info = get_scan_info_sync(&conn, pid, "nonexistent_key");
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_insert_system_marker_and_get_scan_info() {
+        let (conn, pid) = setup_conn_with_project();
+
+        insert_system_marker_sync(&conn, pid, "last_scan", "abc123", "indexing").unwrap();
+
+        let info = get_scan_info_sync(&conn, pid, "last_scan");
+        assert!(info.is_some());
+        let (content, _updated_at) = info.unwrap();
+        assert_eq!(content, "abc123");
+    }
+
+    #[test]
+    fn test_insert_system_marker_upsert_updates() {
+        let (conn, pid) = setup_conn_with_project();
+
+        insert_system_marker_sync(&conn, pid, "scan_key", "old_value", "scan").unwrap();
+        insert_system_marker_sync(&conn, pid, "scan_key", "new_value", "scan").unwrap();
+
+        let info = get_scan_info_sync(&conn, pid, "scan_key").unwrap();
+        assert_eq!(info.0, "new_value");
+    }
+
+    #[test]
+    fn test_memory_key_exists() {
+        let (conn, pid) = setup_conn_with_project();
+
+        assert!(!memory_key_exists_sync(&conn, pid, "some_key"));
+
+        insert_system_marker_sync(&conn, pid, "some_key", "value", "test").unwrap();
+
+        assert!(memory_key_exists_sync(&conn, pid, "some_key"));
+    }
+
+    #[test]
+    fn test_is_time_older_than() {
+        let (conn, _pid) = setup_conn_with_project();
+
+        // A time from yesterday should be older than '-2 days' but not '-1 hour'
+        let old_time = "2020-01-01 00:00:00";
+        assert!(is_time_older_than_sync(&conn, old_time, "-1 day"));
+
+        let future_time = "2099-12-31 23:59:59";
+        assert!(!is_time_older_than_sync(&conn, future_time, "-1 day"));
+    }
+
+    // ========================================================================
+    // Health scanner
+    // ========================================================================
+
+    #[test]
+    fn test_mark_health_scanned_clears_flags() {
+        let (conn, pid) = setup_conn_with_project();
+
+        // Set up the flags
+        insert_system_marker_sync(&conn, pid, "health_scan_needed", "1", "health").unwrap();
+        insert_system_marker_sync(&conn, pid, "health_fast_scan_done", "1", "health").unwrap();
+
+        mark_health_scanned_sync(&conn, pid).unwrap();
+
+        assert!(!memory_key_exists_sync(&conn, pid, "health_scan_needed"));
+        assert!(!memory_key_exists_sync(&conn, pid, "health_fast_scan_done"));
+        // Scan time marker should exist
+        let info = get_scan_info_sync(&conn, pid, "health_scan_time");
+        assert!(info.is_some());
+    }
+
+    #[test]
+    fn test_mark_llm_health_done() {
+        let (conn, pid) = setup_conn_with_project();
+
+        mark_llm_health_done_sync(&conn, pid, "llm_health_complexity").unwrap();
+
+        let info = get_scan_info_sync(&conn, pid, "llm_health_complexity");
+        assert!(info.is_some());
+        assert_eq!(info.unwrap().0, "scanned");
+    }
+
+    #[test]
+    fn test_clear_old_health_issues() {
+        let (conn, pid) = setup_conn_with_project();
+
+        // Insert a health observation
+        conn.execute(
+            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
+             VALUES (?, 'health_issue_1', 'Large function detected', 'health', 'complexity', 0.8, 'code_health', 'project', datetime('now'), datetime('now'))",
+            [pid],
+        )
+        .unwrap();
+
+        clear_old_health_issues_sync(&conn, pid).unwrap();
+
+        // Verify health observations are cleared
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND observation_type = 'health'",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_clear_health_issues_by_categories() {
+        let (conn, pid) = setup_conn_with_project();
+
+        // Insert health observations in different categories
+        for (key, cat) in &[("h1", "complexity"), ("h2", "dead_code"), ("h3", "other")] {
+            conn.execute(
+                "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
+                 VALUES (?, ?, 'issue', 'health', ?, 0.8, 'test', 'project', datetime('now'), datetime('now'))",
+                params![pid, key, cat],
+            )
+            .unwrap();
+        }
+
+        clear_health_issues_by_categories_sync(&conn, pid, &["complexity", "dead_code"]).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM system_observations WHERE project_id = ? AND observation_type = 'health'",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1); // only "other" remains
+    }
+
+    // ========================================================================
+    // Code symbols queries (require code tables)
+    // ========================================================================
+
+    #[test]
+    fn test_get_symbols_for_file() {
+        let (conn, pid) = setup_conn_with_project();
+        add_code_tables(&conn);
+
+        conn.execute(
+            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
+             VALUES (?1, 'src/lib.rs', 'main', 'function', 1, 10, 'fn main()')",
+            params![pid],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line, signature)
+             VALUES (?1, 'src/lib.rs', 'Config', 'struct', 15, 25, 'pub struct Config')",
+            params![pid],
+        )
+        .unwrap();
+
+        let symbols = get_symbols_for_file_sync(&conn, pid, "src/lib.rs").unwrap();
+        assert_eq!(symbols.len(), 2);
+
+        // Ordered by name
+        assert_eq!(symbols[0].1, "Config");
+        assert_eq!(symbols[1].1, "main");
+    }
+
+    #[test]
+    fn test_get_large_functions() {
+        let (conn, pid) = setup_conn_with_project();
+        add_code_tables(&conn);
+
+        // Large function (50 lines)
+        conn.execute(
+            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line)
+             VALUES (?1, 'src/main.rs', 'big_function', 'function', 1, 51)",
+            params![pid],
+        )
+        .unwrap();
+        // Small function (5 lines)
+        conn.execute(
+            "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, end_line)
+             VALUES (?1, 'src/main.rs', 'small_function', 'function', 60, 65)",
+            params![pid],
+        )
+        .unwrap();
+
+        let large = get_large_functions_sync(&conn, pid, 30).unwrap();
+        assert_eq!(large.len(), 1);
+        assert_eq!(large[0].0, "big_function");
+    }
+
+    #[test]
+    fn test_delete_pending_embedding() {
+        let (conn, pid) = setup_conn_with_project();
+        add_code_tables(&conn);
+
+        conn.execute(
+            "INSERT INTO pending_embeddings (project_id, file_path, chunk_content, start_line)
+             VALUES (?1, 'src/main.rs', 'fn main() {}', 1)",
+            params![pid],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+
+        delete_pending_embedding_sync(&conn, id).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pending_embeddings", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_delete_memory_by_key() {
+        let (conn, pid) = setup_conn_with_project();
+
+        // Store a memory fact with a key
+        crate::db::test_support::store_memory_helper(
+            &conn,
+            Some(pid),
+            Some("test_key"),
+            "test content",
+            "general",
+            None,
+            1.0,
+        )
+        .unwrap();
+
+        let deleted = delete_memory_by_key_sync(&conn, pid, "test_key").unwrap();
+        assert!(deleted > 0);
+
+        // Verify it's gone
+        let deleted_again = delete_memory_by_key_sync(&conn, pid, "test_key").unwrap();
+        assert_eq!(deleted_again, 0);
+    }
+}

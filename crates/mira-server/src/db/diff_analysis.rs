@@ -157,3 +157,159 @@ pub fn get_recent_diff_analyses_sync(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::setup_test_connection;
+
+    fn setup_conn_with_project() -> (Connection, i64) {
+        let conn = setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/path", Some("test")).unwrap();
+        (conn, pid)
+    }
+
+    fn make_params(project_id: Option<i64>) -> StoreDiffAnalysisParams<'static> {
+        StoreDiffAnalysisParams {
+            project_id,
+            from_commit: "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+            to_commit: "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+            analysis_type: "semantic",
+            changes_json: Some(r#"[{"file":"src/main.rs"}]"#),
+            impact_json: Some(r#"{"risk":"low"}"#),
+            risk_json: Some(r#"{"score":2}"#),
+            summary: Some("Minor refactoring"),
+            files_changed: Some(3),
+            lines_added: Some(25),
+            lines_removed: Some(10),
+            files_json: Some(r#"["src/main.rs","src/lib.rs"]"#),
+        }
+    }
+
+    #[test]
+    fn test_store_diff_analysis_returns_id() {
+        let (conn, pid) = setup_conn_with_project();
+        let params = make_params(Some(pid));
+
+        let id = store_diff_analysis_sync(&conn, &params).unwrap();
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn test_get_cached_diff_analysis_found() {
+        let (conn, pid) = setup_conn_with_project();
+        let params = make_params(Some(pid));
+        store_diff_analysis_sync(&conn, &params).unwrap();
+
+        let cached = get_cached_diff_analysis_sync(
+            &conn,
+            Some(pid),
+            "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+            "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+        )
+        .unwrap();
+
+        assert!(cached.is_some());
+        let analysis = cached.unwrap();
+        assert_eq!(
+            analysis.from_commit,
+            "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"
+        );
+        assert_eq!(
+            analysis.to_commit,
+            "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222"
+        );
+        assert_eq!(analysis.analysis_type, "semantic");
+        assert_eq!(analysis.summary.as_deref(), Some("Minor refactoring"));
+        assert_eq!(analysis.files_changed, Some(3));
+        assert_eq!(analysis.lines_added, Some(25));
+        assert_eq!(analysis.lines_removed, Some(10));
+    }
+
+    #[test]
+    fn test_get_cached_diff_analysis_not_found() {
+        let (conn, pid) = setup_conn_with_project();
+
+        let cached =
+            get_cached_diff_analysis_sync(&conn, Some(pid), "nonexistent_from", "nonexistent_to")
+                .unwrap();
+
+        assert!(cached.is_none());
+    }
+
+    #[test]
+    fn test_get_recent_diff_analyses_with_project() {
+        let (conn, pid) = setup_conn_with_project();
+
+        store_diff_analysis_sync(&conn, &make_params(Some(pid))).unwrap();
+
+        let mut p2 = make_params(Some(pid));
+        p2.to_commit = "cccc3333cccc3333cccc3333cccc3333cccc3333";
+        p2.summary = Some("Second analysis");
+        store_diff_analysis_sync(&conn, &p2).unwrap();
+
+        let recent = get_recent_diff_analyses_sync(&conn, Some(pid), 10).unwrap();
+        assert_eq!(recent.len(), 2);
+    }
+
+    #[test]
+    fn test_get_recent_diff_analyses_respects_limit() {
+        let (conn, pid) = setup_conn_with_project();
+
+        let commits: Vec<String> = (0..5).map(|i| format!("{:0>40}", i)).collect();
+        for commit in &commits {
+            let mut p = make_params(Some(pid));
+            p.to_commit = commit.as_str();
+            store_diff_analysis_sync(&conn, &p).unwrap();
+        }
+
+        let recent = get_recent_diff_analyses_sync(&conn, Some(pid), 2).unwrap();
+        assert_eq!(recent.len(), 2);
+    }
+
+    #[test]
+    fn test_get_recent_diff_analyses_no_project_filter() {
+        let conn = setup_test_connection();
+
+        store_diff_analysis_sync(&conn, &make_params(None)).unwrap();
+
+        let recent = get_recent_diff_analyses_sync(&conn, None, 10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert!(recent[0].project_id.is_none());
+    }
+
+    #[test]
+    fn test_store_diff_analysis_all_optional_fields_none() {
+        let (conn, pid) = setup_conn_with_project();
+        let params = StoreDiffAnalysisParams {
+            project_id: Some(pid),
+            from_commit: "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+            to_commit: "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+            analysis_type: "quick",
+            changes_json: None,
+            impact_json: None,
+            risk_json: None,
+            summary: None,
+            files_changed: None,
+            lines_added: None,
+            lines_removed: None,
+            files_json: None,
+        };
+
+        let id = store_diff_analysis_sync(&conn, &params).unwrap();
+        let cached = get_cached_diff_analysis_sync(
+            &conn,
+            Some(pid),
+            "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+            "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(cached.id, id);
+        assert!(cached.changes_json.is_none());
+        assert!(cached.summary.is_none());
+        assert!(cached.files_changed.is_none());
+    }
+}
