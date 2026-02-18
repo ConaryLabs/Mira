@@ -1,16 +1,19 @@
 @echo off
 :: Mira Windows compatibility shim.
 ::
-:: On Windows, cmd.exe cannot directly execute POSIX shell scripts (#!/bin/sh).
-:: This .cmd file is auto-resolved when hooks.json calls
+:: On Windows, cmd.exe cannot execute POSIX shell scripts (#!/bin/sh) directly.
+:: When Claude Code plugin hooks invoke
 ::   "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook <event>"
-:: because Windows tries .cmd / .bat / .exe extensions automatically.
+:: Windows produces "'mira-wrapper' is not recognized as an internal or
+:: external command", blocking all Mira hooks.
 ::
-:: If bash (Git Bash, WSL, or similar) is on PATH, we delegate to the POSIX
-:: wrapper so auto-download and update logic works normally.
+:: This .cmd file is auto-resolved by Windows when no extension is given,
+:: so hooks.json requires no changes.
 ::
-:: If bash is not found but the mira binary is already installed, we call it
-:: directly (safe because the wrapper's sole job is finding/updating mira.exe).
+:: Priority:
+::   1. bash on PATH   — full wrapper logic (auto-download, auto-update)
+::   2. mira.exe found — call it directly (fast path, no update check)
+::   3. Neither        — print a helpful error and exit 1
 
 setlocal EnableDelayedExpansion
 
@@ -18,7 +21,7 @@ set "SCRIPT_DIR=%~dp0"
 set "MIRA_HOME=%USERPROFILE%\.mira"
 set "MIRA_BIN=%MIRA_HOME%\bin\mira.exe"
 
-:: Prefer bash — preserves auto-download and update logic
+:: Prefer bash — preserves auto-download and update logic from mira-wrapper
 where bash >nul 2>&1
 if !errorlevel! equ 0 (
     bash "%SCRIPT_DIR%mira-wrapper" %*

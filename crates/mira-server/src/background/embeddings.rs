@@ -75,3 +75,53 @@ pub async fn process_pending_embeddings(
     tracing::info!("Stored {} embeddings from pending queue", count);
     Ok(count)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::setup_test_pool;
+
+    // ========================================================================
+    // None embeddings client: early return path
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_process_pending_embeddings_none_client() {
+        let pool = setup_test_pool().await;
+
+        // Passing None for embeddings client should return Ok(0) immediately
+        let result = process_pending_embeddings(&pool, None).await;
+        assert!(result.is_ok(), "None client should succeed");
+        assert_eq!(result.unwrap(), 0, "None client should return 0 processed");
+    }
+
+    // ========================================================================
+    // Empty pending queue (sync test -- pending_embeddings is in code DB)
+    // ========================================================================
+
+    #[test]
+    fn test_get_pending_embeddings_empty_queue() {
+        // pending_embeddings lives in code DB schema, not main migrations.
+        // Create it manually for this test.
+        let conn = crate::db::test_support::setup_test_connection();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pending_embeddings (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER,
+                file_path TEXT NOT NULL,
+                chunk_content TEXT NOT NULL,
+                start_line INTEGER NOT NULL DEFAULT 1,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );",
+        )
+        .unwrap();
+
+        let pending =
+            crate::db::get_pending_embeddings_sync(&conn, 100).expect("query should succeed");
+        assert!(
+            pending.is_empty(),
+            "fresh table should have no pending embeddings"
+        );
+    }
+}

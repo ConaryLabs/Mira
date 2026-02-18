@@ -148,23 +148,56 @@ mod tests {
 
     #[test]
     fn test_parse_file_python() {
-        let content = "def hello():\n    print('hello')";
+        let content = "def hello():\n    print('hello')\n\nclass Greeter:\n    def greet(self):\n        pass";
         let result = parse_file(content, "python");
         assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(
+            !parsed.symbols.is_empty(),
+            "Python parser should extract symbols from def/class, got empty"
+        );
+        let names: Vec<&str> = parsed.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"hello"),
+            "Python parser should find 'hello' function, got: {:?}",
+            names
+        );
     }
 
     #[test]
     fn test_parse_file_typescript() {
-        let content = "function greet() { console.log('hi'); }";
+        let content = "function greet() { console.log('hi'); }\nconst x = 42;";
         let result = parse_file(content, "typescript");
         assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(
+            !parsed.symbols.is_empty(),
+            "TypeScript parser should extract symbols from function declarations, got empty"
+        );
+        let names: Vec<&str> = parsed.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"greet"),
+            "TypeScript parser should find 'greet' function, got: {:?}",
+            names
+        );
     }
 
     #[test]
     fn test_parse_file_go() {
-        let content = "package main\nfunc main() {}";
+        let content = "package main\n\nfunc main() {}\n\nfunc helper() {}";
         let result = parse_file(content, "go");
         assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(
+            !parsed.symbols.is_empty(),
+            "Go parser should extract symbols from func declarations, got empty"
+        );
+        let names: Vec<&str> = parsed.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"main"),
+            "Go parser should find 'main' function, got: {:?}",
+            names
+        );
     }
 
     #[test]

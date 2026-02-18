@@ -1769,6 +1769,165 @@ mod tests {
         assert_eq!(extract_goal_id("Goal # 94 stale"), Some(94));
     }
 
+    // ── cleanup_stale_insights tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_cleanup_stale_insights_empty_table() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let result = cleanup_stale_insights(&pool).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0, "No insights to clean up in empty table");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_stale_insights_all_fresh() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/cleanup-fresh", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Insert fresh insights (triggered now)
+        pool.run(move |conn| {
+            for i in 0..3 {
+                conn.execute(
+                    r#"INSERT INTO behavior_patterns
+                        (project_id, pattern_type, pattern_key, pattern_data, confidence,
+                         last_triggered_at, first_seen_at, updated_at)
+                       VALUES (?, 'insight_test', ?, '{}', 0.5,
+                               datetime('now'), datetime('now'), datetime('now'))"#,
+                    params![project_id, format!("key_{}", i)],
+                )?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        let result = cleanup_stale_insights(&pool).await;
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "Fresh insights should not be cleaned up"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_stale_insights_some_stale() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/cleanup-stale", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        pool.run(move |conn| {
+            // Insert 2 stale insights (triggered 60 days ago)
+            for i in 0..2 {
+                conn.execute(
+                    r#"INSERT INTO behavior_patterns
+                        (project_id, pattern_type, pattern_key, pattern_data, confidence,
+                         last_triggered_at, first_seen_at, updated_at)
+                       VALUES (?, 'insight_old', ?, '{}', 0.5,
+                               datetime('now', '-60 days'), datetime('now', '-60 days'), datetime('now', '-60 days'))"#,
+                    params![project_id, format!("old_{}", i)],
+                )?;
+            }
+            // Insert 1 fresh insight
+            conn.execute(
+                r#"INSERT INTO behavior_patterns
+                    (project_id, pattern_type, pattern_key, pattern_data, confidence,
+                     last_triggered_at, first_seen_at, updated_at)
+                   VALUES (?, 'insight_fresh', 'fresh_0', '{}', 0.5,
+                           datetime('now'), datetime('now'), datetime('now'))"#,
+                params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        let result = cleanup_stale_insights(&pool).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 2, "Should delete exactly 2 stale insights");
+
+        // Verify the fresh one survived
+        let remaining: i64 = pool
+            .run(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM behavior_patterns WHERE project_id = ?",
+                    params![project_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+            .unwrap();
+        assert_eq!(remaining, 1, "Fresh insight should survive cleanup");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_stale_insights_ignores_non_insight_patterns() {
+        use crate::db::test_support::setup_test_pool;
+
+        let pool = setup_test_pool().await;
+
+        let project_id = pool
+            .run(|conn| {
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_or_create_project_sync(conn, "/tmp/cleanup-non-insight", None)
+                        .unwrap()
+                        .0,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Insert old non-insight pattern (e.g. change_pattern) -- should NOT be deleted
+        pool.run(move |conn| {
+            conn.execute(
+                r#"INSERT INTO behavior_patterns
+                    (project_id, pattern_type, pattern_key, pattern_data, confidence,
+                     last_triggered_at, first_seen_at, updated_at)
+                   VALUES (?, 'change_pattern', 'old_change', '{}', 0.5,
+                           datetime('now', '-60 days'), datetime('now', '-60 days'), datetime('now', '-60 days'))"#,
+                params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        let result = cleanup_stale_insights(&pool).await;
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "Non-insight patterns should not be cleaned up"
+        );
+    }
+
     #[tokio::test]
     async fn test_stale_goal_unquoted_dedup() {
         use crate::db::test_support::setup_test_pool;

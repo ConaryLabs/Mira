@@ -200,3 +200,179 @@ pub fn update_module_purposes(
 ) -> Result<usize> {
     Ok(update_module_purposes_sync(conn, project_id, summaries)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // parse_summary_response
+    // ========================================================================
+
+    #[test]
+    fn test_parse_summary_response_single_line() {
+        let response = "db/pool: Manages database connection pooling and lifecycle.";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            summaries.get("db/pool").unwrap(),
+            "Manages database connection pooling and lifecycle."
+        );
+    }
+
+    #[test]
+    fn test_parse_summary_response_multiple_lines() {
+        let response = "\
+db/pool: Manages database connection pooling.
+cartographer: Maps codebase structure into modules.
+search: Provides semantic and keyword code search.";
+
+        let summaries = parse_summary_response(response);
+        assert_eq!(summaries.len(), 3);
+        assert!(summaries.contains_key("db/pool"));
+        assert!(summaries.contains_key("cartographer"));
+        assert!(summaries.contains_key("search"));
+    }
+
+    #[test]
+    fn test_parse_summary_response_skips_empty_lines() {
+        let response = "\
+db/pool: Connection pooling.
+
+search: Code search.
+
+";
+        let summaries = parse_summary_response(response);
+        assert_eq!(summaries.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_summary_response_skips_comments_and_headers() {
+        let response = "\
+# Module Summaries
+- Here are the summaries:
+db/pool: Connection pooling.";
+
+        let summaries = parse_summary_response(response);
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries.contains_key("db/pool"));
+    }
+
+    #[test]
+    fn test_parse_summary_response_skips_empty_module_id_or_summary() {
+        let response = "\
+: Empty module id
+empty_summary:
+valid/module: This is valid.";
+
+        let summaries = parse_summary_response(response);
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries.contains_key("valid/module"));
+    }
+
+    #[test]
+    fn test_parse_summary_response_empty_input() {
+        let summaries = parse_summary_response("");
+        assert!(summaries.is_empty());
+    }
+
+    #[test]
+    fn test_parse_summary_response_colon_in_summary() {
+        let response = "db/pool: Manages pools: connection and statement caches.";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            summaries.get("db/pool").unwrap(),
+            "Manages pools: connection and statement caches."
+        );
+    }
+
+    // ========================================================================
+    // build_summary_prompt
+    // ========================================================================
+
+    #[test]
+    fn test_build_summary_prompt_single_module() {
+        let modules = vec![ModuleSummaryContext {
+            module_id: "db".to_string(),
+            name: "database".to_string(),
+            path: "src/db".to_string(),
+            exports: vec!["DatabasePool".to_string(), "open".to_string()],
+            code_preview: "pub struct DatabasePool { ... }".to_string(),
+            line_count: 500,
+        }];
+
+        let prompt = build_summary_prompt(&modules);
+        assert!(prompt.contains("--- db ---"));
+        assert!(prompt.contains("Name: database"));
+        assert!(prompt.contains("Lines: 500"));
+        assert!(prompt.contains("DatabasePool, open"));
+        assert!(prompt.contains("pub struct DatabasePool"));
+    }
+
+    #[test]
+    fn test_build_summary_prompt_no_exports_no_preview() {
+        let modules = vec![ModuleSummaryContext {
+            module_id: "utils".to_string(),
+            name: "utilities".to_string(),
+            path: "src/utils".to_string(),
+            exports: vec![],
+            code_preview: String::new(),
+            line_count: 50,
+        }];
+
+        let prompt = build_summary_prompt(&modules);
+        assert!(prompt.contains("--- utils ---"));
+        assert!(prompt.contains("Name: utilities"));
+        assert!(prompt.contains("Lines: 50"));
+        // Should not contain "Exports:" or "Code preview:" sections
+        assert!(!prompt.contains("Exports:"));
+        assert!(!prompt.contains("```rust"));
+    }
+
+    #[test]
+    fn test_build_summary_prompt_multiple_modules() {
+        let modules = vec![
+            ModuleSummaryContext {
+                module_id: "a".to_string(),
+                name: "mod_a".to_string(),
+                path: "src/a".to_string(),
+                exports: vec!["FnA".to_string()],
+                code_preview: String::new(),
+                line_count: 100,
+            },
+            ModuleSummaryContext {
+                module_id: "b".to_string(),
+                name: "mod_b".to_string(),
+                path: "src/b".to_string(),
+                exports: vec!["FnB".to_string()],
+                code_preview: String::new(),
+                line_count: 200,
+            },
+        ];
+
+        let prompt = build_summary_prompt(&modules);
+        assert!(prompt.contains("--- a ---"));
+        assert!(prompt.contains("--- b ---"));
+    }
+
+    #[test]
+    fn test_build_summary_prompt_exports_truncated_to_ten() {
+        let exports: Vec<String> = (0..15).map(|i| format!("export_{}", i)).collect();
+        let modules = vec![ModuleSummaryContext {
+            module_id: "big".to_string(),
+            name: "big_module".to_string(),
+            path: "src/big".to_string(),
+            exports,
+            code_preview: String::new(),
+            line_count: 1000,
+        }];
+
+        let prompt = build_summary_prompt(&modules);
+        // Should show only first 10
+        assert!(prompt.contains("export_9"));
+        assert!(!prompt.contains("export_10"));
+    }
+}

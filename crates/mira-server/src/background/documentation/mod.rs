@@ -762,4 +762,226 @@ mod tests {
         let content = read_file_content(temp_file.path()).unwrap();
         assert_eq!(content, "test content");
     }
+
+    // =========================================================================
+    // parse_impact_response Tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_impact_response_valid_minor() {
+        let response = "IMPACT: minor\nSUMMARY: Internal refactoring only, no API changes";
+        let (impact, summary) = parse_impact_response(response);
+
+        assert_eq!(impact, "minor");
+        assert_eq!(summary, "Internal refactoring only, no API changes");
+    }
+
+    #[test]
+    fn test_parse_impact_response_valid_significant() {
+        let response = "IMPACT: significant\nSUMMARY: Public function signature changed";
+        let (impact, summary) = parse_impact_response(response);
+
+        assert_eq!(impact, "significant");
+        assert_eq!(summary, "Public function signature changed");
+    }
+
+    #[test]
+    fn test_parse_impact_response_missing_impact_defaults_significant() {
+        let response = "SUMMARY: Some changes were made";
+        let (impact, summary) = parse_impact_response(response);
+
+        assert_eq!(
+            impact, "significant",
+            "Missing IMPACT line should default to significant"
+        );
+        assert_eq!(summary, "Some changes were made");
+    }
+
+    #[test]
+    fn test_parse_impact_response_missing_summary_keeps_default() {
+        let response = "IMPACT: minor";
+        let (impact, summary) = parse_impact_response(response);
+
+        assert_eq!(impact, "minor");
+        assert_eq!(
+            summary, "Unable to determine change impact",
+            "Missing SUMMARY should keep default message"
+        );
+    }
+
+    #[test]
+    fn test_parse_impact_response_empty_string() {
+        let (impact, summary) = parse_impact_response("");
+
+        assert_eq!(
+            impact, "significant",
+            "Empty response should default to significant"
+        );
+        assert_eq!(summary, "Unable to determine change impact");
+    }
+
+    #[test]
+    fn test_parse_impact_response_extra_whitespace() {
+        let response = "IMPACT:   minor  \nSUMMARY:   Whitespace around values   ";
+        let (impact, summary) = parse_impact_response(response);
+
+        assert_eq!(
+            impact, "minor",
+            "Should trim whitespace around impact value"
+        );
+        assert_eq!(summary, "Whitespace around values");
+    }
+
+    #[test]
+    fn test_parse_impact_response_mixed_case_impact() {
+        let response = "IMPACT: Minor\nSUMMARY: Case test";
+        let (impact, summary) = parse_impact_response(response);
+
+        assert_eq!(
+            impact, "minor",
+            "Impact classification should be case-insensitive"
+        );
+        assert_eq!(summary, "Case test");
+    }
+
+    #[test]
+    fn test_parse_impact_response_minor_with_qualifier() {
+        // The code checks starts_with("minor"), so "minor change" should still be minor
+        let response = "IMPACT: minor change detected\nSUMMARY: Qualified minor";
+        let (impact, _summary) = parse_impact_response(response);
+
+        assert_eq!(
+            impact, "minor",
+            "Impact starting with 'minor' should classify as minor"
+        );
+    }
+
+    #[test]
+    fn test_parse_impact_response_unknown_impact_defaults_significant() {
+        let response = "IMPACT: moderate\nSUMMARY: Unknown impact level";
+        let (impact, _summary) = parse_impact_response(response);
+
+        assert_eq!(
+            impact, "significant",
+            "Unknown impact values should default to significant"
+        );
+    }
+
+    #[test]
+    fn test_parse_impact_response_reversed_order() {
+        // SUMMARY before IMPACT -- both should still be parsed
+        let response = "SUMMARY: Reversed order test\nIMPACT: minor";
+        let (impact, summary) = parse_impact_response(response);
+
+        assert_eq!(impact, "minor");
+        assert_eq!(summary, "Reversed order test");
+    }
+
+    // =========================================================================
+    // needs_documentation_scan Tests
+    // =========================================================================
+
+    #[test]
+    fn test_needs_documentation_scan_never_scanned() {
+        let conn = crate::db::test_support::setup_test_connection();
+        let project_id =
+            crate::db::get_or_create_project_sync(&conn, "/tmp/doc-test", Some("test"))
+                .expect("create project")
+                .0;
+
+        let result = needs_documentation_scan(&conn, project_id, "/tmp/doc-test");
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap(),
+            "Never-scanned project should need documentation scan"
+        );
+    }
+
+    #[test]
+    fn test_needs_documentation_scan_recently_scanned_same_commit() {
+        let conn = crate::db::test_support::setup_test_connection();
+        let project_id =
+            crate::db::get_or_create_project_sync(&conn, "/tmp/doc-test2", Some("test"))
+                .expect("create project")
+                .0;
+
+        // Simulate a recent scan by storing an observation with current timestamp
+        // We use a fake commit hash -- since get_git_head on a non-git path returns None,
+        // and the stored commit is not None, it will compare Some("fakehash") != None.
+        // But the key test is: when the project has been scanned, the function does not
+        // unconditionally return true.
+        store_observation_sync(
+            &conn,
+            StoreObservationParams {
+                project_id: Some(project_id),
+                key: Some(DOC_SCAN_MARKER_KEY),
+                content: "fakehash1234567890abcdef1234567890abcdef",
+                observation_type: "system",
+                category: Some("documentation"),
+                confidence: 1.0,
+                source: "documentation",
+                session_id: None,
+                team_id: None,
+                scope: "project",
+                expires_at: None,
+            },
+        )
+        .expect("store observation");
+
+        // The scan_info now exists, so last_commit is Some.
+        // get_git_head("/tmp/doc-test2") returns None (no git repo).
+        // Case 2 requires both last and current to be Some, so it falls through.
+        // Case 3 checks if scan_time is older than 24 hours -- it was just created, so false.
+        // Result: Ok(false) -- no scan needed.
+        let result = needs_documentation_scan(&conn, project_id, "/tmp/doc-test2");
+        assert!(result.is_ok());
+        assert!(
+            !result.unwrap(),
+            "Recently scanned project with no git changes should not need scan"
+        );
+    }
+
+    #[test]
+    fn test_needs_documentation_scan_periodic_refresh_after_24h() {
+        let conn = crate::db::test_support::setup_test_connection();
+        let project_id =
+            crate::db::get_or_create_project_sync(&conn, "/tmp/doc-test3", Some("test"))
+                .expect("create project")
+                .0;
+
+        // Store a scan marker using the proper API, then backdate it
+        store_observation_sync(
+            &conn,
+            StoreObservationParams {
+                project_id: Some(project_id),
+                key: Some(DOC_SCAN_MARKER_KEY),
+                content: "fakehash",
+                observation_type: "system",
+                category: Some("documentation"),
+                confidence: 1.0,
+                source: "documentation",
+                session_id: None,
+                team_id: None,
+                scope: "project",
+                expires_at: None,
+            },
+        )
+        .expect("store observation");
+
+        // Backdate the timestamps so the scan looks old (>24 hours ago)
+        conn.execute(
+            "UPDATE system_observations SET created_at = datetime('now', '-48 hours'), \
+             updated_at = datetime('now', '-48 hours') \
+             WHERE project_id = ?1 AND key = ?2",
+            rusqlite::params![project_id, DOC_SCAN_MARKER_KEY],
+        )
+        .expect("backdate scan marker");
+
+        let result = needs_documentation_scan(&conn, project_id, "/tmp/doc-test3");
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap(),
+            "Project not scanned in >24 hours should need periodic refresh"
+        );
+    }
 }

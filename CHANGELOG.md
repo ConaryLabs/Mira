@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.6] - 2026-02-18
+
+### Added
+- **3 new agentic team recipes** -- `debug` (locate bug, trace root cause, implement fix, write regression test), `test-gen` (coverage analysis, parallel test writing, quality review), and `pr-review` (diff-scoped correctness, conventions, test coverage, docs check).
+- **274 new tests across 23 modules** -- 104 tests for `background/` (diff_analysis heuristics, documentation detection, pondering cooldown/storage, queries with data) and 170 tests for `db/` and core modules (`milestones`, `usage`, `documentation`, `diff_analysis`, `diff_outcomes`, `cartographer`, `search`, `background`, `retention`, `dependencies`, `tech_debt`, `summaries`, `embeddings`, `memory_embeddings`, `crossref`, `parsing`). Covers happy paths, error cases, boundary values, and edge cases.
+- **Windows `mira-wrapper.cmd` shim** -- Enables Mira hooks and CLI on Windows `cmd.exe` outside of Git Bash/WSL. (PR #9)
+- **Release script pre-flight checks** -- `release.sh` now runs `cargo fmt`, `cargo clippy`, `cargo test`, and verifies a `CHANGELOG.md` entry exists before bumping the version.
+
+### Fixed
+- **Indexer embedding fan-out parallelized** -- Sub-batches are now embedded in concurrent groups of 4 instead of sequentially, matching the intended throughput. Capped at 4 concurrent requests to avoid rate-limit spikes on large flushes. `MAX_BATCH_SIZE` and `MAX_CONCURRENT` promoted to `pub(crate)` as single sources of truth.
+- **Recipe quality fixes** -- `expert-review` missing `run_in_background=true` caused sequential spawning; task creation now happens before spawning agents in all recipes; `full-cycle` plan-reviewer renamed to project-health to avoid role confusion; stale expert count references corrected.
+- **Weak test assertions strengthened** -- `indexer/parsing` tests for Python, TypeScript, and Go now assert specific symbol names (not just `is_ok()`). Two `db/usage` tests for unknown `group_by` values now insert data before querying.
+
+---
+
 ## [0.8.5] - 2026-02-17
 
 ### Fixed

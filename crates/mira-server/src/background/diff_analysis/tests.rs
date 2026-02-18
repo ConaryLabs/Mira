@@ -2,6 +2,7 @@
 
 use super::format::format_change_markers;
 use super::*;
+use crate::db::DiffAnalysis;
 
 #[test]
 fn test_diff_stats_default() {
@@ -652,4 +653,341 @@ fn test_format_diff_analysis_without_historical_risk() {
 
     let output = format_diff_analysis(&result, None);
     assert!(!output.contains("Historical Risk"));
+}
+
+// =========================================================================
+// result_from_cache Tests
+// =========================================================================
+
+fn make_cached(overrides: impl FnOnce(&mut DiffAnalysis)) -> DiffAnalysis {
+    let mut cached = DiffAnalysis {
+        id: 1,
+        project_id: Some(1),
+        from_commit: "aaa".to_string(),
+        to_commit: "bbb".to_string(),
+        analysis_type: "commit".to_string(),
+        changes_json: Some("[]".to_string()),
+        impact_json: None,
+        risk_json: None,
+        summary: Some("Test summary".to_string()),
+        files_changed: Some(3),
+        lines_added: Some(10),
+        lines_removed: Some(5),
+        status: "complete".to_string(),
+        created_at: "2026-01-01".to_string(),
+        files_json: Some(r#"["src/a.rs","src/b.rs"]"#.to_string()),
+    };
+    overrides(&mut cached);
+    cached
+}
+
+#[test]
+fn test_result_from_cache_all_fields_present() {
+    let changes = vec![SemanticChange {
+        change_type: "NewFunction".to_string(),
+        file_path: "src/main.rs".to_string(),
+        symbol_name: Some("init".to_string()),
+        description: "Added init".to_string(),
+        breaking: false,
+        security_relevant: false,
+    }];
+    let impact = ImpactAnalysis {
+        affected_functions: vec![("caller".to_string(), "src/caller.rs".to_string(), 1)],
+        affected_files: vec!["src/caller.rs".to_string()],
+    };
+    let risk = RiskAssessment {
+        overall: "High".to_string(),
+        flags: vec!["breaking_change".to_string()],
+    };
+
+    let cached = make_cached(|c| {
+        c.changes_json = Some(serde_json::to_string(&changes).unwrap());
+        c.impact_json = Some(serde_json::to_string(&impact).unwrap());
+        c.risk_json = Some(serde_json::to_string(&risk).unwrap());
+    });
+
+    let result = super::result_from_cache(cached, "from".to_string(), "to".to_string());
+    assert_eq!(result.from_ref, "from");
+    assert_eq!(result.to_ref, "to");
+    assert_eq!(result.changes.len(), 1);
+    assert_eq!(result.changes[0].change_type, "NewFunction");
+    assert!(result.impact.is_some());
+    assert_eq!(result.impact.unwrap().affected_files.len(), 1);
+    assert_eq!(result.risk.overall, "High");
+    assert_eq!(result.summary, "Test summary");
+    assert_eq!(result.files_changed, 3);
+    assert_eq!(result.lines_added, 10);
+    assert_eq!(result.lines_removed, 5);
+    assert_eq!(result.files.len(), 2);
+}
+
+#[test]
+fn test_result_from_cache_all_optional_fields_none() {
+    let cached = make_cached(|c| {
+        c.changes_json = None;
+        c.impact_json = None;
+        c.risk_json = None;
+        c.summary = None;
+        c.files_changed = None;
+        c.lines_added = None;
+        c.lines_removed = None;
+        c.files_json = None;
+    });
+
+    let result = super::result_from_cache(cached, "from".to_string(), "to".to_string());
+    assert!(result.changes.is_empty());
+    assert!(result.impact.is_none());
+    assert_eq!(result.risk.overall, "Unknown");
+    assert!(result.risk.flags.is_empty());
+    assert!(result.summary.is_empty());
+    assert_eq!(result.files_changed, 0);
+    assert_eq!(result.lines_added, 0);
+    assert_eq!(result.lines_removed, 0);
+    assert!(result.files.is_empty());
+}
+
+#[test]
+fn test_result_from_cache_malformed_changes_json() {
+    let cached = make_cached(|c| {
+        c.changes_json = Some("{not valid json}".to_string());
+    });
+
+    let result = super::result_from_cache(cached, "a".to_string(), "b".to_string());
+    // Malformed JSON should fall back to empty vec via unwrap_or_default
+    assert!(result.changes.is_empty());
+}
+
+#[test]
+fn test_result_from_cache_malformed_impact_json() {
+    let cached = make_cached(|c| {
+        c.impact_json = Some("{broken}".to_string());
+    });
+
+    let result = super::result_from_cache(cached, "a".to_string(), "b".to_string());
+    // Malformed impact JSON should result in None
+    assert!(result.impact.is_none());
+}
+
+#[test]
+fn test_result_from_cache_malformed_risk_json() {
+    let cached = make_cached(|c| {
+        c.risk_json = Some("{broken}".to_string());
+    });
+
+    let result = super::result_from_cache(cached, "a".to_string(), "b".to_string());
+    // Malformed risk JSON falls back to "Unknown" with empty flags
+    assert_eq!(result.risk.overall, "Unknown");
+    assert!(result.risk.flags.is_empty());
+}
+
+#[test]
+fn test_result_from_cache_malformed_files_json() {
+    let cached = make_cached(|c| {
+        c.files_json = Some("{not an array}".to_string());
+    });
+
+    let result = super::result_from_cache(cached, "a".to_string(), "b".to_string());
+    // Malformed files_json should fall back to empty vec
+    assert!(result.files.is_empty());
+}
+
+#[test]
+fn test_result_from_cache_empty_string_jsons() {
+    let cached = make_cached(|c| {
+        c.changes_json = Some("".to_string());
+        c.impact_json = Some("".to_string());
+        c.risk_json = Some("".to_string());
+        c.files_json = Some("".to_string());
+        c.summary = Some("".to_string());
+    });
+
+    let result = super::result_from_cache(cached, "a".to_string(), "b".to_string());
+    assert!(result.changes.is_empty());
+    assert!(result.impact.is_none());
+    assert_eq!(result.risk.overall, "Unknown");
+    assert!(result.files.is_empty());
+    assert!(result.summary.is_empty());
+}
+
+// =========================================================================
+// compute_historical_risk Edge Cases
+// =========================================================================
+
+#[test]
+fn test_historical_risk_empty_files_list() {
+    let conn = setup_patterns_db();
+    let data = serde_json::json!({
+        "type": "change_pattern",
+        "files": [],
+        "module": "src",
+        "pattern_subtype": "module_hotspot",
+        "outcome_stats": { "total": 10, "clean": 5, "reverted": 3, "follow_up_fix": 2 },
+        "sample_commits": []
+    });
+    seed_pattern(&conn, 1, "module_hotspot:src", &data.to_string(), 0.7, 10);
+
+    // Empty files list -> no modules to match
+    let result = compute_historical_risk(&conn, 1, &[], 0);
+    assert!(result.is_none(), "Empty files should produce no matches");
+}
+
+#[test]
+fn test_historical_risk_co_change_gap_single_file_pattern() {
+    let conn = setup_patterns_db();
+    // Pattern with only 1 file -- the guard pattern_files.len() >= 2 should skip it
+    let data = serde_json::json!({
+        "type": "change_pattern",
+        "files": ["src/schema.rs"],
+        "module": null,
+        "pattern_subtype": "co_change_gap",
+        "outcome_stats": { "total": 5, "clean": 1, "reverted": 2, "follow_up_fix": 2 },
+        "sample_commits": []
+    });
+    seed_pattern(
+        &conn,
+        1,
+        "co_change_gap:src/schema.rs",
+        &data.to_string(),
+        0.65,
+        5,
+    );
+
+    let result = compute_historical_risk(&conn, 1, &["src/schema.rs".into()], 1);
+    assert!(
+        result.is_none(),
+        "co_change_gap with only 1 file in pattern should not match"
+    );
+}
+
+#[test]
+fn test_historical_risk_co_change_gap_empty_pattern_files() {
+    let conn = setup_patterns_db();
+    // Pattern with empty files list
+    let data = serde_json::json!({
+        "type": "change_pattern",
+        "files": [],
+        "module": null,
+        "pattern_subtype": "co_change_gap",
+        "outcome_stats": { "total": 5, "clean": 1, "reverted": 2, "follow_up_fix": 2 },
+        "sample_commits": []
+    });
+    seed_pattern(&conn, 1, "co_change_gap:empty", &data.to_string(), 0.65, 5);
+
+    let result = compute_historical_risk(&conn, 1, &["src/anything.rs".into()], 1);
+    assert!(
+        result.is_none(),
+        "co_change_gap with empty pattern files should not match"
+    );
+}
+
+#[test]
+fn test_historical_risk_files_without_slash() {
+    let conn = setup_patterns_db();
+    // Module hotspot for a root-level file (no '/' separator)
+    let data = serde_json::json!({
+        "type": "change_pattern",
+        "files": [],
+        "module": "Cargo.toml",
+        "pattern_subtype": "module_hotspot",
+        "outcome_stats": { "total": 10, "clean": 3, "reverted": 5, "follow_up_fix": 2 },
+        "sample_commits": []
+    });
+    seed_pattern(
+        &conn,
+        1,
+        "module_hotspot:Cargo.toml",
+        &data.to_string(),
+        0.7,
+        10,
+    );
+
+    // File without '/' -> module is the full filename
+    let result = compute_historical_risk(&conn, 1, &["Cargo.toml".into()], 1);
+    assert!(result.is_some());
+    let hr = result.unwrap();
+    assert_eq!(hr.matching_patterns.len(), 1);
+    assert_eq!(hr.matching_patterns[0].pattern_subtype, "module_hotspot");
+}
+
+#[test]
+fn test_historical_risk_size_buckets_boundary() {
+    let conn = setup_patterns_db();
+
+    // Small bucket pattern
+    let small_data = serde_json::json!({
+        "type": "change_pattern",
+        "files": [],
+        "module": null,
+        "pattern_subtype": "size_risk",
+        "outcome_stats": { "total": 5, "clean": 1, "reverted": 2, "follow_up_fix": 2 },
+        "sample_commits": []
+    });
+    seed_pattern(&conn, 1, "size_risk:small", &small_data.to_string(), 0.6, 5);
+
+    // 3 files -> "small" bucket (boundary: <= 3)
+    let result =
+        compute_historical_risk(&conn, 1, &["a.rs".into(), "b.rs".into(), "c.rs".into()], 3);
+    assert!(result.is_some());
+    assert_eq!(
+        result.unwrap().matching_patterns[0].pattern_subtype,
+        "size_risk"
+    );
+
+    // 4 files -> "medium" bucket (boundary: > 3), should NOT match "small"
+    let result = compute_historical_risk(
+        &conn,
+        1,
+        &["a.rs".into(), "b.rs".into(), "c.rs".into(), "d.rs".into()],
+        4,
+    );
+    assert!(result.is_none(), "4 files is medium bucket, not small");
+}
+
+#[test]
+fn test_historical_risk_outcome_stats_zero_total() {
+    let conn = setup_patterns_db();
+    // Pattern with total=0 -- bad_rate should be 0.0, not NaN/panic
+    let data = serde_json::json!({
+        "type": "change_pattern",
+        "files": [],
+        "module": "src",
+        "pattern_subtype": "module_hotspot",
+        "outcome_stats": { "total": 0, "clean": 0, "reverted": 0, "follow_up_fix": 0 },
+        "sample_commits": []
+    });
+    seed_pattern(&conn, 1, "module_hotspot:src", &data.to_string(), 0.7, 1);
+
+    let result = compute_historical_risk(&conn, 1, &["src/main.rs".into()], 1);
+    assert!(result.is_some());
+    let hr = result.unwrap();
+    assert_eq!(hr.matching_patterns.len(), 1);
+    assert!((hr.matching_patterns[0].bad_rate - 0.0).abs() < 0.01);
+}
+
+#[test]
+fn test_historical_risk_unknown_pattern_subtype() {
+    let conn = setup_patterns_db();
+    // Pattern with an unknown subtype -- should be skipped
+    let data = serde_json::json!({
+        "type": "change_pattern",
+        "files": [],
+        "module": "src",
+        "pattern_subtype": "unknown_future_type",
+        "outcome_stats": { "total": 10, "clean": 5, "reverted": 3, "follow_up_fix": 2 },
+        "sample_commits": []
+    });
+    seed_pattern(
+        &conn,
+        1,
+        "unknown_future_type:src",
+        &data.to_string(),
+        0.7,
+        10,
+    );
+
+    let result = compute_historical_risk(&conn, 1, &["src/main.rs".into()], 1);
+    assert!(
+        result.is_none(),
+        "Unknown pattern subtype should be skipped by match"
+    );
 }

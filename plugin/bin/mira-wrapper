@@ -6,7 +6,7 @@
 set -eu
 umask 077
 
-MIRA_VERSION="0.8.5"
+MIRA_VERSION="0.8.6"
 # Allow version pinning via environment variable
 if [ -n "${MIRA_VERSION_PIN:-}" ]; then
     MIRA_VERSION="$MIRA_VERSION_PIN"

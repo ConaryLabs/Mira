@@ -330,4 +330,241 @@ mod tests {
             "nothing should be cleaned when all rows have valid parents"
         );
     }
+
+    // ========================================================================
+    // cleanup_orphans: actual orphan deletion
+    // ========================================================================
+
+    #[test]
+    fn test_cleanup_orphans_deletes_actual_orphans() {
+        let conn = setup_orphan_test_db();
+
+        // Insert rows WITHOUT a parent session
+        conn.execute(
+            "INSERT INTO session_snapshots (session_id) VALUES ('orphan_session')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tool_history (session_id, created_at) VALUES ('orphan_session', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        // vec_memory with no matching memory_facts
+        conn.execute("INSERT INTO vec_memory (fact_id) VALUES (99999)", [])
+            .unwrap();
+        // memory_entity with no links
+        conn.execute("INSERT INTO memory_entities (id) VALUES (1)", [])
+            .unwrap();
+
+        let cleaned = cleanup_orphans(&conn).unwrap();
+        assert!(
+            cleaned >= 4,
+            "should delete at least 4 orphaned rows, got {}",
+            cleaned
+        );
+
+        // Verify tables are empty
+        let snap_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_snapshots", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(snap_count, 0, "orphaned snapshot should be deleted");
+
+        let tool_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tool_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tool_count, 0, "orphaned tool_history should be deleted");
+
+        let vec_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_memory", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(vec_count, 0, "orphaned vec_memory should be deleted");
+    }
+
+    #[test]
+    fn test_cleanup_orphans_empty_tables() {
+        let conn = setup_orphan_test_db();
+
+        // All tables are empty
+        let cleaned = cleanup_orphans(&conn).unwrap();
+        assert_eq!(cleaned, 0, "empty tables should produce 0 cleaned rows");
+    }
+
+    // ========================================================================
+    // run_data_retention_sync tests
+    // ========================================================================
+
+    /// Set up a DB with the tables retention rules reference.
+    /// Uses full migrations via setup_test_connection for realistic schema.
+    fn setup_retention_test_db() -> Connection {
+        use crate::db::test_support::setup_test_connection;
+        setup_test_connection()
+    }
+
+    #[test]
+    fn test_run_data_retention_empty_tables() {
+        let conn = setup_retention_test_db();
+        let config = RetentionConfig::default();
+
+        let deleted = run_data_retention_sync(&conn, &config)
+            .expect("retention should succeed on empty tables");
+        assert_eq!(deleted, 0, "nothing to delete in empty tables");
+    }
+
+    #[test]
+    fn test_run_data_retention_with_old_data() {
+        let conn = setup_retention_test_db();
+        let config = RetentionConfig {
+            enabled: true,
+            tool_history_days: 1, // very aggressive: delete after 1 day
+            ..RetentionConfig::default()
+        };
+
+        // Create a project first
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+
+        // Insert a session that looks old and completed
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, status, last_activity, started_at)
+             VALUES ('old-session', ?1, 'completed', datetime('now', '-60 days'), datetime('now', '-60 days'))",
+            rusqlite::params![project_id],
+        )
+        .unwrap();
+
+        // Insert old tool_history
+        conn.execute(
+            "INSERT INTO tool_history (session_id, tool_name, created_at)
+             VALUES ('old-session', 'test_tool', datetime('now', '-30 days'))",
+            [],
+        )
+        .unwrap();
+
+        let deleted = run_data_retention_sync(&conn, &config).expect("retention should succeed");
+        assert!(
+            deleted >= 1,
+            "should delete at least 1 old row, got {}",
+            deleted
+        );
+    }
+
+    #[test]
+    fn test_run_data_retention_preserves_recent_data() {
+        let conn = setup_retention_test_db();
+        let config = RetentionConfig {
+            enabled: true,
+            tool_history_days: 30,
+            sessions_days: 90,
+            ..RetentionConfig::default()
+        };
+
+        // Insert recent tool_history with a valid session
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, status, last_activity, started_at)
+             VALUES ('recent-session', ?1, 'active', datetime('now'), datetime('now'))",
+            rusqlite::params![project_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tool_history (session_id, tool_name, created_at)
+             VALUES ('recent-session', 'test_tool', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        let deleted = run_data_retention_sync(&conn, &config).expect("retention should succeed");
+        assert_eq!(deleted, 0, "recent data should not be deleted");
+
+        // Verify tool_history still has the row
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tool_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "recent tool_history row should still exist");
+    }
+
+    // ========================================================================
+    // count_retention_candidates tests
+    // ========================================================================
+
+    #[test]
+    fn test_count_retention_candidates_empty() {
+        let conn = setup_retention_test_db();
+        let config = RetentionConfig::default();
+
+        let candidates = count_retention_candidates(&conn, &config);
+        assert!(candidates.is_empty(), "empty DB should have no candidates");
+    }
+
+    #[test]
+    fn test_count_retention_candidates_with_old_data() {
+        let conn = setup_retention_test_db();
+        let config = RetentionConfig {
+            enabled: true,
+            tool_history_days: 1,
+            ..RetentionConfig::default()
+        };
+
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, status, last_activity, started_at)
+             VALUES ('old-session', ?1, 'completed', datetime('now', '-60 days'), datetime('now', '-60 days'))",
+            rusqlite::params![project_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tool_history (session_id, tool_name, created_at)
+             VALUES ('old-session', 'test_tool', datetime('now', '-30 days'))",
+            [],
+        )
+        .unwrap();
+
+        let candidates = count_retention_candidates(&conn, &config);
+        assert!(
+            !candidates.is_empty(),
+            "should find at least one table with candidates"
+        );
+        // Check tool_history is among the results
+        let tool_hist = candidates.iter().find(|(table, _)| table == "tool_history");
+        assert!(
+            tool_hist.is_some(),
+            "tool_history should be a retention candidate"
+        );
+    }
+
+    // ========================================================================
+    // Retention with different config values
+    // ========================================================================
+
+    #[test]
+    fn test_retention_with_very_large_days() {
+        let conn = setup_retention_test_db();
+        let config = RetentionConfig {
+            enabled: true,
+            tool_history_days: 999999,
+            sessions_days: 999999,
+            analytics_days: 999999,
+            behavior_days: 999999,
+            observations_days: 999999,
+            ..RetentionConfig::default()
+        };
+
+        // Even with old data, massive day threshold should delete nothing
+        let (project_id, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, status, last_activity, started_at)
+             VALUES ('old-session', ?1, 'completed', datetime('now', '-365 days'), datetime('now', '-365 days'))",
+            rusqlite::params![project_id],
+        )
+        .unwrap();
+
+        let deleted = run_data_retention_sync(&conn, &config).expect("retention should succeed");
+        assert_eq!(
+            deleted, 0,
+            "very large days threshold should delete nothing"
+        );
+    }
 }

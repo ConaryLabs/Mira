@@ -98,3 +98,155 @@ pub fn get_debt_summary_sync(
 
     Ok(summary)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::setup_test_connection;
+
+    fn setup_debt_db() -> (Connection, i64) {
+        let conn = setup_test_connection();
+        let (pid, _) =
+            crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
+        (conn, pid)
+    }
+
+    fn make_score(module_id: &str, score: f64, tier: &str) -> TechDebtScore {
+        TechDebtScore {
+            module_id: module_id.to_string(),
+            module_path: format!("src/{}.rs", module_id),
+            overall_score: score,
+            tier: tier.to_string(),
+            factor_scores: "{}".to_string(),
+            line_count: Some(100),
+            finding_count: Some(5),
+        }
+    }
+
+    // ========================================================================
+    // Various score ranges: 0.0, 1.0, large float
+    // ========================================================================
+
+    #[test]
+    fn test_store_debt_score_zero() {
+        let (conn, pid) = setup_debt_db();
+
+        let score = make_score("clean_module", 0.0, "A");
+        store_debt_score_sync(&conn, pid, &score).expect("store score=0.0 should succeed");
+
+        let scores = get_debt_scores_sync(&conn, pid).unwrap();
+        assert_eq!(scores.len(), 1);
+        assert!((scores[0].overall_score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_store_debt_score_one() {
+        let (conn, pid) = setup_debt_db();
+
+        let score = make_score("max_debt", 1.0, "F");
+        store_debt_score_sync(&conn, pid, &score).expect("store score=1.0 should succeed");
+
+        let scores = get_debt_scores_sync(&conn, pid).unwrap();
+        assert_eq!(scores.len(), 1);
+        assert!((scores[0].overall_score - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_store_debt_score_large_float() {
+        let (conn, pid) = setup_debt_db();
+
+        let score = make_score("huge_debt", f64::MAX / 2.0, "F");
+        store_debt_score_sync(&conn, pid, &score).expect("store very large score should succeed");
+
+        let scores = get_debt_scores_sync(&conn, pid).unwrap();
+        assert_eq!(scores.len(), 1);
+        assert!(scores[0].overall_score > 1.0);
+    }
+
+    // ========================================================================
+    // Querying with no data
+    // ========================================================================
+
+    #[test]
+    fn test_get_debt_scores_empty() {
+        let (conn, pid) = setup_debt_db();
+
+        let scores =
+            get_debt_scores_sync(&conn, pid).expect("get scores on empty table should succeed");
+        assert!(scores.is_empty());
+    }
+
+    #[test]
+    fn test_get_debt_summary_empty() {
+        let (conn, pid) = setup_debt_db();
+
+        let summary =
+            get_debt_summary_sync(&conn, pid).expect("get summary on empty table should succeed");
+        assert!(summary.is_empty());
+    }
+
+    // ========================================================================
+    // UPSERT behavior (store_debt_score_sync)
+    // ========================================================================
+
+    #[test]
+    fn test_store_debt_score_upsert() {
+        let (conn, pid) = setup_debt_db();
+
+        let score1 = make_score("mod_a", 0.5, "C");
+        store_debt_score_sync(&conn, pid, &score1).unwrap();
+
+        // Upsert with same module_id but different score
+        let score2 = make_score("mod_a", 0.9, "F");
+        store_debt_score_sync(&conn, pid, &score2).unwrap();
+
+        let scores = get_debt_scores_sync(&conn, pid).unwrap();
+        assert_eq!(scores.len(), 1, "upsert should not create duplicate");
+        assert!((scores[0].overall_score - 0.9).abs() < f64::EPSILON);
+        assert_eq!(scores[0].tier, "F");
+    }
+
+    // ========================================================================
+    // Scores sorted worst-first
+    // ========================================================================
+
+    #[test]
+    fn test_get_debt_scores_sorted_descending() {
+        let (conn, pid) = setup_debt_db();
+
+        store_debt_score_sync(&conn, pid, &make_score("low", 0.1, "A")).unwrap();
+        store_debt_score_sync(&conn, pid, &make_score("high", 0.9, "F")).unwrap();
+        store_debt_score_sync(&conn, pid, &make_score("mid", 0.5, "C")).unwrap();
+
+        let scores = get_debt_scores_sync(&conn, pid).unwrap();
+        assert_eq!(scores.len(), 3);
+        assert_eq!(scores[0].module_id, "high");
+        assert_eq!(scores[1].module_id, "mid");
+        assert_eq!(scores[2].module_id, "low");
+    }
+
+    // ========================================================================
+    // Nil values for optional fields
+    // ========================================================================
+
+    #[test]
+    fn test_store_debt_score_with_none_optional_fields() {
+        let (conn, pid) = setup_debt_db();
+
+        let score = TechDebtScore {
+            module_id: "sparse".to_string(),
+            module_path: "src/sparse.rs".to_string(),
+            overall_score: 0.3,
+            tier: "B".to_string(),
+            factor_scores: "{}".to_string(),
+            line_count: None,
+            finding_count: None,
+        };
+        store_debt_score_sync(&conn, pid, &score).expect("store with None fields should succeed");
+
+        let scores = get_debt_scores_sync(&conn, pid).unwrap();
+        assert_eq!(scores.len(), 1);
+        assert!(scores[0].line_count.is_none());
+        assert!(scores[0].finding_count.is_none());
+    }
+}
