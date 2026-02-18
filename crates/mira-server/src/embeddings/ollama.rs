@@ -14,8 +14,17 @@ const DEFAULT_MODEL: &str = "nomic-embed-text";
 /// Default dimensions for nomic-embed-text
 const DEFAULT_DIMENSIONS: usize = 768;
 
-/// Max characters to embed (conservative limit for local models)
-const MAX_TEXT_CHARS: usize = 8192 * 4;
+/// Max characters to embed per text before truncation.
+///
+/// nomic-embed-text (and most local embedding models) have an 8192-token context window.
+/// Dense code — especially C# with long PascalCase identifiers — tokenizes at roughly
+/// 2 chars/token via BPE, so 8192 tokens ≈ 16384 chars. Using 8192 * 4 (32768 chars)
+/// as the limit still results in 400 errors on dense code chunks.
+///
+/// 12000 chars (~6000 tokens at worst-case code density) provides a comfortable safety
+/// margin below the 8192-token limit. Full chunk content is always stored in the database
+/// — truncation only affects the text sent to the embedding API.
+const MAX_TEXT_CHARS: usize = 12_000;
 
 /// Max texts per batch request
 const MAX_BATCH_SIZE: usize = 64;
