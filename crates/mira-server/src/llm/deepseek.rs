@@ -178,9 +178,72 @@ impl LlmClient for DeepSeekClient {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // Client construction
+    // ========================================================================
+
+    #[test]
+    fn test_new_uses_reasoner_model() {
+        let client = DeepSeekClient::new("test-key".into());
+        assert_eq!(client.model, "deepseek-reasoner");
+    }
+
+    #[test]
+    fn test_with_model_custom() {
+        let client = DeepSeekClient::with_model("key".into(), "deepseek-chat".into());
+        assert_eq!(client.model, "deepseek-chat");
+    }
+
+    #[test]
+    fn test_provider_type() {
+        let client = DeepSeekClient::new("key".into());
+        assert_eq!(client.provider_type(), Provider::DeepSeek);
+    }
+
+    #[test]
+    fn test_model_name() {
+        let client = DeepSeekClient::with_model("key".into(), "deepseek-chat".into());
+        assert_eq!(client.model_name(), "deepseek-chat");
+    }
+
+    #[test]
+    fn test_context_budget() {
+        let client = DeepSeekClient::new("key".into());
+        assert_eq!(client.context_budget(), 110_000);
+        assert!(client.supports_context_budget());
+    }
+
+    // ========================================================================
+    // max_tokens_for_model
+    // ========================================================================
+
+    #[test]
+    fn test_max_tokens_reasoner() {
+        assert_eq!(DeepSeekClient::max_tokens_for_model("deepseek-reasoner"), 65536);
+    }
+
+    #[test]
+    fn test_max_tokens_chat() {
+        assert_eq!(DeepSeekClient::max_tokens_for_model("deepseek-chat"), 8192);
+    }
+
+    #[test]
+    fn test_max_tokens_unknown_model_defaults_to_chat() {
+        assert_eq!(DeepSeekClient::max_tokens_for_model("gpt-4"), 8192);
+    }
+
+    #[test]
+    fn test_max_tokens_reasoner_substring() {
+        // Any model containing "reasoner" gets the high limit
+        assert_eq!(DeepSeekClient::max_tokens_for_model("my-reasoner-v2"), 65536);
+    }
+
+    // ========================================================================
+    // calculate_cache_hit_ratio
+    // ========================================================================
+
     #[test]
     fn test_calculate_cache_hit_ratio() {
-        // Test cases
         assert_eq!(
             DeepSeekClient::calculate_cache_hit_ratio(Some(100), Some(100)),
             Some(0.5)

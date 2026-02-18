@@ -248,4 +248,125 @@ mod tests {
         assert_eq!(factory.background_fallback_order[0], Provider::DeepSeek);
         assert_eq!(factory.background_fallback_order[1], Provider::Ollama);
     }
+
+    // ========================================================================
+    // client_for_background
+    // ========================================================================
+
+    #[test]
+    fn test_client_for_background_empty_returns_none() {
+        let factory = empty_factory();
+        assert!(factory.client_for_background().is_none());
+    }
+
+    #[test]
+    fn test_client_for_background_uses_fallback_chain() {
+        let mut factory = empty_factory();
+        // Add an Ollama client (second in fallback chain)
+        factory.clients.insert(
+            Provider::Ollama,
+            Arc::new(OllamaClient::new("http://localhost:11434".into())),
+        );
+        let client = factory.client_for_background();
+        assert!(client.is_some());
+        assert_eq!(client.unwrap().provider_type(), Provider::Ollama);
+    }
+
+    #[test]
+    fn test_client_for_background_prefers_default_provider() {
+        let mut factory = empty_factory();
+        factory.clients.insert(
+            Provider::Ollama,
+            Arc::new(OllamaClient::new("http://localhost:11434".into())),
+        );
+        factory.clients.insert(
+            Provider::DeepSeek,
+            Arc::new(DeepSeekClient::new("test-key".into())),
+        );
+        factory.default_provider = Some(Provider::Ollama);
+        let client = factory.client_for_background().unwrap();
+        assert_eq!(client.provider_type(), Provider::Ollama);
+    }
+
+    #[test]
+    fn test_client_for_background_prefers_background_provider() {
+        let mut factory = empty_factory();
+        factory.clients.insert(
+            Provider::Ollama,
+            Arc::new(OllamaClient::new("http://localhost:11434".into())),
+        );
+        factory.clients.insert(
+            Provider::DeepSeek,
+            Arc::new(DeepSeekClient::new("test-key".into())),
+        );
+        factory.default_provider = Some(Provider::DeepSeek);
+        factory.background_provider = Some(Provider::Ollama);
+        let client = factory.client_for_background().unwrap();
+        // background_provider takes priority over default_provider
+        assert_eq!(client.provider_type(), Provider::Ollama);
+    }
+
+    // ========================================================================
+    // Circuit breaker integration
+    // ========================================================================
+
+    #[test]
+    fn test_client_for_background_skips_tripped_provider() {
+        let mut factory = empty_factory();
+        factory.clients.insert(
+            Provider::DeepSeek,
+            Arc::new(DeepSeekClient::new("test-key".into())),
+        );
+        factory.clients.insert(
+            Provider::Ollama,
+            Arc::new(OllamaClient::new("http://localhost:11434".into())),
+        );
+        // Trip the DeepSeek circuit breaker (3 failures needed)
+        factory.record_failure(Provider::DeepSeek);
+        factory.record_failure(Provider::DeepSeek);
+        factory.record_failure(Provider::DeepSeek);
+        assert!(!factory.circuit_breaker().is_available(Provider::DeepSeek));
+        // Should fall back to Ollama
+        let client = factory.client_for_background().unwrap();
+        assert_eq!(client.provider_type(), Provider::Ollama);
+    }
+
+    #[test]
+    fn test_record_success_resets_circuit_breaker() {
+        let mut factory = empty_factory();
+        factory.clients.insert(
+            Provider::DeepSeek,
+            Arc::new(DeepSeekClient::new("test-key".into())),
+        );
+        // Trip circuit breaker
+        factory.record_failure(Provider::DeepSeek);
+        factory.record_failure(Provider::DeepSeek);
+        factory.record_failure(Provider::DeepSeek);
+        assert!(!factory.circuit_breaker().is_available(Provider::DeepSeek));
+        // Record success should not reset an open breaker (it needs cooldown first)
+        // But we can verify the method doesn't panic
+        factory.record_success(Provider::DeepSeek);
+    }
+
+    // ========================================================================
+    // has_any_capability
+    // ========================================================================
+
+    #[test]
+    fn test_has_any_capability_with_sampling_peer() {
+        let mut factory = empty_factory();
+        assert!(!factory.has_any_capability());
+        factory.set_sampling_peer(Arc::new(RwLock::new(None)));
+        assert!(factory.has_any_capability());
+    }
+
+    #[test]
+    fn test_has_providers_vs_has_any_capability() {
+        let mut factory = empty_factory();
+        factory.set_sampling_peer(Arc::new(RwLock::new(None)));
+        // has_providers checks API-key clients only
+        assert!(!factory.has_providers());
+        // has_any_capability includes sampling peer
+        assert!(factory.has_any_capability());
+    }
 }

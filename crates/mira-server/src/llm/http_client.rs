@@ -148,34 +148,84 @@ impl LlmHttpClient {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // Construction
+    // ========================================================================
+
     #[test]
     fn test_client_creation() {
         let client = LlmHttpClient::new(Duration::from_secs(10), Duration::from_secs(5));
-
         assert_eq!(client.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(
-            client.base_backoff,
-            Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS)
-        );
+        assert_eq!(client.base_backoff, Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS));
+        assert_eq!(client.request_timeout, Duration::from_secs(10));
+        assert_eq!(client.connect_timeout, Duration::from_secs(5));
     }
 
     #[test]
     fn test_from_client() {
         let reqwest_client = Client::new();
         let client = LlmHttpClient::from_client(reqwest_client);
-
         assert_eq!(client.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(
-            client.base_backoff,
-            Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS)
-        );
+        assert_eq!(client.base_backoff, Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS));
+        assert_eq!(client.request_timeout, Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS));
+        assert_eq!(client.connect_timeout, Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS));
     }
 
     #[test]
     fn test_inner_returns_client() {
         let client = LlmHttpClient::new(Duration::from_secs(10), Duration::from_secs(5));
-
-        // Just verify we can get the inner client
         let _inner = client.inner();
+    }
+
+    #[test]
+    fn test_default_constants() {
+        assert_eq!(DEFAULT_MAX_ATTEMPTS, 3);
+        assert_eq!(DEFAULT_BASE_BACKOFF_SECS, 1);
+        assert_eq!(DEFAULT_REQUEST_TIMEOUT_SECS, 300);
+        assert_eq!(DEFAULT_CONNECT_TIMEOUT_SECS, 30);
+    }
+
+    // ========================================================================
+    // Retry behavior (requires tokio + actual HTTP)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_execute_with_retry_connection_refused() {
+        let client = LlmHttpClient {
+            client: Client::new(),
+            request_timeout: Duration::from_millis(500),
+            connect_timeout: Duration::from_millis(200),
+            max_attempts: 1, // Only 1 retry to keep test fast
+            base_backoff: Duration::from_millis(10),
+        };
+        let result = client
+            .execute_with_retry("test", "http://127.0.0.1:1", "key", "{}".into())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed") || err.contains("error") || err.contains("connect"),
+            "Expected connection error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_request_with_retry_custom_builder() {
+        let client = LlmHttpClient {
+            client: Client::new(),
+            request_timeout: Duration::from_millis(500),
+            connect_timeout: Duration::from_millis(200),
+            max_attempts: 0, // No retries
+            base_backoff: Duration::from_millis(10),
+        };
+        let result = client
+            .execute_request_with_retry("test", "{}".into(), |c, body| {
+                c.post("http://127.0.0.1:1")
+                    .header("Content-Type", "application/json")
+                    .body(body)
+            })
+            .await;
+        assert!(result.is_err());
     }
 }

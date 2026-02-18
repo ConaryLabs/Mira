@@ -163,4 +163,90 @@ mod tests {
         let result = parse_chat_response("not json", "test".into(), 0);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_parse_empty_choices() {
+        let json = r#"{"choices": [], "usage": null}"#;
+        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        assert!(result.content.is_none());
+        assert!(result.reasoning_content.is_none());
+        assert!(result.tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_parse_usage_fields() {
+        let json = r#"{
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+                "prompt_cache_hit_tokens": 80,
+                "prompt_cache_miss_tokens": 20
+            }
+        }"#;
+        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 50);
+        assert_eq!(usage.total_tokens, 150);
+        assert_eq!(usage.prompt_cache_hit_tokens, Some(80));
+        assert_eq!(usage.prompt_cache_miss_tokens, Some(20));
+    }
+
+    #[test]
+    fn test_parse_multiple_tool_calls() {
+        let json = r#"{
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "tool_calls": [
+                        {"id": "call_1", "type": "function", "function": {"name": "search", "arguments": "{}"}},
+                        {"id": "call_2", "type": "function", "function": {"name": "recall", "arguments": "{\"q\":\"x\"}"}}
+                    ]
+                }
+            }],
+            "usage": null
+        }"#;
+        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        let calls = result.tool_calls.unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].function.name, "search");
+        assert_eq!(calls[1].id, "call_2");
+        assert_eq!(calls[1].function.name, "recall");
+    }
+
+    #[test]
+    fn test_parse_preserves_request_id_and_duration() {
+        let json = r#"{"choices": [{"message": {"content": "hi"}}], "usage": null}"#;
+        let result = parse_chat_response(json, "req-abc-123".into(), 42).unwrap();
+        assert_eq!(result.request_id, "req-abc-123");
+        assert_eq!(result.duration_ms, 42);
+    }
+
+    #[test]
+    fn test_parse_tool_call_fields_mapped_correctly() {
+        let json = r#"{
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "id": "tc_1",
+                        "type": "function",
+                        "function": {"name": "memory", "arguments": "{\"action\":\"recall\"}"}
+                    }]
+                }
+            }],
+            "usage": null
+        }"#;
+        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        let call = &result.tool_calls.unwrap()[0];
+        assert_eq!(call.id, "tc_1");
+        assert_eq!(call.call_type, "function");
+        assert_eq!(call.function.name, "memory");
+        assert_eq!(call.function.arguments, r#"{"action":"recall"}"#);
+        // item_id and thought_signature should be None (not in response format)
+        assert!(call.item_id.is_none());
+        assert!(call.thought_signature.is_none());
+    }
 }

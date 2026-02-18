@@ -165,6 +165,10 @@ pub async fn chat_with_usage(
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // get_pricing
+    // ========================================================================
+
     #[test]
     fn test_deepseek_pricing() {
         let pricing = get_pricing(Provider::DeepSeek, "deepseek-reasoner").unwrap();
@@ -180,11 +184,41 @@ mod tests {
     }
 
     #[test]
+    fn test_deepseek_chat_same_pricing() {
+        let pricing = get_pricing(Provider::DeepSeek, "deepseek-chat").unwrap();
+        assert_eq!(pricing.input_per_million, 0.28);
+        assert_eq!(pricing.output_per_million, 0.42);
+    }
+
+    #[test]
+    fn test_unknown_deepseek_model_gets_default_pricing() {
+        let pricing = get_pricing(Provider::DeepSeek, "deepseek-future-model");
+        assert!(pricing.is_some(), "models starting with 'deepseek' should get default pricing");
+    }
+
+    #[test]
+    fn test_non_deepseek_model_returns_none() {
+        let pricing = get_pricing(Provider::DeepSeek, "gpt-4");
+        assert!(pricing.is_none());
+    }
+
+    #[test]
     fn test_ollama_free() {
         let pricing = get_pricing(Provider::Ollama, "llama3.3").unwrap();
         let cost = pricing.calculate_cost(1_000_000, 1_000_000, None);
         assert_eq!(cost, 0.0);
     }
+
+    #[test]
+    fn test_sampling_free() {
+        let pricing = get_pricing(Provider::Sampling, "mcp-sampling").unwrap();
+        let cost = pricing.calculate_cost(1_000_000, 1_000_000, None);
+        assert_eq!(cost, 0.0);
+    }
+
+    // ========================================================================
+    // calculate_cost edge cases
+    // ========================================================================
 
     #[test]
     fn test_small_usage() {
@@ -194,5 +228,30 @@ mod tests {
         let cost = pricing.calculate_cost(1000, 500, None);
         // $0.28/1M * 1000 + $0.42/1M * 500 = $0.00028 + $0.00021 = $0.00049
         assert!((cost - 0.00049).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_zero_tokens() {
+        let pricing = get_pricing(Provider::DeepSeek, "deepseek-reasoner").unwrap();
+        let cost = pricing.calculate_cost(0, 0, None);
+        assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn test_full_cache_hit() {
+        let pricing = get_pricing(Provider::DeepSeek, "deepseek-reasoner").unwrap();
+        // All 1M input tokens cached, 0 output
+        let cost = pricing.calculate_cost(1_000_000, 0, Some(1_000_000));
+        // All at cached rate: $0.028/1M * 1M = $0.028, cache_miss = 0
+        assert!((cost - 0.028).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_no_cache_on_provider_without_cache_support() {
+        let pricing = ModelPricing::new(1.0, 2.0);
+        // cache_hit_tokens is ignored when cached_input_per_million is None
+        let cost = pricing.calculate_cost(1_000_000, 1_000_000, Some(500_000));
+        // Should use standard rate for ALL input: $1 + $2 = $3
+        assert!((cost - 3.0).abs() < 0.01);
     }
 }
