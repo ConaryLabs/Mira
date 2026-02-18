@@ -6,7 +6,7 @@
 // - background/watcher.rs (file deletion)
 // - tools/core/code.rs (counts, module cleanup)
 
-use crate::db::schema::code::{vec_code_create_sql, VEC_CODE_CREATE_SQL};
+use crate::db::schema::code::vec_code_create_sql;
 use rusqlite::{Connection, params};
 
 /// Read the current embedding dimension of vec_code from its DDL in sqlite_master.
