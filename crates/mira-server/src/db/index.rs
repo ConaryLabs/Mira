@@ -6,7 +6,8 @@
 // - background/watcher.rs (file deletion)
 // - tools/core/code.rs (counts, module cleanup)
 
-use crate::db::schema::code::VEC_CODE_CREATE_SQL;
+use crate::db::schema::code::vec_code_create_sql;
+use crate::db::schema::vectors::current_vec_code_dims;
 use rusqlite::{Connection, params};
 
 /// (embedding, file_path, chunk_content, project_id, start_line)
@@ -17,7 +18,16 @@ type EmbeddingRow = (Vec<u8>, String, String, Option<i64>, i64);
 /// This is used when re-indexing a project from scratch.
 /// Order matters: call_graph references code_symbols, so delete it first.
 /// Wrapped in a transaction for atomicity and reduced fsyncs.
-pub fn clear_project_index_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
+///
+/// `embedding_dims` is used to recreate vec_code with the correct dimension when
+/// it is the only project (i.e. a full DROP+recreate path is taken). Pass the
+/// dimension from the active EmbeddingClient. Defaults to 1536 if no embeddings
+/// are configured (keyword-only search mode).
+pub fn clear_project_index_sync(
+    conn: &Connection,
+    project_id: i64,
+    embedding_dims: usize,
+) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
 
     // Delete call_graph first (references code_symbols via caller_id)
@@ -66,7 +76,7 @@ pub fn clear_project_index_sync(conn: &Connection, project_id: i64) -> rusqlite:
 
     if other_project_vectors == 0 {
         tx.execute("DROP TABLE IF EXISTS vec_code", [])?;
-        tx.execute(VEC_CODE_CREATE_SQL, [])?;
+        tx.execute_batch(&vec_code_create_sql(embedding_dims))?;
     } else {
         tx.execute(
             "DELETE FROM vec_code WHERE project_id = ?",
@@ -218,10 +228,14 @@ pub fn compact_vec_code_sync(conn: &Connection) -> rusqlite::Result<CompactStats
         .query_row("SELECT COUNT(*) FROM vec_code", [], |r| r.get(0))
         .unwrap_or(0);
 
+    // Read the current dimension before any DROP so we can recreate with the same dim.
+    // Compaction preserves the schema; dimension changes are handled by ensure_code_vec_table_dimensions.
+    let existing_dims = current_vec_code_dims(conn).unwrap_or(1536);
+
     if row_count == 0 {
-        // Nothing to preserve — just recreate
+        // Nothing to preserve — just recreate with same dims
         conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
-        conn.execute(VEC_CODE_CREATE_SQL, [])?;
+        conn.execute_batch(&vec_code_create_sql(existing_dims))?;
         return Ok(CompactStats {
             rows_preserved: 0,
             estimated_savings_mb: 0.0,
@@ -262,9 +276,9 @@ pub fn compact_vec_code_sync(conn: &Connection) -> rusqlite::Result<CompactStats
         .unwrap_or(old_chunks as i64);
     let estimated_savings = (old_total_chunks as f64 * 6.0) - (new_chunks * 1.5);
 
-    // DROP and recreate with optimized chunk_size
+    // DROP and recreate with optimized chunk_size, preserving current dimension
     conn.execute("DROP TABLE IF EXISTS vec_code", [])?;
-    conn.execute(VEC_CODE_CREATE_SQL, [])?;
+    conn.execute_batch(&vec_code_create_sql(existing_dims))?;
 
     // Re-insert all rows in a transaction with prepared statement
     let tx = conn.unchecked_transaction()?;

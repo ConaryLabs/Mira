@@ -11,7 +11,7 @@ Centralizes all configuration into two sources: environment variables (`EnvConfi
 
 - `EnvConfig` -- All environment-based configuration in one struct (API keys, embeddings config, default provider, user ID, fuzzy fallback toggle)
 - `ApiKeys` -- API key management with availability checks and redacted debug output
-- `EmbeddingsConfig` -- Embedding dimensions configuration (validates against expected 1536)
+- `EmbeddingsConfig` -- Embedding dimensions configuration (provider-dependent; 1536 for OpenAI, provider-reported for Ollama)
 - `MiraConfig` -- File-based config from `~/.mira/config.toml` (LLM provider preferences)
 - `ConfigValidation` -- Validation results with warnings and errors
 

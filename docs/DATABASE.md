@@ -427,7 +427,7 @@ Vector embeddings for semantic code search.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| embedding | float[1536] | OpenAI text-embedding-3-small |
+| embedding | float[N] | Provider-dependent dimension (1536 for OpenAI, 768 for nomic-embed-text). Detected and adjusted at startup via `ensure_code_vec_table_dimensions`. |
 | file_path | TEXT | Source file |
 | chunk_content | TEXT | Code chunk |
 | project_id | INTEGER | Project reference |

@@ -55,6 +55,24 @@ pub async fn run_index(path: Option<PathBuf>, no_embed: bool, _quiet: bool) -> R
     // Alias code_pool as pool so the rest of the function is unchanged
     let pool = code_pool;
 
+    // Ensure vec_code has correct dimensions for this embedding provider.
+    // run_code_migrations() creates vec_code with a hardcoded dimension; this call
+    // detects a mismatch and recreates the table with the correct dimensions before
+    // any indexing writes occur. code_chunks and FTS are always preserved.
+    if let Some(ref emb) = embeddings {
+        let dims = emb.dimensions();
+        let dim_pool = pool.clone();
+        if let Err(e) = dim_pool
+            .interact(move |conn| {
+                mira::db::ensure_code_vec_table_dimensions(conn, dims)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            tracing::warn!("Failed to ensure vec_code dimensions: {}", e);
+        }
+    }
+
     // Set project ID for usage tracking
     if let Some(ref emb) = embeddings {
         emb.set_project_id(Some(project_id)).await;

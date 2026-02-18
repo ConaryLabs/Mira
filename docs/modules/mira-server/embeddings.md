@@ -5,7 +5,7 @@ OpenAI embedding client for generating vector embeddings used in semantic search
 
 ## Overview
 
-Wraps the OpenAI text-embedding-3-small API to produce 1536-dimensional float vectors. The `EmbeddingClient` facade delegates to `OpenAiEmbeddings` for HTTP calls, batching, retry logic, and usage tracking. Created from `ApiKeys` + `EmbeddingsConfig` at startup and shared via `Arc` across the server.
+Wraps embedding provider APIs (OpenAI text-embedding-3-small at 1536 dims, or Ollama models such as nomic-embed-text at 768 dims) to produce float vectors for semantic search and memory recall. The `EmbeddingClient` facade delegates to the active backend for HTTP calls, batching, retry logic, and usage tracking. Created from `ApiKeys` + `EmbeddingsConfig` at startup and shared via `Arc` across the server.
 
 ## Key Types
 
@@ -17,7 +17,7 @@ Wraps the OpenAI text-embedding-3-small API to produce 1536-dimensional float ve
 
 - `embed(text)` -- Embed a single text string
 - `embed_batch(texts)` -- Batch embed up to 256 texts per request, with parallel chunking for larger sets
-- `dimensions()` -- Returns configured embedding dimensions (default: 1536)
+- `dimensions()` -- Returns configured embedding dimensions (provider-dependent; 1536 for OpenAI, 768 for nomic-embed-text)
 - `provider_id()` -- Returns provider identifier string
 - `model_name()` -- Returns model name
 - `set_project_id()` -- Set project context for usage tracking
