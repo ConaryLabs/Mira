@@ -46,20 +46,7 @@ impl EmbeddingClient {
         config: &EmbeddingsConfig,
         pool: Option<Arc<DatabasePool>>,
     ) -> Option<Self> {
-        // Priority 1: OpenAI (highest quality, requires API key)
-        if let Some(api_key) = api_keys.openai.as_ref() {
-            info!("Using OpenAI embeddings (text-embedding-3-small)");
-            return Some(Self {
-                backend: EmbeddingBackend::OpenAi(OpenAiEmbeddings::with_config(
-                    api_key.clone(),
-                    OpenAiEmbeddingModel::default(),
-                    config.dimensions,
-                    pool,
-                )),
-            });
-        }
-
-        // Priority 2: Ollama (local, no API key needed)
+        // Priority 1: Ollama (local, no API key needed, privacy-preserving)
         if let Some(ollama_host) = api_keys.ollama.as_ref() {
             let client = OllamaEmbeddings::new(
                 ollama_host.clone(),
@@ -76,6 +63,19 @@ impl EmbeddingClient {
             });
         }
 
+        // Priority 2: OpenAI (fallback when Ollama not available)
+        if let Some(api_key) = api_keys.openai.as_ref() {
+            info!("Using OpenAI embeddings (text-embedding-3-small)");
+            return Some(Self {
+                backend: EmbeddingBackend::OpenAi(OpenAiEmbeddings::with_config(
+                    api_key.clone(),
+                    OpenAiEmbeddingModel::default(),
+                    config.dimensions,
+                    pool,
+                )),
+            });
+        }
+
         None
     }
 
@@ -86,18 +86,7 @@ impl EmbeddingClient {
         pool: Option<Arc<DatabasePool>>,
         http_client: reqwest::Client,
     ) -> Option<Self> {
-        if let Some(api_key) = api_keys.openai.as_ref() {
-            return Some(Self {
-                backend: EmbeddingBackend::OpenAi(OpenAiEmbeddings::with_http_client(
-                    api_key.clone(),
-                    OpenAiEmbeddingModel::default(),
-                    config.dimensions,
-                    pool,
-                    http_client,
-                )),
-            });
-        }
-
+        // Priority 1: Ollama (local, no API key needed, privacy-preserving)
         // Ollama uses its own HTTP client (different timeout/config)
         if let Some(ollama_host) = api_keys.ollama.as_ref() {
             let client = OllamaEmbeddings::new(
@@ -112,6 +101,19 @@ impl EmbeddingClient {
             );
             return Some(Self {
                 backend: EmbeddingBackend::Ollama(client),
+            });
+        }
+
+        // Priority 2: OpenAI (fallback when Ollama not available)
+        if let Some(api_key) = api_keys.openai.as_ref() {
+            return Some(Self {
+                backend: EmbeddingBackend::OpenAi(OpenAiEmbeddings::with_http_client(
+                    api_key.clone(),
+                    OpenAiEmbeddingModel::default(),
+                    config.dimensions,
+                    pool,
+                    http_client,
+                )),
             });
         }
 
