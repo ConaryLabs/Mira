@@ -154,6 +154,69 @@ pub fn invalidate_code_embeddings(code_conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Parse the current dimension of vec_code from its schema SQL.
+fn current_vec_code_dims(conn: &Connection) -> Option<usize> {
+    conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_code'",
+        [],
+        |row| {
+            let sql: String = row.get(0)?;
+            if let Some(start) = sql.find("float[") {
+                let rest = &sql[start + 6..];
+                if let Some(end) = rest.find(']')
+                    && let Ok(dim) = rest[..end].parse::<usize>()
+                {
+                    return Ok(Some(dim));
+                }
+            }
+            Ok(None)
+        },
+    )
+    .unwrap_or(None)
+}
+
+/// Ensure vec_code table dimensions match the active embedding provider.
+///
+/// Call this after the code database is opened and embedding dimensions are known.
+/// If the table dimensions don't match `target_dims`, drops and recreates vec_code
+/// with the correct dimensions. The canonical code_chunks and FTS tables are always
+/// preserved — only the vector index is dropped.
+pub fn ensure_code_vec_table_dimensions(conn: &Connection, target_dims: usize) -> Result<()> {
+    let current = current_vec_code_dims(conn);
+
+    match current {
+        Some(dim) if dim == target_dims => {
+            // Already correct
+            Ok(())
+        }
+        Some(dim) => {
+            tracing::info!(
+                "vec_code dimensions mismatch ({} -> {}), recreating table",
+                dim,
+                target_dims
+            );
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch("DROP TABLE IF EXISTS vec_code")?;
+            tx.execute_batch(&format!(
+                "CREATE VIRTUAL TABLE vec_code USING vec0(\
+                     embedding float[{target_dims}],\
+                     +file_path TEXT,\
+                     +chunk_content TEXT,\
+                     +project_id INTEGER,\
+                     +start_line INTEGER,\
+                     chunk_size=256\
+                 )"
+            ))?;
+            tx.commit()?;
+            Ok(())
+        }
+        None => {
+            // Table doesn't exist yet — will be created by run_code_migrations
+            Ok(())
+        }
+    }
+}
+
 /// Recovery check: if vec_code is empty but code_chunks exist and nothing is queued,
 /// re-populate pending_embeddings. Called at startup to handle cases where a previous
 /// invalidation succeeded in clearing vec_code but failed before re-queuing (e.g. crash).
