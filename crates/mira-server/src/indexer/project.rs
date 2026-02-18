@@ -76,13 +76,14 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
 async fn clear_existing_project_data(
     pool: Arc<DatabasePool>,
     project_id: Option<i64>,
+    embedding_dims: usize,
 ) -> Result<()> {
     use crate::db::clear_project_index_sync;
 
     tracing::info!("Clearing existing data...");
     if let Some(pid) = project_id {
         pool.interact(move |conn| {
-            clear_project_index_sync(conn, pid).map_err(|e| anyhow::anyhow!(e))
+            clear_project_index_sync(conn, pid, embedding_dims).map_err(|e| anyhow::anyhow!(e))
         })
         .await?;
     }
@@ -297,8 +298,10 @@ pub async fn index_project(
 
     tracing::info!("Found {} files to index", files.len());
 
-    // Clear existing data for this project
-    clear_existing_project_data(pool.clone(), project_id).await?;
+    // Clear existing data for this project, using the configured embedding dims so
+    // that vec_code is recreated with the correct dimension (not the legacy 1536 default).
+    let embedding_dims = embeddings.as_ref().map(|e| e.dimensions()).unwrap_or(1536);
+    clear_existing_project_data(pool.clone(), project_id, embedding_dims).await?;
 
     // Phase 1: Parse all files in parallel (CPU-bound, uses all cores)
     tracing::info!("Parsing {} files in parallel...", files.len());
