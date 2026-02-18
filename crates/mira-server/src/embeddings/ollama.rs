@@ -226,8 +226,8 @@ impl OllamaEmbeddings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -333,9 +333,17 @@ mod tests {
         let long_input = "x".repeat(MAX_TEXT_CHARS + 5000);
         let result = client.embed_texts(&[long_input]).await;
 
-        assert!(result.is_ok(), "Should succeed on retry: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Should succeed on retry: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap()[0].len(), DEFAULT_DIMENSIONS);
-        assert_eq!(call_count.load(Ordering::SeqCst), 2, "Should have made exactly 2 attempts");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            2,
+            "Should have made exactly 2 attempts"
+        );
 
         server.await.unwrap();
     }
