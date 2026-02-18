@@ -21,27 +21,39 @@ pub async fn run_index(path: Option<PathBuf>, no_embed: bool, _quiet: bool) -> R
     // Create shared HTTP client
     let http_client = create_shared_client();
 
+    // Mira uses two separate databases:
+    // - mira.db       (main)  — projects, sessions, goals, memories
+    // - mira-code.db  (code)  — code_symbols, imports, code_chunks, vec_code
+    //
+    // The CLI index command needs both:
+    //   1. Main DB to look up / create the project record (project_id lives there)
+    //   2. Code DB for the actual symbol/chunk/embedding writes
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let main_pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let code_db_path = db_path.with_file_name("mira-code.db");
+    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
 
     let embeddings = if no_embed {
         None
     } else {
-        get_embeddings_with_pool(Some(pool.clone()), http_client)
+        get_embeddings_with_pool(Some(main_pool.clone()), http_client)
     };
 
-    // Get or create project
+    // Get or create project (stored in the main DB)
     let path_str = path_to_string(&path);
     let project_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string());
-    let (project_id, _project_name) = pool
+    let (project_id, _project_name) = main_pool
         .interact(move |conn| {
             mira::db::get_or_create_project_sync(conn, &path_str, project_name.as_deref())
                 .map_err(|e| anyhow::anyhow!(e))
         })
         .await?;
+
+    // Alias code_pool as pool so the rest of the function is unchanged
+    let pool = code_pool;
 
     // Set project ID for usage tracking
     if let Some(ref emb) = embeddings {
