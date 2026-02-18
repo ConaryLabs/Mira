@@ -155,7 +155,7 @@ pub fn invalidate_code_embeddings(code_conn: &Connection) -> Result<()> {
 }
 
 /// Parse the current dimension of vec_code from its schema SQL.
-fn current_vec_code_dims(conn: &Connection) -> Option<usize> {
+pub(crate) fn current_vec_code_dims(conn: &Connection) -> Option<usize> {
     conn.query_row(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_code'",
         [],
@@ -255,3 +255,88 @@ pub fn ensure_code_embeddings_queued(code_conn: &Connection) -> Result<()> {
 
 // Note: vec_code and pending_embeddings migrations are now in db/schema/code.rs
 // (they apply to the separate code database, not the main database)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::schema::code::vec_code_create_sql;
+
+    /// Open an in-memory connection with sqlite-vec loaded but WITHOUT running main-db
+    /// migrations — simulates a bare code database as opened by the indexer.
+    fn code_conn() -> Connection {
+        use crate::db::pool::ensure_sqlite_vec_registered;
+        ensure_sqlite_vec_registered();
+        Connection::open_in_memory().unwrap()
+    }
+
+    // ─── vec_code_create_sql ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_vec_code_create_sql_embeds_given_dim() {
+        assert!(vec_code_create_sql(768).contains("float[768]"));
+    }
+
+    #[test]
+    fn test_vec_code_create_sql_1536_roundtrip() {
+        assert!(vec_code_create_sql(1536).contains("float[1536]"));
+    }
+
+    // ─── current_vec_code_dims ────────────────────────────────────────────────
+
+    #[test]
+    fn test_current_vec_code_dims_returns_dim_from_ddl() {
+        let conn = code_conn();
+        conn.execute_batch(&vec_code_create_sql(768)).unwrap();
+        assert_eq!(current_vec_code_dims(&conn), Some(768));
+    }
+
+    #[test]
+    fn test_current_vec_code_dims_1536() {
+        let conn = code_conn();
+        conn.execute_batch(&vec_code_create_sql(1536)).unwrap();
+        assert_eq!(current_vec_code_dims(&conn), Some(1536));
+    }
+
+    #[test]
+    fn test_current_vec_code_dims_absent_returns_none() {
+        let conn = code_conn();
+        // No vec_code table created — should return None, not panic
+        assert_eq!(current_vec_code_dims(&conn), None);
+    }
+
+    // ─── ensure_code_vec_table_dimensions ─────────────────────────────────────
+
+    #[test]
+    fn test_ensure_dims_match_is_noop() {
+        let conn = code_conn();
+        conn.execute_batch(&vec_code_create_sql(768)).unwrap();
+        ensure_code_vec_table_dimensions(&conn, 768).unwrap();
+        // Table still present with unchanged dimension
+        assert_eq!(current_vec_code_dims(&conn), Some(768));
+    }
+
+    #[test]
+    fn test_ensure_dims_mismatch_recreates_with_target() {
+        let conn = code_conn();
+        conn.execute_batch(&vec_code_create_sql(1536)).unwrap();
+        ensure_code_vec_table_dimensions(&conn, 768).unwrap();
+        assert_eq!(current_vec_code_dims(&conn), Some(768));
+    }
+
+    #[test]
+    fn test_ensure_dims_mismatch_old_dim_gone() {
+        let conn = code_conn();
+        conn.execute_batch(&vec_code_create_sql(1536)).unwrap();
+        ensure_code_vec_table_dimensions(&conn, 512).unwrap();
+        // Must not be 1536 anymore
+        assert_ne!(current_vec_code_dims(&conn), Some(1536));
+    }
+
+    #[test]
+    fn test_ensure_dims_absent_is_noop() {
+        let conn = code_conn();
+        // No vec_code — should succeed and leave table absent
+        ensure_code_vec_table_dimensions(&conn, 768).unwrap();
+        assert_eq!(current_vec_code_dims(&conn), None);
+    }
+}

@@ -7,29 +7,8 @@
 // - tools/core/code.rs (counts, module cleanup)
 
 use crate::db::schema::code::vec_code_create_sql;
+use crate::db::schema::vectors::current_vec_code_dims;
 use rusqlite::{Connection, params};
-
-/// Read the current embedding dimension of vec_code from its DDL in sqlite_master.
-/// Returns None if the table does not exist or the dimension cannot be parsed.
-fn current_vec_code_dims(conn: &Connection) -> Option<usize> {
-    conn.query_row(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_code'",
-        [],
-        |row| {
-            let sql: String = row.get(0)?;
-            if let Some(start) = sql.find("float[") {
-                let rest = &sql[start + 6..];
-                if let Some(end) = rest.find(']')
-                    && let Ok(dim) = rest[..end].parse::<usize>()
-                {
-                    return Ok(Some(dim));
-                }
-            }
-            Ok(None)
-        },
-    )
-    .unwrap_or(None)
-}
 
 /// (embedding, file_path, chunk_content, project_id, start_line)
 type EmbeddingRow = (Vec<u8>, String, String, Option<i64>, i64);
