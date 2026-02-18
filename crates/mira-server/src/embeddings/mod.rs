@@ -7,9 +7,6 @@ mod openai;
 pub use self::ollama::OllamaEmbeddings;
 pub use self::openai::{OpenAiEmbeddingModel, OpenAiEmbeddings};
 
-/// Max concurrent embedding HTTP requests per flush group (mirrors openai::MAX_CONCURRENT).
-pub(crate) const MAX_CONCURRENT: usize = openai::MAX_CONCURRENT;
-
 use crate::config::{ApiKeys, EmbeddingsConfig};
 use crate::db::pool::DatabasePool;
 use anyhow::Result;
@@ -166,8 +163,8 @@ impl EmbeddingClient {
     /// embeddings from earlier sub-batches without sacrificing per-batch throughput.
     pub fn batch_size(&self) -> usize {
         match &self.backend {
-            EmbeddingBackend::OpenAi(_) => openai::MAX_BATCH_SIZE,
-            EmbeddingBackend::Ollama(_) => ollama::MAX_BATCH_SIZE,
+            EmbeddingBackend::OpenAi(_) => 256, // matches openai::MAX_BATCH_SIZE
+            EmbeddingBackend::Ollama(_) => 64,  // matches ollama::MAX_BATCH_SIZE
         }
     }
 
