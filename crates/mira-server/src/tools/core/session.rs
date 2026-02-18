@@ -1048,3 +1048,920 @@ async fn get_capabilities<C: ToolContext>(ctx: &C) -> Result<Json<SessionOutput>
         })),
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ApiKeys;
+    use crate::db::pool::DatabasePool;
+    use crate::llm::ProviderFactory;
+    use crate::mcp::requests::{SessionAction, SessionRequest};
+    use async_trait::async_trait;
+    use mira_types::ProjectContext;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    // ========================================================================
+    // MockToolContext
+    // ========================================================================
+
+    struct MockToolContext {
+        pool: Arc<DatabasePool>,
+        code_pool: Arc<DatabasePool>,
+        llm_factory: ProviderFactory,
+        project: RwLock<Option<ProjectContext>>,
+        session_id: RwLock<Option<String>>,
+        branch: RwLock<Option<String>>,
+    }
+
+    impl MockToolContext {
+        async fn new() -> Self {
+            let pool = Arc::new(
+                DatabasePool::open_in_memory()
+                    .await
+                    .expect("Failed to open in-memory pool"),
+            );
+            let code_pool = Arc::new(
+                DatabasePool::open_code_db_in_memory()
+                    .await
+                    .expect("Failed to open in-memory code pool"),
+            );
+            let llm_factory = ProviderFactory::from_api_keys(ApiKeys {
+                deepseek: None,
+                ollama: None,
+                openai: None,
+                brave: None,
+            });
+            Self {
+                pool,
+                code_pool,
+                llm_factory,
+                project: RwLock::new(None),
+                session_id: RwLock::new(None),
+                branch: RwLock::new(None),
+            }
+        }
+
+        /// Create a mock with a project already inserted into the DB.
+        async fn with_project() -> Self {
+            let ctx = Self::new().await;
+            // Insert project into DB
+            let project_id = ctx
+                .pool
+                .run(move |conn| {
+                    conn.execute(
+                        "INSERT INTO projects (path, name) VALUES (?1, ?2)",
+                        rusqlite::params!["/test/project", "test-project"],
+                    )?;
+                    Ok::<_, rusqlite::Error>(conn.last_insert_rowid())
+                })
+                .await
+                .expect("Failed to insert test project");
+
+            *ctx.project.write().await = Some(ProjectContext {
+                id: project_id,
+                path: "/test/project".into(),
+                name: Some("test-project".into()),
+            });
+            ctx
+        }
+    }
+
+    #[async_trait]
+    impl ToolContext for MockToolContext {
+        fn pool(&self) -> &Arc<DatabasePool> {
+            &self.pool
+        }
+        fn code_pool(&self) -> &Arc<DatabasePool> {
+            &self.code_pool
+        }
+        fn embeddings(&self) -> Option<&Arc<crate::embeddings::EmbeddingClient>> {
+            None
+        }
+        fn llm_factory(&self) -> &ProviderFactory {
+            &self.llm_factory
+        }
+        async fn get_project(&self) -> Option<ProjectContext> {
+            self.project.read().await.clone()
+        }
+        async fn set_project(&self, project: ProjectContext) {
+            *self.project.write().await = Some(project);
+        }
+        async fn get_session_id(&self) -> Option<String> {
+            self.session_id.read().await.clone()
+        }
+        async fn set_session_id(&self, session_id: String) {
+            *self.session_id.write().await = Some(session_id);
+        }
+        async fn get_or_create_session(&self) -> String {
+            if let Some(id) = self.get_session_id().await {
+                return id;
+            }
+            let id = uuid::Uuid::new_v4().to_string();
+            self.set_session_id(id.clone()).await;
+            id
+        }
+        async fn get_branch(&self) -> Option<String> {
+            self.branch.read().await.clone()
+        }
+        async fn set_branch(&self, branch: Option<String>) {
+            *self.branch.write().await = branch;
+        }
+        fn get_user_identity(&self) -> Option<String> {
+            Some("test-user".into())
+        }
+        fn get_team_membership(&self) -> Option<crate::hooks::session::TeamMembership> {
+            None
+        }
+    }
+
+    /// Helper: build a SessionRequest for a given action with all other fields None.
+    fn make_request(action: SessionAction) -> SessionRequest {
+        SessionRequest {
+            action,
+            session_id: None,
+            limit: None,
+            group_by: None,
+            since_days: None,
+            insight_source: None,
+            min_confidence: None,
+            insight_id: None,
+            dry_run: None,
+            category: None,
+        }
+    }
+
+    /// Helper: insert a session row into the test DB.
+    async fn insert_session(
+        pool: &Arc<DatabasePool>,
+        id: &str,
+        project_id: i64,
+        status: &str,
+        source: Option<&str>,
+    ) {
+        let id = id.to_string();
+        let status = status.to_string();
+        let source = source.map(|s| s.to_string());
+        pool.run(move |conn| {
+            conn.execute(
+                "INSERT INTO sessions (id, project_id, status, source, started_at, last_activity)
+                 VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'))",
+                rusqlite::params![id, project_id, status, source],
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .expect("Failed to insert session");
+    }
+
+    /// Helper: insert a tool_history row.
+    async fn insert_tool_history(
+        pool: &Arc<DatabasePool>,
+        session_id: &str,
+        tool_name: &str,
+        success: bool,
+    ) {
+        let session_id = session_id.to_string();
+        let tool_name = tool_name.to_string();
+        pool.run(move |conn| {
+            conn.execute(
+                "INSERT INTO tool_history (session_id, tool_name, success, created_at)
+                 VALUES (?1, ?2, ?3, datetime('now'))",
+                rusqlite::params![session_id, tool_name, success],
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await
+        .expect("Failed to insert tool history");
+    }
+
+    // ========================================================================
+    // Pure function tests: format_bytes
+    // ========================================================================
+
+    #[test]
+    fn test_format_bytes_zero() {
+        assert_eq!(format_bytes(0), "0 B");
+    }
+
+    #[test]
+    fn test_format_bytes_bytes() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn test_format_bytes_kilobytes() {
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+    }
+
+    #[test]
+    fn test_format_bytes_megabytes() {
+        assert_eq!(format_bytes(1_048_576), "1.0 MB");
+        assert_eq!(format_bytes(5_242_880), "5.0 MB");
+    }
+
+    #[test]
+    fn test_format_bytes_gigabytes() {
+        assert_eq!(format_bytes(1_073_741_824), "1.0 GB");
+        assert_eq!(format_bytes(2_684_354_560), "2.5 GB");
+    }
+
+    // ========================================================================
+    // Pure function tests: count_table
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_count_table_allowed_table() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("pool");
+        let count = pool
+            .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "sessions")))
+            .await
+            .unwrap();
+        // Table exists (migrations ran), count should be 0
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_table_disallowed_table() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("pool");
+        let count = pool
+            .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "projects")))
+            .await
+            .unwrap();
+        // "projects" not in allowlist, should return 0
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_table_nonexistent_table() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("pool");
+        let count = pool
+            .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "memory_facts")))
+            .await
+            .unwrap();
+        // Exists in allowlist and schema, 0 rows
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_table_with_data() {
+        let ctx = MockToolContext::with_project().await;
+        let project_id = ctx.project_id().await.unwrap();
+        insert_session(&ctx.pool, "sess-1", project_id, "active", Some("startup")).await;
+        insert_session(&ctx.pool, "sess-2", project_id, "completed", Some("startup")).await;
+
+        let count = ctx
+            .pool
+            .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "sessions")))
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    // ========================================================================
+    // session_history: CurrentSession
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_current_session_none() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::CurrentSession))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "current");
+        assert!(result.0.message.contains("No active session"));
+        assert!(result.0.data.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_current_session_with_id() {
+        let ctx = MockToolContext::new().await;
+        ctx.set_session_id("test-session-abc".into()).await;
+        let result = handle_session(&ctx, make_request(SessionAction::CurrentSession))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "current");
+        assert!(result.0.message.contains("test-session-abc"));
+        match result.0.data {
+            Some(SessionData::Current(data)) => {
+                assert_eq!(data.session_id, "test-session-abc");
+            }
+            other => panic!("Expected SessionData::Current, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // session_history: ListSessions
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_list_sessions_no_project() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::ListSessions)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_empty() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::ListSessions))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "list_sessions");
+        assert!(result.0.message.contains("No sessions found"));
+        match result.0.data {
+            Some(SessionData::ListSessions(data)) => {
+                assert!(data.sessions.is_empty());
+                assert_eq!(data.total, 0);
+            }
+            other => panic!("Expected SessionData::ListSessions, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_with_data() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+        insert_session(&ctx.pool, "sess-aaa", pid, "completed", Some("startup")).await;
+        insert_session(&ctx.pool, "sess-bbb", pid, "active", Some("resume")).await;
+
+        let result = handle_session(&ctx, make_request(SessionAction::ListSessions))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "list_sessions");
+        match result.0.data {
+            Some(SessionData::ListSessions(data)) => {
+                assert_eq!(data.sessions.len(), 2);
+                assert_eq!(data.total, 2);
+            }
+            other => panic!("Expected SessionData::ListSessions, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_respects_limit() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+        for i in 0..5 {
+            insert_session(&ctx.pool, &format!("sess-{i}"), pid, "completed", None).await;
+        }
+
+        let mut req = make_request(SessionAction::ListSessions);
+        req.limit = Some(2);
+        let result = handle_session(&ctx, req).await.unwrap();
+        match result.0.data {
+            Some(SessionData::ListSessions(data)) => {
+                assert_eq!(data.sessions.len(), 2);
+            }
+            other => panic!("Expected SessionData::ListSessions, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // session_history: GetHistory
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_get_history_no_session_no_project() {
+        let ctx = MockToolContext::new().await;
+        // No session_id provided and no active session
+        let result = handle_session(&ctx, make_request(SessionAction::GetHistory)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_history_empty() {
+        let ctx = MockToolContext::with_project().await;
+        ctx.set_session_id("sess-empty".into()).await;
+        let result = handle_session(&ctx, make_request(SessionAction::GetHistory))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "get_history");
+        assert!(result.0.message.contains("No history"));
+        match result.0.data {
+            Some(SessionData::History(data)) => {
+                assert!(data.entries.is_empty());
+                assert_eq!(data.total, 0);
+            }
+            other => panic!("Expected SessionData::History, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_history_with_tool_calls() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+        insert_session(&ctx.pool, "sess-hist", pid, "active", Some("startup")).await;
+        insert_tool_history(&ctx.pool, "sess-hist", "memory", true).await;
+        insert_tool_history(&ctx.pool, "sess-hist", "code", false).await;
+
+        ctx.set_session_id("sess-hist".into()).await;
+        let result = handle_session(&ctx, make_request(SessionAction::GetHistory))
+            .await
+            .unwrap();
+        match result.0.data {
+            Some(SessionData::History(data)) => {
+                assert_eq!(data.entries.len(), 2);
+                assert_eq!(data.total, 2);
+                assert_eq!(data.session_id, "sess-hist");
+            }
+            other => panic!("Expected SessionData::History, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_history_with_explicit_session_id() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+        insert_session(&ctx.pool, "sess-explicit", pid, "active", None).await;
+        insert_tool_history(&ctx.pool, "sess-explicit", "project", true).await;
+
+        let mut req = make_request(SessionAction::GetHistory);
+        req.session_id = Some("sess-explicit".into());
+        let result = handle_session(&ctx, req).await.unwrap();
+        match result.0.data {
+            Some(SessionData::History(data)) => {
+                assert_eq!(data.session_id, "sess-explicit");
+                assert_eq!(data.entries.len(), 1);
+            }
+            other => panic!("Expected SessionData::History, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // Recap
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_recap_no_project() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::Recap))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "recap");
+        // Should return something (at minimum a no-data message)
+        assert!(!result.0.message.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_recap_with_project() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::Recap))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "recap");
+        assert!(!result.0.message.is_empty());
+    }
+
+    // ========================================================================
+    // ErrorPatterns
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_error_patterns_no_project() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::ErrorPatterns)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_error_patterns_empty() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::ErrorPatterns))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "error_patterns");
+        assert!(result.0.message.contains("No error patterns"));
+        match result.0.data {
+            Some(SessionData::ErrorPatterns(data)) => {
+                assert!(data.patterns.is_empty());
+                assert_eq!(data.total, 0);
+            }
+            other => panic!("Expected SessionData::ErrorPatterns, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // HealthTrends
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_health_trends_no_project() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_health_trends_empty() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "health_trends");
+        assert!(result.0.message.contains("No health snapshots"));
+        match result.0.data {
+            Some(SessionData::HealthTrends(data)) => {
+                assert!(data.snapshots.is_empty());
+                assert!(data.trend.is_none());
+            }
+            other => panic!("Expected SessionData::HealthTrends, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_health_trends_with_snapshots() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+
+        // Insert health snapshots
+        ctx.pool
+            .run(move |conn| {
+                conn.execute(
+                    "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score,
+                     tier_distribution, module_count, snapshot_at, warning_count, todo_count,
+                     unwrap_count, error_handling_count, total_finding_count)
+                     VALUES (?1, 3.5, 8.0, '{\"A\":5}', 10, datetime('now', '-1 day'), 2, 3, 1, 1, 7)",
+                    rusqlite::params![pid],
+                )?;
+                conn.execute(
+                    "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score,
+                     tier_distribution, module_count, snapshot_at, warning_count, todo_count,
+                     unwrap_count, error_handling_count, total_finding_count)
+                     VALUES (?1, 1.0, 3.0, '{\"A\":10}', 10, datetime('now'), 0, 1, 0, 0, 1)",
+                    rusqlite::params![pid],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+
+        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends))
+            .await
+            .unwrap();
+        match result.0.data {
+            Some(SessionData::HealthTrends(data)) => {
+                assert_eq!(data.snapshots.len(), 2);
+                assert!(data.trend.is_some());
+                let trend = data.trend.unwrap();
+                // Debt went from 3.5 to 1.0 — should be "improving"
+                assert_eq!(trend, "improving");
+            }
+            other => panic!("Expected SessionData::HealthTrends, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_health_trends_single_snapshot_no_trend() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+
+        ctx.pool
+            .run(move |conn| {
+                conn.execute(
+                    "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score,
+                     tier_distribution, module_count, snapshot_at, warning_count, todo_count,
+                     unwrap_count, error_handling_count, total_finding_count)
+                     VALUES (?1, 2.0, 5.0, '{\"A\":8}', 8, datetime('now'), 1, 2, 0, 0, 3)",
+                    rusqlite::params![pid],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+
+        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends))
+            .await
+            .unwrap();
+        match result.0.data {
+            Some(SessionData::HealthTrends(data)) => {
+                assert_eq!(data.snapshots.len(), 1);
+                assert!(data.trend.is_none());
+            }
+            other => panic!("Expected SessionData::HealthTrends, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // SessionLineage
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_session_lineage_no_project() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::SessionLineage)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_session_lineage_empty() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::SessionLineage))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "session_lineage");
+        assert!(result.0.message.contains("No sessions found"));
+        match result.0.data {
+            Some(SessionData::SessionLineage(data)) => {
+                assert!(data.sessions.is_empty());
+                assert_eq!(data.total, 0);
+            }
+            other => panic!("Expected SessionData::SessionLineage, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_lineage_with_chain() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+        insert_session(&ctx.pool, "sess-parent", pid, "completed", Some("startup")).await;
+
+        // Insert a resumed session
+        let pid_clone = pid;
+        ctx.pool
+            .run(move |conn| {
+                conn.execute(
+                    "INSERT INTO sessions (id, project_id, status, source, resumed_from, started_at, last_activity)
+                     VALUES ('sess-child', ?1, 'active', 'resume', 'sess-parent', datetime('now'), datetime('now'))",
+                    rusqlite::params![pid_clone],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+
+        let result = handle_session(&ctx, make_request(SessionAction::SessionLineage))
+            .await
+            .unwrap();
+        match result.0.data {
+            Some(SessionData::SessionLineage(data)) => {
+                assert_eq!(data.sessions.len(), 2);
+                assert_eq!(data.total, 2);
+                // The child should have resumed_from set
+                let child = data.sessions.iter().find(|s| s.id == "sess-child").unwrap();
+                assert_eq!(child.resumed_from.as_deref(), Some("sess-parent"));
+                assert_eq!(child.source.as_deref(), Some("resume"));
+            }
+            other => panic!("Expected SessionData::SessionLineage, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // Capabilities
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_capabilities_basic() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::Capabilities))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "capabilities");
+        match result.0.data {
+            Some(SessionData::Capabilities(data)) => {
+                assert!(!data.capabilities.is_empty());
+                let names: Vec<&str> = data.capabilities.iter().map(|c| c.name.as_str()).collect();
+                assert!(names.contains(&"semantic_search"));
+                assert!(names.contains(&"background_llm"));
+                assert!(names.contains(&"fuzzy_search"));
+                assert!(names.contains(&"code_index"));
+                assert!(names.contains(&"mcp_sampling"));
+            }
+            other => panic!("Expected SessionData::Capabilities, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_capabilities_no_embeddings_unavailable() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::Capabilities))
+            .await
+            .unwrap();
+        match result.0.data {
+            Some(SessionData::Capabilities(data)) => {
+                let semantic = data.capabilities.iter().find(|c| c.name == "semantic_search").unwrap();
+                assert_eq!(semantic.status, "unavailable");
+                assert!(semantic.detail.is_some());
+            }
+            other => panic!("Expected SessionData::Capabilities, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_capabilities_no_llm_unavailable() {
+        let ctx = MockToolContext::new().await;
+        let result = handle_session(&ctx, make_request(SessionAction::Capabilities))
+            .await
+            .unwrap();
+        match result.0.data {
+            Some(SessionData::Capabilities(data)) => {
+                let llm = data.capabilities.iter().find(|c| c.name == "background_llm").unwrap();
+                assert_eq!(llm.status, "unavailable");
+            }
+            other => panic!("Expected SessionData::Capabilities, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // StorageStatus
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_storage_status() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::StorageStatus))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "storage_status");
+        assert!(result.0.message.contains("Storage Status"));
+        assert!(result.0.message.contains("Row Counts"));
+        assert!(result.0.message.contains("Retention Policy"));
+    }
+
+    // ========================================================================
+    // Cleanup
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_cleanup_dry_run_default() {
+        let ctx = MockToolContext::with_project().await;
+        let result = handle_session(&ctx, make_request(SessionAction::Cleanup))
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "cleanup");
+        // Default is dry_run=true
+        assert!(result.0.message.contains("Preview") || result.0.message.contains("dry run"));
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dry_run_explicit() {
+        let ctx = MockToolContext::with_project().await;
+        let mut req = make_request(SessionAction::Cleanup);
+        req.dry_run = Some(true);
+        let result = handle_session(&ctx, req).await.unwrap();
+        assert_eq!(result.0.action, "cleanup");
+        assert!(result.0.message.contains("Preview") || result.0.message.contains("dry run"));
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_execute() {
+        let ctx = MockToolContext::with_project().await;
+        let mut req = make_request(SessionAction::Cleanup);
+        req.dry_run = Some(false);
+        let result = handle_session(&ctx, req).await.unwrap();
+        assert_eq!(result.0.action, "cleanup");
+        assert!(result.0.message.contains("Cleanup Complete"));
+    }
+
+    // ========================================================================
+    // ensure_session
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_ensure_session_returns_existing() {
+        let ctx = MockToolContext::with_project().await;
+        ctx.set_session_id("already-exists".into()).await;
+        let result = ensure_session(&ctx).await.unwrap();
+        assert_eq!(result, "already-exists");
+    }
+
+    // ========================================================================
+    // handle_session dispatcher
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_handle_session_dispatches_all_actions() {
+        // Verify the dispatcher doesn't panic for each action variant
+        // (some will error due to missing project — that's expected)
+        let ctx = MockToolContext::with_project().await;
+        ctx.set_session_id("test-dispatch".into()).await;
+
+        let actions = vec![
+            SessionAction::CurrentSession,
+            SessionAction::ListSessions,
+            SessionAction::GetHistory,
+            SessionAction::Recap,
+            SessionAction::ErrorPatterns,
+            SessionAction::HealthTrends,
+            SessionAction::SessionLineage,
+            SessionAction::Capabilities,
+            SessionAction::StorageStatus,
+            SessionAction::Cleanup,
+        ];
+
+        for action in actions {
+            let req = make_request(action);
+            let result = handle_session(&ctx, req).await;
+            // All should succeed with a project set
+            assert!(
+                result.is_ok(),
+                "handle_session failed for {:?}: {:?}",
+                action,
+                result.err()
+            );
+        }
+    }
+
+    // ========================================================================
+    // HistoryKind enum coverage
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_session_history_current_kind() {
+        let ctx = MockToolContext::new().await;
+        ctx.set_session_id("kind-test".into()).await;
+        let result = session_history(&ctx, HistoryKind::Current, None, None)
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "current");
+    }
+
+    #[tokio::test]
+    async fn test_session_history_list_kind() {
+        let ctx = MockToolContext::with_project().await;
+        let result = session_history(&ctx, HistoryKind::List, None, None)
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "list_sessions");
+    }
+
+    #[tokio::test]
+    async fn test_session_history_get_history_kind() {
+        let ctx = MockToolContext::with_project().await;
+        let result = session_history(&ctx, HistoryKind::GetHistory, Some("any-id".into()), None)
+            .await
+            .unwrap();
+        assert_eq!(result.0.action, "get_history");
+    }
+
+    // ========================================================================
+    // List sessions with source/resumed_from formatting
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_list_sessions_source_formatting() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+
+        // Session with source and resumed_from
+        ctx.pool
+            .run(move |conn| {
+                conn.execute(
+                    "INSERT INTO sessions (id, project_id, status, source, resumed_from, started_at, last_activity)
+                     VALUES ('sess-fmt', ?1, 'active', 'resume', 'sess-prev', datetime('now'), datetime('now'))",
+                    rusqlite::params![pid],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+
+        let result = handle_session(&ctx, make_request(SessionAction::ListSessions))
+            .await
+            .unwrap();
+        // Message should contain the resume source info
+        assert!(result.0.message.contains("resume"));
+    }
+
+    // ========================================================================
+    // get_session_recap
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_get_session_recap_no_project() {
+        let ctx = MockToolContext::new().await;
+        let recap = get_session_recap(&ctx).await.unwrap();
+        // Should return something even without a project
+        assert!(!recap.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_session_recap_with_data() {
+        let ctx = MockToolContext::with_project().await;
+        let pid = ctx.project_id().await.unwrap();
+
+        // Insert some memories so recap has content
+        ctx.pool
+            .run(move |conn| {
+                conn.execute(
+                    "INSERT INTO memory_facts (content, fact_type, category, confidence, project_id, created_at, updated_at)
+                     VALUES ('Test preference', 'preference', 'general', 0.9, ?1, datetime('now'), datetime('now'))",
+                    rusqlite::params![pid],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .await
+            .unwrap();
+
+        let recap = get_session_recap(&ctx).await.unwrap();
+        assert!(!recap.is_empty());
+    }
+}
