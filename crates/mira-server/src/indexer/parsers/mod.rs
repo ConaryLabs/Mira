@@ -1,6 +1,7 @@
 // src/indexer/parsers/mod.rs
 // Language-specific code parsers using tree-sitter
 
+pub mod csharp;
 pub mod go;
 pub mod python;
 pub mod rust;
@@ -13,6 +14,7 @@ use std::sync::LazyLock;
 use tree_sitter::{Node, Parser};
 
 // Re-export parser implementations
+pub use csharp::CsharpParser;
 pub use go::GoParser;
 pub use python::PythonParser;
 pub use rust::RustParser;
@@ -57,6 +59,7 @@ impl ParserRegistry {
 }
 
 // Static parser instances
+static CSHARP_PARSER: CsharpParser = CsharpParser;
 static RUST_PARSER: RustParser = RustParser;
 static PYTHON_PARSER: PythonParser = PythonParser;
 static TYPESCRIPT_PARSER: TypeScriptParser = TypeScriptParser;
@@ -64,8 +67,13 @@ static GO_PARSER: GoParser = GoParser;
 
 /// Global parser registry - use this for all parser lookups
 pub static PARSERS: LazyLock<ParserRegistry> = LazyLock::new(|| {
-    let parsers: &[&'static dyn LanguageParser] =
-        &[&RUST_PARSER, &PYTHON_PARSER, &TYPESCRIPT_PARSER, &GO_PARSER];
+    let parsers: &[&'static dyn LanguageParser] = &[
+        &CSHARP_PARSER,
+        &RUST_PARSER,
+        &PYTHON_PARSER,
+        &TYPESCRIPT_PARSER,
+        &GO_PARSER,
+    ];
 
     let mut by_extension = HashMap::new();
     let mut by_language = HashMap::new();
