@@ -20,11 +20,23 @@ type EmbeddingRow = (Vec<u8>, String, String, Option<i64>, i64);
 pub fn clear_project_index_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
 
-    // Delete call_graph first (references code_symbols via caller_id)
-    tx.execute(
-        "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
-        params![project_id],
-    )?;
+    // Delete call_graph first (references code_symbols via caller_id).
+    // Guard with a table-existence check: migration v35 drops call_graph, so the
+    // table may not be present on fresh installs or post-migration DBs.
+    let call_graph_exists: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='call_graph'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if call_graph_exists {
+        tx.execute(
+            "DELETE FROM call_graph WHERE caller_id IN (SELECT id FROM code_symbols WHERE project_id = ?)",
+            params![project_id],
+        )?;
+    }
 
     tx.execute(
         "DELETE FROM code_symbols WHERE project_id = ?",
@@ -98,16 +110,27 @@ pub fn clear_file_index_sync(
 ) -> rusqlite::Result<()> {
     // Delete call_graph edges first (references code_symbols via caller_id/callee_id).
     // We clear both directions to avoid foreign-key failures when symbols are removed.
-    conn.execute(
-        "DELETE FROM call_graph
-         WHERE caller_id IN (
-             SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2
-         )
-         OR callee_id IN (
-             SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2
-         )",
-        params![project_id, file_path],
-    )?;
+    // Guard: migration v35 may have dropped call_graph on existing installs.
+    let call_graph_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='call_graph'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if call_graph_exists {
+        conn.execute(
+            "DELETE FROM call_graph
+             WHERE caller_id IN (
+                 SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2
+             )
+             OR callee_id IN (
+                 SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2
+             )",
+            params![project_id, file_path],
+        )?;
+    }
 
     // Delete symbols for this file
     conn.execute(
