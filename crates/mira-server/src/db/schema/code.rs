@@ -14,6 +14,10 @@ use rusqlite::Connection;
 /// sqlite-vec uses brute-force scan for KNN, so chunk_size doesn't meaningfully
 /// affect query performance at our scale (~5K vectors). May need benchmarking
 /// if vector count grows significantly past 50K.
+///
+/// NOTE: This constant uses 1536 dimensions for backwards compatibility with
+/// existing databases. Use `vec_code_create_sql(dims)` when the actual embedding
+/// dimension is known (e.g. in clear/compact operations during indexing).
 pub const VEC_CODE_CREATE_SQL: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(
     embedding float[1536],
     +file_path TEXT,
@@ -22,6 +26,23 @@ pub const VEC_CODE_CREATE_SQL: &str = "CREATE VIRTUAL TABLE IF NOT EXISTS vec_co
     +start_line INTEGER,
     chunk_size=256
 )";
+
+/// Generate SQL to create vec_code with a specific embedding dimension.
+///
+/// Use this instead of `VEC_CODE_CREATE_SQL` when the actual embedding dimension
+/// is known at call time (e.g. during re-indexing or compaction).
+pub fn vec_code_create_sql(dims: usize) -> String {
+    format!(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(\
+             embedding float[{dims}],\
+             +file_path TEXT,\
+             +chunk_content TEXT,\
+             +project_id INTEGER,\
+             +start_line INTEGER,\
+             chunk_size=256\
+         )"
+    )
+}
 
 /// Code index database schema SQL
 ///
