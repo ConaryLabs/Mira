@@ -220,7 +220,17 @@ fi
 
 # Extract verified archive
 if [ "$archive_ext" = "zip" ]; then
-    unzip -qo "$archive_file" -d "$tmp_dir"
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -qo "$archive_file" -d "$tmp_dir"
+    elif command -v powershell.exe >/dev/null 2>&1; then
+        # Fallback for Windows environments without unzip (e.g. Git Bash minimal install)
+        win_archive=$(cygpath -w "$archive_file" 2>/dev/null || echo "$archive_file" | sed 's|/|\\|g')
+        win_dest=$(cygpath -w "$tmp_dir" 2>/dev/null || echo "$tmp_dir" | sed 's|/|\\|g')
+        powershell.exe -NoProfile -Command "Expand-Archive -Path '$win_archive' -DestinationPath '$win_dest' -Force" >&2
+    else
+        log "[mira] Neither unzip nor powershell.exe found — cannot extract archive."
+        exit 1
+    fi
 else
     tar -xz -C "$tmp_dir" -f "$archive_file"
 fi
