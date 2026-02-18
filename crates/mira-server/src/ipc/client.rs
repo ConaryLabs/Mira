@@ -41,7 +41,7 @@ impl IpcStream {
     /// parsing it into an IpcResponse and handling fallback logic.
     async fn send_raw(&mut self, req: &IpcRequest) -> std::io::Result<String> {
         let mut line = serde_json::to_string(req)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         line.push('\n');
 
         self.writer.write_all(line.as_bytes()).await?;

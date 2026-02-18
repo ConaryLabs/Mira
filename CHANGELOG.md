@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.4] - 2026-02-17
+
+### Added
+- **Cross-platform IPC transport** — IPC handler is now generic over `AsyncRead + AsyncWrite`, supporting Unix domain sockets and Windows Named Pipes. Windows users get full IPC hook functionality instead of the silent `Backend::Unavailable` fallback.
+- **Windows Named Pipe listener** — `run_ipc_listener` on Windows uses `tokio::net::windows::named_pipe` with `ServerOptions`, semaphore-limited concurrency, and correct move semantics via `std::mem::replace`.
+- **`IpcStream` abstraction** — Transport-agnostic boxed reader/writer struct replaces platform-specific stream types in `Backend::Ipc`. Removes all `#[cfg]` gates from the `Backend` enum.
+- **Duplex-based IPC tests** — 8 transport-agnostic tests using `tokio::io::duplex` run on all platforms. Unix socket integration tests preserved in `#[cfg(unix)]` submodule.
+- **Windows `.tar.gz` release asset** — CI now produces both `.zip` and `.tar.gz` for Windows targets.
+- **Data surfacing improvements** — Score-ranked hybrid search results, improved recall quality, memory list with richer metadata.
+- **Compact status line** — Emoji indicators, dropped verbose labels for cleaner `project(action="start")` output.
+
+### Fixed
+- **IPC bounded read (OOM prevention)** — Replaced unbounded `read_line` with `fill_buf`/`consume` loop that rejects requests exceeding 1 MB *before* allocating, preventing OOM from malicious clients.
+- **TOCTOU socket race** — `umask(0o177)` set before `bind()` and restored after, so socket is created with owner-only permissions atomically.
+- **Socket path fallback** — When `HOME` is unset, falls back to `$XDG_RUNTIME_DIR/mira/` then UID-scoped `/tmp/mira-<uid>/`, preventing socket impersonation on shared systems. Parent directories created before bind.
+- **mira-wrapper Git Bash compatibility** — Wrapper now prefers `.tar.gz` (Git Bash has GNU tar but not `unzip`), with `.zip` + PowerShell `Expand-Archive` fallback for older releases.
+- **Milestones migration** — `DEFAULT` clause no longer uses non-constant expressions, fixing migration on older SQLite versions.
+- **Auto-link temporal fields** — Fixed recap filter ordering and file activity tracking.
+- **Dead cleanup category removed** — Chat cleanup no longer references removed category.
+- **Data lifecycle robustness** — Suggestion wiring fixes, cleanup output improvements, dead code removal.
+
+### Changed
+- **IPC listener no longer Unix-only** — `serve.rs` spawns IPC listener unconditionally; cleanup is platform-conditional.
+- **Comprehensive docs audit** — 18 files updated for accuracy across tools, hooks, and module documentation.
+
+---
+
 ## [0.8.3] - 2026-02-17
 
 ### Added

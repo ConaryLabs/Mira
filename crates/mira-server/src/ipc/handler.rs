@@ -53,14 +53,13 @@ where
         let mut too_large = false;
         loop {
             let available = match reader.fill_buf().await {
-                Ok(b) if b.is_empty() => {
+                Ok([]) => {
                     eof = true;
                     break;
                 }
                 Ok(b) => b,
                 Err(e) => {
-                    let resp =
-                        IpcResponse::error(String::new(), format!("read error: {e}"));
+                    let resp = IpcResponse::error(String::new(), format!("read error: {e}"));
                     let _ = write_response(&mut writer, &resp).await;
                     return;
                 }
