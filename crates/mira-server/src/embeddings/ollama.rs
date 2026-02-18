@@ -111,47 +111,52 @@ impl OllamaEmbeddings {
         Ok(all_results)
     }
 
-    /// Core embedding call via Ollama's OpenAI-compatible endpoint
+    /// Core embedding call via Ollama's OpenAI-compatible endpoint.
+    ///
+    /// On a 400 response (typically context overflow), retries with the truncation
+    /// limit halved so token-dense inputs that exceed the model's context window
+    /// get a second chance with shorter text.
     async fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let inputs: Vec<&str> = texts
-            .iter()
-            .map(|t| {
-                if t.len() > MAX_TEXT_CHARS {
-                    debug!(
-                        "Truncating text from {} to {} chars for Ollama embedding",
-                        t.len(),
-                        MAX_TEXT_CHARS
-                    );
-                    truncate_at_boundary(t, MAX_TEXT_CHARS)
-                } else {
-                    t.as_str()
-                }
-            })
-            .collect();
-
-        let input_value = if inputs.len() == 1 {
-            serde_json::Value::String(inputs[0].to_string())
-        } else {
-            serde_json::Value::Array(
-                inputs
-                    .iter()
-                    .map(|s| serde_json::Value::String(s.to_string()))
-                    .collect(),
-            )
-        };
-
-        let body = serde_json::json!({
-            "input": input_value,
-            "model": self.model,
-        });
-
         let url = format!("{}/v1/embeddings", self.base_url);
-
+        let mut max_chars = MAX_TEXT_CHARS;
         let mut last_error = None;
+
         for attempt in 0..=RETRY_ATTEMPTS {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
+
+            let inputs: Vec<&str> = texts
+                .iter()
+                .map(|t| {
+                    if t.len() > max_chars {
+                        debug!(
+                            "Truncating text from {} to {} chars for Ollama embedding",
+                            t.len(),
+                            max_chars
+                        );
+                        truncate_at_boundary(t, max_chars)
+                    } else {
+                        t.as_str()
+                    }
+                })
+                .collect();
+
+            let input_value = if inputs.len() == 1 {
+                serde_json::Value::String(inputs[0].to_string())
+            } else {
+                serde_json::Value::Array(
+                    inputs
+                        .iter()
+                        .map(|s| serde_json::Value::String(s.to_string()))
+                        .collect(),
+                )
+            };
+
+            let body = serde_json::json!({
+                "input": input_value,
+                "model": self.model,
+            });
 
             match self
                 .http_client
@@ -190,6 +195,18 @@ impl OllamaEmbeddings {
 
                     let status = response.status();
                     let body_text = response.text().await.unwrap_or_default();
+
+                    // On 400 (likely context overflow), halve truncation limit for retry
+                    if status == reqwest::StatusCode::BAD_REQUEST && attempt < RETRY_ATTEMPTS {
+                        let prev = max_chars;
+                        max_chars /= 2;
+                        debug!(
+                            "Ollama returned 400 (context overflow), reducing truncation \
+                             limit from {} to {} chars for retry",
+                            prev, max_chars
+                        );
+                    }
+
                     last_error = Some(anyhow::anyhow!(
                         "Ollama embedding request failed ({}): {}",
                         status,
