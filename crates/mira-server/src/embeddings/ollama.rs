@@ -27,7 +27,7 @@ const DEFAULT_DIMENSIONS: usize = 768;
 const MAX_TEXT_CHARS: usize = 12_000;
 
 /// Max texts per batch request
-const MAX_BATCH_SIZE: usize = 64;
+pub(crate) const MAX_BATCH_SIZE: usize = 64;
 
 /// Retry attempts
 const RETRY_ATTEMPTS: usize = 1;

@@ -26,7 +26,10 @@ const MAX_TEXT_CHARS: usize = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
 
 /// Max texts per batch request (OpenAI allows up to 2048 inputs,
 /// but we cap lower to stay well within the 300k total token limit)
-const MAX_BATCH_SIZE: usize = 256;
+pub(crate) const MAX_BATCH_SIZE: usize = 256;
+
+/// Max concurrent HTTP requests when splitting an oversized batch
+pub(crate) const MAX_CONCURRENT: usize = 4;
 
 /// Retry attempts
 const RETRY_ATTEMPTS: usize = 2;
@@ -237,8 +240,7 @@ impl OpenAiEmbeddings {
             num_batches
         );
 
-        // Process in groups of 4 to limit concurrent HTTP requests
-        const MAX_CONCURRENT: usize = 4;
+        // Process in groups to limit concurrent HTTP requests
         let mut all_results = Vec::with_capacity(texts.len());
         for batch_group in chunks.chunks(MAX_CONCURRENT) {
             let tasks: Vec<_> = batch_group
