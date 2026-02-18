@@ -1158,6 +1158,21 @@ mod tests {
                 return id;
             }
             let id = uuid::Uuid::new_v4().to_string();
+            // Persist to DB so downstream code that queries sessions finds it
+            let id_clone = id.clone();
+            let project_id = self.project_id().await;
+            let _ = self
+                .pool
+                .run(move |conn| {
+                    crate::db::create_session_ext_sync(
+                        conn,
+                        &id_clone,
+                        project_id,
+                        Some("startup"),
+                        None,
+                    )
+                })
+                .await;
             self.set_session_id(id.clone()).await;
             id
         }
@@ -1299,7 +1314,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_count_table_nonexistent_table() {
+    async fn test_count_table_allowed_empty_table() {
         let pool = DatabasePool::open_in_memory()
             .await
             .expect("pool");
@@ -1307,7 +1322,21 @@ mod tests {
             .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "memory_facts")))
             .await
             .unwrap();
-        // Exists in allowlist and schema, 0 rows
+        // In allowlist and schema exists, but 0 rows
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_table_nonexistent_table() {
+        let pool = DatabasePool::open_in_memory()
+            .await
+            .expect("pool");
+        // "bogus_table" is not in the allowlist, so count_table returns 0
+        // even though it doesn't exist in the schema either
+        let count = pool
+            .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "bogus_table")))
+            .await
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -1839,12 +1868,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_session_dispatches_all_actions() {
-        // Verify the dispatcher doesn't panic for each action variant
-        // (some will error due to missing project — that's expected)
+        // Verify the dispatcher doesn't panic for every SessionAction variant.
+        // Actions that succeed with a project + session set:
         let ctx = MockToolContext::with_project().await;
         ctx.set_session_id("test-dispatch".into()).await;
 
-        let actions = vec![
+        let succeeding_actions = vec![
             SessionAction::CurrentSession,
             SessionAction::ListSessions,
             SessionAction::GetHistory,
@@ -1855,12 +1884,15 @@ mod tests {
             SessionAction::Capabilities,
             SessionAction::StorageStatus,
             SessionAction::Cleanup,
+            SessionAction::UsageSummary,
+            SessionAction::UsageStats,
+            SessionAction::UsageList,
+            SessionAction::Insights,
         ];
 
-        for action in actions {
+        for action in succeeding_actions {
             let req = make_request(action);
             let result = handle_session(&ctx, req).await;
-            // All should succeed with a project set
             assert!(
                 result.is_ok(),
                 "handle_session failed for {:?}: {:?}",
@@ -1868,6 +1900,13 @@ mod tests {
                 result.err()
             );
         }
+
+        // DismissInsight requires insight_id + insight_source — expected to fail
+        // with InvalidInput, but should not panic.
+        let mut req = make_request(SessionAction::DismissInsight);
+        req.insight_id = Some(999);
+        req.insight_source = Some("pondering".into());
+        let _ = handle_session(&ctx, req).await;
     }
 
     // ========================================================================
