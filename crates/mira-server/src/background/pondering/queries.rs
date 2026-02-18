@@ -978,4 +978,358 @@ mod tests {
         // Same directory counts as tested (test file exists in same dir)
         assert!(has_corresponding_test(&test_files, "src/db/tasks.rs"));
     }
+
+    // ── Edge-case tests for helper functions ─────────────────────────────
+
+    #[test]
+    fn test_summarize_arguments_empty_string() {
+        let summary = summarize_arguments("");
+        // Empty string is not valid JSON, should truncate (returning empty)
+        assert!(summary.is_empty() || summary.len() <= 50);
+    }
+
+    #[test]
+    fn test_summarize_arguments_non_json() {
+        let summary = summarize_arguments("this is not json at all");
+        // Should fall back to truncation
+        assert_eq!(summary, "this is not json at all");
+    }
+
+    #[test]
+    fn test_summarize_arguments_json_array_not_object() {
+        // JSON array, not an object -- should fall back to truncation
+        let summary = summarize_arguments(r#"[1, 2, 3]"#);
+        assert_eq!(summary, "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_summarize_arguments_long_string_truncated() {
+        let long = "x".repeat(200);
+        let summary = summarize_arguments(&long);
+        assert!(summary.len() <= 53); // truncate(s, 50) + "..."
+    }
+
+    #[test]
+    fn test_summarize_arguments_empty_json_object() {
+        let summary = summarize_arguments("{}");
+        assert_eq!(summary, "keys: ");
+    }
+
+    #[test]
+    fn test_extract_modules_malformed_json() {
+        // Malformed JSON should return empty, not panic
+        let modules = extract_modules_from_files_json("{not valid json}");
+        assert!(modules.is_empty());
+    }
+
+    #[test]
+    fn test_extract_modules_json_with_non_string_elements() {
+        // JSON array with non-string elements
+        let modules = extract_modules_from_files_json("[1, 2, null]");
+        assert!(modules.is_empty());
+    }
+
+    #[test]
+    fn test_extract_modules_deeply_nested_paths() {
+        let json = r#"["a/b/c/d/e.rs"]"#;
+        let modules = extract_modules_from_files_json(json);
+        // Should take first two components: "a/b"
+        assert_eq!(modules, vec!["a/b"]);
+    }
+
+    #[test]
+    fn test_is_test_file_edge_cases() {
+        // Empty string
+        assert!(!is_test_file(""));
+        // Just "test" without separators
+        assert!(!is_test_file("test"));
+        // Starts with test/
+        assert!(is_test_file("test/foo.rs"));
+        // tests/ at start
+        assert!(is_test_file("tests/integration.rs"));
+        // spec/ at start
+        assert!(is_test_file("spec/my_spec.rb"));
+    }
+
+    #[test]
+    fn test_is_non_code_file_edge_cases() {
+        // Empty string
+        assert!(!is_non_code_file(""));
+        // Case insensitivity
+        assert!(is_non_code_file("README.MD"));
+        assert!(is_non_code_file("Config.JSON"));
+        // No extension
+        assert!(!is_non_code_file("Makefile"));
+    }
+
+    #[test]
+    fn test_has_corresponding_test_empty_test_files() {
+        let test_files = std::collections::HashSet::new();
+        assert!(!has_corresponding_test(&test_files, "src/db/pool.rs"));
+    }
+
+    #[test]
+    fn test_has_corresponding_test_no_directory_separator() {
+        let test_files = std::collections::HashSet::new();
+        // File with no directory should not panic on rsplit_once
+        assert!(!has_corresponding_test(&test_files, "pool.rs"));
+    }
+
+    #[test]
+    fn test_has_inline_rust_tests_non_rs_file() {
+        // Non-Rust files should always return false
+        assert!(!has_inline_rust_tests("src/main.py"));
+        assert!(!has_inline_rust_tests("src/index.ts"));
+        assert!(!has_inline_rust_tests(""));
+    }
+
+    #[test]
+    fn test_has_inline_rust_tests_nonexistent_file() {
+        // Nonexistent Rust file should return false (graceful error)
+        assert!(!has_inline_rust_tests("/tmp/nonexistent_file_12345.rs"));
+    }
+
+    // ── Async DB tests for query functions on empty tables ───────────────
+
+    #[tokio::test]
+    async fn test_get_recent_tool_history_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_recent_tool_history(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_recent_memories_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_recent_memories(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_stale_goals_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_stale_goals(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_fragile_modules_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_fragile_modules(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_recent_revert_clusters_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_recent_revert_clusters(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_untested_hotspots_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_untested_hotspots(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_session_patterns_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_session_patterns(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_recurring_errors_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_recurring_errors(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_churn_hotspots_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_churn_hotspots(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_health_trend_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_health_trend(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_existing_insights_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_existing_insights(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_project_insight_data_empty_tables() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        let result = get_project_insight_data(&pool, project_id).await;
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert!(!data.has_data());
+    }
+
+    #[tokio::test]
+    async fn test_get_recent_tool_history_wrong_project() {
+        use crate::db::test_support::{
+            seed_session, seed_tool_history, setup_test_pool_with_project,
+        };
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        // Seed data for the real project
+        pool.run(move |conn| {
+            seed_session(conn, "sess-1", project_id, "active");
+            seed_tool_history(conn, "sess-1", "Read", r#"{"file_path": "test.rs"}"#, "ok");
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        // Query with a non-existent project ID -- should return empty
+        let result = get_recent_tool_history(&pool, 99999).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_fragile_modules_malformed_files_json() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        // Insert a diff_analysis row with malformed files_json
+        pool.run(move |conn| {
+            conn.execute(
+                "INSERT INTO diff_analyses (project_id, from_commit, to_commit, analysis_type, files_json, created_at)
+                 VALUES (?, 'abc', 'def', 'commit', '{not valid json}', datetime('now'))",
+                rusqlite::params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        // Should not panic, malformed JSON is handled gracefully
+        let result = get_fragile_modules(&pool, project_id).await;
+        assert!(result.is_ok());
+        // Malformed JSON -> extract_modules returns empty -> no modules tracked
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_fragile_modules_null_files_json() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        // Insert a diff_analysis row with NULL files_json (filtered by query)
+        pool.run(move |conn| {
+            conn.execute(
+                "INSERT INTO diff_analyses (project_id, from_commit, to_commit, analysis_type, files_json, created_at)
+                 VALUES (?, 'abc', 'def', 'commit', NULL, datetime('now'))",
+                rusqlite::params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        // NULL files_json is filtered by the WHERE clause
+        let result = get_fragile_modules(&pool, project_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_session_patterns_below_thresholds() {
+        use crate::db::test_support::{seed_session, setup_test_pool_with_project};
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        // Create only 1 session -- below all thresholds (3 short, 10 total, 3 no-summary)
+        pool.run(move |conn| {
+            seed_session(conn, "sess-1", project_id, "active");
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        let result = get_session_patterns(&pool, project_id).await;
+        assert!(result.is_ok());
+        // 1 session is below all thresholds, so no patterns
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_health_trend_single_snapshot() {
+        use crate::db::test_support::setup_test_pool_with_project;
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        // Insert a single health snapshot (all NOT NULL columns required by schema)
+        pool.run(move |conn| {
+            conn.execute(
+                "INSERT INTO health_snapshots
+                 (project_id, avg_debt_score, max_debt_score, tier_distribution, module_count, snapshot_at)
+                 VALUES (?, 42.0, 55.0, '{\"A\":5,\"B\":3}', 8, datetime('now'))",
+                rusqlite::params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        let result = get_health_trend(&pool, project_id).await;
+        assert!(result.is_ok());
+        let trend = result.unwrap();
+        assert!(trend.is_some());
+        let trend = trend.unwrap();
+        assert!((trend.current_score - 42.0).abs() < 0.01);
+        assert!(trend.previous_score.is_none());
+        assert_eq!(trend.snapshot_count, 1);
+        // No previous score -> direction is Stable
+        assert!(matches!(
+            trend.direction,
+            super::super::types::TrendDirection::Stable
+        ));
+    }
 }

@@ -215,7 +215,10 @@ pub async fn flush_chunks(
                         tracing::warn!(
                             "Sub-batch of {} chunks failed embedding (sizes: {:?}), skipping: {}",
                             sub_batch.len(),
-                            sub_batch.iter().map(|c| c.content.len()).collect::<Vec<_>>(),
+                            sub_batch
+                                .iter()
+                                .map(|c| c.content.len())
+                                .collect::<Vec<_>>(),
                             e
                         );
                     }
