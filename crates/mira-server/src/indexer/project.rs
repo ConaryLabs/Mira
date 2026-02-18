@@ -17,10 +17,9 @@ use rayon::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Maximum file size for indexing (1 MB). Files larger than this are
-/// typically generated code, minified bundles, or data files that
-/// provide poor symbol/semantic value and risk OOM.
-const MAX_INDEX_FILE_BYTES: u64 = 1_024 * 1_024;
+/// Maximum file size for indexing. Large single-file codebases (e.g. NinjaTrader strategies)
+/// legitimately exceed 1MB. Override with MIRA_MAX_INDEX_FILE_MB env var.
+const MAX_INDEX_FILE_BYTES: u64 = 10 * 1_024 * 1_024;
 
 /// Collect files to index, filtering by extension and ignoring patterns
 fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path::PathBuf> {
@@ -37,7 +36,8 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
         .with_extension("tsx")
         .with_extension("js")
         .with_extension("jsx")
-        .with_extension("go");
+        .with_extension("go")
+        .with_extension("cs");
 
     for result in walker.walk_paths() {
         match result {
