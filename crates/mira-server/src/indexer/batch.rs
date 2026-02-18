@@ -39,12 +39,42 @@ pub struct PendingFileBatch {
     pub calls: Vec<FunctionCall>,
 }
 
-/// Helper to embed code chunks and return vectors
+/// Maximum characters per chunk sent to the embedding model.
+///
+/// Ollama's `nomic-embed-text` (and most local models) have an 8192-token context window.
+/// At ~4 chars/token that is ~32768 chars, but we use a conservative 24000 to leave
+/// headroom for the model's BPE overhead. Chunks larger than this are truncated at a
+/// valid UTF-8 char boundary before embedding — the stored chunk content is unchanged.
+const MAX_EMBED_CHARS: usize = 24_000;
+
+/// Truncate a string to at most `max_chars` characters at a valid UTF-8 boundary.
+#[inline]
+fn truncate_for_embedding(text: &str) -> &str {
+    if text.len() <= MAX_EMBED_CHARS {
+        return text;
+    }
+    // Walk back from max_chars to find a valid char boundary
+    let mut end = MAX_EMBED_CHARS;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// Helper to embed code chunks and return vectors.
+///
+/// Chunks exceeding `MAX_EMBED_CHARS` are truncated before embedding so that
+/// models with limited context windows (Ollama, local models) don't return 400 errors.
+/// The full chunk content is always stored in the database — truncation only affects
+/// the text sent to the embedding API.
 pub async fn embed_chunks(
     embeddings: &EmbeddingClient,
     pending_chunks: &[PendingChunk],
 ) -> Result<Vec<Vec<f32>>, String> {
-    let texts: Vec<String> = pending_chunks.iter().map(|c| c.content.clone()).collect();
+    let texts: Vec<String> = pending_chunks
+        .iter()
+        .map(|c| truncate_for_embedding(&c.content).to_string())
+        .collect();
     embeddings.embed_batch(&texts).await.str_err()
 }
 
