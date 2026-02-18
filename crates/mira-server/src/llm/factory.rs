@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn test_record_success_resets_circuit_breaker() {
+    fn test_record_success_on_tripped_breaker_does_not_panic() {
         let mut factory = empty_factory();
         factory.clients.insert(
             Provider::DeepSeek,
@@ -343,8 +343,8 @@ mod tests {
         factory.record_failure(Provider::DeepSeek);
         factory.record_failure(Provider::DeepSeek);
         assert!(!factory.circuit_breaker().is_available(Provider::DeepSeek));
-        // Record success should not reset an open breaker (it needs cooldown first)
-        // But we can verify the method doesn't panic
+        // An open breaker requires cooldown before reset — record_success
+        // on a tripped breaker is a no-op, but must not panic.
         factory.record_success(Provider::DeepSeek);
     }
 
