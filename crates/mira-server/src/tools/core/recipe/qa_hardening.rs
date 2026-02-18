@@ -86,7 +86,13 @@ Use this recipe when code is functionally complete but needs hardening before re
 9. **Present** the hardening backlog to the user
 10. **Cleanup**: `TeamDelete`
 
-### Phase 3: Implementation (optional, on user request)
+---
+
+## Optional: Implementation Phase
+
+> **Stop here by default.** The hardening backlog above is the primary deliverable of this recipe. Only continue below if the user explicitly asks you to implement the fixes.
+
+### How to Implement Fixes (on user request)
 
 If the user wants fixes implemented, create a new team and spawn implementation agents:
 
@@ -115,7 +121,9 @@ If the user wants fixes implemented, create a new team and spawn implementation 
 - NEVER use `cargo build --release` or `cargo test --release` — always use debug mode
 - If the user specifies a focus area (e.g., "just check error handling"), you can skip spawning irrelevant agents
 - Consolidate documentation fixes into a SINGLE agent — multiple doc agents risk losing changes and don't benefit from parallelism
-- Deferred items should be presented to the user separately — they need design discussion, not automated fixes"#;
+- Deferred items should be presented to the user separately — they need design discussion, not automated fixes
+- **The team lead (you) stays active throughout all phases to coordinate** — do not go idle between phases
+- **If an agent is unresponsive:** send it a direct message via SendMessage to check status. If still unresponsive, shut it down and note the missing finding in the synthesis — a missing perspective is better than a stalled review"#;
 
 pub(super) const RECIPE: Recipe = Recipe {
     name: "qa-hardening",

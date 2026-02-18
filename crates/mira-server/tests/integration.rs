@@ -3073,15 +3073,21 @@ async fn test_recipe_list() {
 
     match output.0.data {
         Some(RecipeData::List(data)) => {
-            assert_eq!(data.recipes.len(), 4);
-            assert_eq!(data.recipes[0].name, "expert-review");
-            assert_eq!(data.recipes[0].member_count, 7);
-            assert_eq!(data.recipes[1].name, "full-cycle");
-            assert_eq!(data.recipes[1].member_count, 9);
-            assert_eq!(data.recipes[2].name, "qa-hardening");
-            assert_eq!(data.recipes[2].member_count, 5);
-            assert_eq!(data.recipes[3].name, "refactor");
-            assert_eq!(data.recipes[3].member_count, 3);
+            assert_eq!(data.recipes.len(), 7);
+            assert_eq!(data.recipes[0].name, "debug");
+            assert_eq!(data.recipes[0].member_count, 4);
+            assert_eq!(data.recipes[1].name, "expert-review");
+            assert_eq!(data.recipes[1].member_count, 7);
+            assert_eq!(data.recipes[2].name, "full-cycle");
+            assert_eq!(data.recipes[2].member_count, 9);
+            assert_eq!(data.recipes[3].name, "pr-review");
+            assert_eq!(data.recipes[3].member_count, 4);
+            assert_eq!(data.recipes[4].name, "qa-hardening");
+            assert_eq!(data.recipes[4].member_count, 5);
+            assert_eq!(data.recipes[5].name, "refactor");
+            assert_eq!(data.recipes[5].member_count, 3);
+            assert_eq!(data.recipes[6].name, "test-gen");
+            assert_eq!(data.recipes[6].member_count, 4);
         }
         _ => panic!("Expected RecipeData::List"),
     }
