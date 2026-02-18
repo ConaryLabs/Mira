@@ -2,59 +2,134 @@
 // IPC client for hooks — connects to MCP server via Unix socket, falls back to direct DB
 
 use crate::db::pool::DatabasePool;
+use crate::ipc::protocol::{IpcRequest, IpcResponse};
 use anyhow::Result;
 use serde_json::json;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
-#[cfg(unix)]
-use {
-    crate::ipc::protocol::{IpcRequest, IpcResponse},
-    std::time::Duration,
-    tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    tokio::net::UnixStream,
-};
+// ═══════════════════════════════════════════════════════════════════════
+// IPC Transport
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Transport-agnostic IPC stream for hook-to-server communication.
+///
+/// Wraps any `AsyncRead + AsyncWrite` stream with the NDJSON protocol
+/// used by the IPC handler. Platform-specific transports (Unix sockets,
+/// Named Pipes) are abstracted behind boxed reader/writer halves.
+pub(crate) struct IpcStream {
+    reader: BufReader<Box<dyn AsyncRead + Unpin + Send>>,
+    writer: Box<dyn AsyncWrite + Unpin + Send>,
+}
+
+impl IpcStream {
+    /// Create an IPC stream from any split reader/writer pair.
+    pub fn new<R, W>(reader: R, writer: W) -> Self
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        Self {
+            reader: BufReader::new(Box::new(reader)),
+            writer: Box::new(writer),
+        }
+    }
+
+    /// Send a request and read the raw response line using the NDJSON protocol.
+    ///
+    /// Returns the raw JSON response string. The caller is responsible for
+    /// parsing it into an IpcResponse and handling fallback logic.
+    async fn send_raw(&mut self, req: &IpcRequest) -> std::io::Result<String> {
+        let mut line = serde_json::to_string(req).map_err(std::io::Error::other)?;
+        line.push('\n');
+
+        self.writer.write_all(line.as_bytes()).await?;
+        self.writer.flush().await?;
+
+        let mut buf = String::new();
+        let n = self.reader.read_line(&mut buf).await?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "server closed connection",
+            ));
+        }
+        Ok(buf)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HookClient
+// ═══════════════════════════════════════════════════════════════════════
 
 pub struct HookClient {
     inner: Backend,
 }
 
 enum Backend {
-    #[cfg(unix)]
-    Ipc {
-        reader: BufReader<tokio::net::unix::OwnedReadHalf>,
-        writer: tokio::net::unix::OwnedWriteHalf,
-    },
+    Ipc(IpcStream),
     Direct {
         pool: Arc<DatabasePool>,
     },
     /// Both IPC and direct DB are unavailable; methods return defaults.
-    #[cfg(not(unix))]
     Unavailable,
 }
 
 impl HookClient {
-    /// Connect to the MCP server via Unix socket IPC.
-    /// Falls back to direct DB access if the server is unavailable.
+    /// Connect to the MCP server via platform-native IPC.
+    /// Tries Unix socket (Unix) or Named Pipe (Windows), then falls back
+    /// to direct DB access if the server is unavailable.
     pub async fn connect() -> Self {
         // On Unix, try the IPC socket first
         #[cfg(unix)]
         {
+            use std::time::Duration;
             let sock = super::socket_path();
-            if let Ok(Ok(stream)) =
-                tokio::time::timeout(Duration::from_millis(100), UnixStream::connect(&sock)).await
+            if let Ok(Ok(stream)) = tokio::time::timeout(
+                Duration::from_millis(100),
+                tokio::net::UnixStream::connect(&sock),
+            )
+            .await
             {
-                let (read, write) = stream.into_split();
+                let (read, write) = tokio::io::split(stream);
                 tracing::debug!("[mira] IPC: connected via socket");
                 return Self {
-                    inner: Backend::Ipc {
-                        reader: BufReader::new(read),
-                        writer: write,
-                    },
+                    inner: Backend::Ipc(IpcStream::new(read, write)),
                 };
             }
         }
 
-        // Socket unavailable or non-Unix — try direct DB
+        // On Windows, try Named Pipe
+        #[cfg(windows)]
+        {
+            use std::time::Duration;
+            use tokio::net::windows::named_pipe::ClientOptions;
+
+            let name = super::pipe_name();
+            // Try to open the pipe with a brief retry for ERROR_PIPE_BUSY
+            let deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+            loop {
+                match ClientOptions::new().open(&name) {
+                    Ok(pipe) => {
+                        let (read, write) = tokio::io::split(pipe);
+                        tracing::debug!("[mira] IPC: connected via named pipe");
+                        return Self {
+                            inner: Backend::Ipc(IpcStream::new(read, write)),
+                        };
+                    }
+                    Err(e) if e.raw_os_error() == Some(231) => {
+                        // ERROR_PIPE_BUSY (231) — server exists but all instances busy
+                        if tokio::time::Instant::now() >= deadline {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(_) => break, // Pipe doesn't exist or other error
+                }
+            }
+        }
+
+        // IPC unavailable — try direct DB
         let db_path = crate::hooks::get_db_path();
         match DatabasePool::open_hook(&db_path).await {
             Ok(pool) => {
@@ -67,22 +142,6 @@ impl HookClient {
             }
             Err(e) => {
                 tracing::warn!("[mira] IPC: both socket and database unavailable: {e}");
-                // Create a dead backend — methods will return their defaults
-                #[cfg(unix)]
-                {
-                    #[allow(clippy::expect_used)]
-                    // socketpair is infallible on supported platforms
-                    let (sock, peer) = tokio::net::UnixStream::pair().expect("socketpair");
-                    drop(peer);
-                    let (read, write) = sock.into_split();
-                    Self {
-                        inner: Backend::Ipc {
-                            reader: BufReader::new(read),
-                            writer: write,
-                        },
-                    }
-                }
-                #[cfg(not(unix))]
                 Self {
                     inner: Backend::Unavailable,
                 }
@@ -100,21 +159,15 @@ impl HookClient {
 
     /// Create a HookClient from a pre-connected UnixStream (for IPC integration tests).
     #[cfg(all(test, unix))]
-    pub fn from_stream(stream: UnixStream) -> Self {
-        let (read, write) = stream.into_split();
+    pub fn from_stream(stream: tokio::net::UnixStream) -> Self {
+        let (read, write) = tokio::io::split(stream);
         Self {
-            inner: Backend::Ipc {
-                reader: BufReader::new(read),
-                writer: write,
-            },
+            inner: Backend::Ipc(IpcStream::new(read, write)),
         }
     }
 
     pub fn is_ipc(&self) -> bool {
-        #[cfg(unix)]
-        return matches!(self.inner, Backend::Ipc { .. });
-        #[cfg(not(unix))]
-        return false;
+        matches!(self.inner, Backend::Ipc(_))
     }
 
     /// Get the direct DB pool (only available in Direct mode).
@@ -126,17 +179,16 @@ impl HookClient {
         }
     }
 
-    /// Send a request over the IPC socket and read the response.
+    /// Send a request over the IPC stream and read the response.
     ///
     /// On I/O errors or server-level protocol errors (overloaded, timeout),
     /// automatically switches to direct DB via `fallback_to_direct()`.
     /// Methods use a "try IPC, fall through to Direct" pattern so the
     /// current call retries via Direct immediately.
-    #[cfg(unix)]
     async fn call(&mut self, op: &str, params: serde_json::Value) -> Result<serde_json::Value> {
-        if !self.is_ipc() {
+        let Backend::Ipc(stream) = &mut self.inner else {
             anyhow::bail!("call() is only available on IPC backend");
-        }
+        };
 
         let req = IpcRequest {
             op: op.to_string(),
@@ -144,31 +196,9 @@ impl HookClient {
             params,
         };
 
-        let mut line = serde_json::to_string(&req)?;
-        line.push('\n');
-
-        // Perform I/O with the IPC stream. The `async move` block takes
-        // ownership of `inner` (a &mut), releasing the borrow on self
-        // once the block completes — allowing fallback_to_direct() in the
-        // error path.
-        let inner = &mut self.inner;
-        let io_result: std::result::Result<String, std::io::Error> = async move {
-            let Backend::Ipc { reader, writer } = inner else {
-                unreachable!("is_ipc() check above")
-            };
-            writer.write_all(line.as_bytes()).await?;
-            writer.flush().await?;
-            let mut buf = String::new();
-            let n = reader.read_line(&mut buf).await?;
-            if n == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "server closed connection",
-                ));
-            }
-            Ok(buf)
-        }
-        .await;
+        // send_raw borrows stream (and thus self.inner). The result is an
+        // owned String, so the borrow is released before fallback_to_direct().
+        let io_result = stream.send_raw(&req).await;
 
         match io_result {
             Ok(buf) => {
@@ -195,14 +225,7 @@ impl HookClient {
         }
     }
 
-    /// Non-unix stub — IPC is not available, methods fall through to Direct.
-    #[cfg(not(unix))]
-    async fn call(&mut self, _op: &str, _params: serde_json::Value) -> Result<serde_json::Value> {
-        anyhow::bail!("IPC not available on this platform");
-    }
-
     /// Switch from broken IPC to direct DB for all subsequent calls.
-    #[cfg(unix)]
     async fn fallback_to_direct(&mut self) {
         let db_path = crate::hooks::get_db_path();
         match DatabasePool::open_hook(&db_path).await {

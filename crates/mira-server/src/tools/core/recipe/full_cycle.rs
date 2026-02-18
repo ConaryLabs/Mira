@@ -31,14 +31,14 @@ pub(super) const MEMBERS: &[RecipeMember] = &[
     RecipeMember {
         name: "growth-strategist",
         agent_type: "general-purpose",
-        prompt: "You think like a developer who just found a new tool and is deciding in 30 seconds whether to star it or close the tab. You've launched side projects, written blog posts nobody read, and know exactly what makes someone stop scrolling.\n\nYou are a growth strategist on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Public-facing presentation, discoverability, onboarding experience, and growth opportunities.\n\nInstructions:\n1. **First impressions** — Read README.md, CHANGELOG.md, and any marketplace/plugin metadata. Does the value prop land in 10 seconds? Is it clear what this does and why someone should care?\n2. **Onboarding friction** — Trace the install-to-first-value path. How many steps from install to \"aha moment\"? What could go wrong? What's confusing?\n3. **Naming & branding consistency** — Are tool names, skill names, CLI commands, and error messages consistent? Do any leak internal implementation details that would confuse outsiders?\n4. **Feature visibility** — Are powerful features buried or undiscoverable? What capabilities exist that users probably don't know about?\n5. **Community & growth signals** — What would make someone star, share, or blog about this? What's missing that similar projects have (examples, screenshots, GIFs, comparison tables)?\n6. **Competitive positioning** — Based on the README and feature set, how does this position against alternatives? Is the unique angle clear?\n7. **Quick wins** — Prioritize suggestions by effort-to-impact ratio. What small changes would make the biggest difference to public perception?\n\nBe specific and actionable. Reference exact files, lines, and text. Distinguish between \"nice to have\" and \"this is actively hurting adoption.\"\n\nWhen done, send your findings to the team lead via SendMessage.",
+        prompt: prompts::GROWTH_STRATEGIST_REVIEW,
     },
     RecipeMember {
-        name: "plan-reviewer",
+        name: "project-health",
         agent_type: "general-purpose",
         prompt: "You're pragmatic and a little world-weary. You've seen enough 'simple refactors' turn into month-long odysseys to know that optimism without specifics is just wishful thinking.\n\nYou are a technical lead reviewing project health on a full-cycle review team. Use Claude Code tools (Read, Grep, Glob, Bash) to explore the codebase.\n\nYour focus: Project health, CI/CD, dependencies, build quality, and documentation freshness.\n\nInstructions:\n1. Give overall assessment (healthy / needs work / major concerns)\n2. Check dependency health (Cargo.toml versions, look for outdated or vulnerable deps)\n3. Review CI/CD configuration for gaps (missing checks, loose settings)\n4. Check for compiler warnings and clippy lint suppressions — run `cargo clippy --all-targets --all-features -- -D warnings` (NEVER use --release)\n5. Review documentation quality AND freshness:\n   - Read key docs (README, CHANGELOG, docs/*.md, CLAUDE.md)\n   - Cross-reference claims with actual code — do documented features, tool names, parameters, and examples match the current implementation?\n   - Flag docs that reference removed/renamed features, outdated parameter names, or wrong file paths\n   - Check if recent changes (last 5-10 commits) touched code that docs describe but didn't update the docs\n6. Run `cargo fmt --all -- --check` to verify formatting\n7. Flag anything you couldn't fully evaluate rather than skipping it\n\nDo NOT run `cargo test` — that is the QA test-runner's responsibility.\n\nWhen done, send your findings to the team lead via SendMessage.",
     },
-    // Phase 3: QA agents
+    // Phase 4: QA agents
     RecipeMember {
         name: "test-runner",
         agent_type: "general-purpose",
@@ -84,11 +84,11 @@ pub(super) const TASKS: &[RecipeTask] = &[
         assignee: "growth-strategist",
     },
     RecipeTask {
-        subject: "Project health review",
+        subject: "Project health and build quality review",
         description: "Check CI/CD, dependencies, build quality, clippy, formatting, and documentation.",
-        assignee: "plan-reviewer",
+        assignee: "project-health",
     },
-    // Phase 3: QA
+    // Phase 4: QA
     RecipeTask {
         subject: "Test verification",
         description: "Run full test suite, check for regressions, verify build is clean.",
@@ -112,46 +112,25 @@ Use this when you want expert review AND implementation in one pass. For read-on
 ### Phase 1: Discovery (parallel)
 
 1. **Create team**: `TeamCreate(team_name="full-cycle-{timestamp}")`
-2. **Spawn discovery experts** (architect, code-reviewer, security, scope-analyst, ux-strategist, growth-strategist, plan-reviewer) in parallel using `Task` tool with `team_name`, `name`, `subagent_type`, and `run_in_background=true`
-3. **Create and assign discovery tasks** using `TaskCreate` + `TaskUpdate`
-4. **Wait** for all 7 experts to report findings via SendMessage
-5. **Shut down** discovery experts (they're done)
+2. **Create tasks** for all discovery experts using `TaskCreate`
+3. **Assign owners** to tasks using `TaskUpdate`
+4. **Spawn all discovery experts** (architect, code-reviewer, security, scope-analyst, ux-strategist, growth-strategist, project-health) in parallel using `Task` tool with `team_name`, `name`, `subagent_type`, and `run_in_background=true`
+5. **Wait** for all 7 experts to report findings via SendMessage
+6. **Shut down** discovery experts (they're done)
 
 ### Phase 2: Synthesis + Implementation
 
-6. **Synthesize findings** into a unified report:
+7. **Synthesize findings** into a unified report:
    - Consensus (points multiple experts agree on)
    - Key findings per expert
    - Tensions (where experts disagree — preserve both sides)
    - Prioritized action items
 
-7. **Present synthesis to user** and WAIT for approval before proceeding to implementation
-8. **Create implementation tasks** from action items, grouped by file ownership to avoid conflicts
-9. **Spawn implementation agents** (dynamic — as many as needed based on task groupings). Use `Task` tool with `team_name`, `name`, `subagent_type="general-purpose"`, and `mode="bypassPermissions"`
-10. **Assign tasks** to implementation agents via `TaskUpdate`
-11. **Monitor** build diagnostics actively. When you see compile errors, send targeted hints to the responsible agent via SendMessage with the exact error and fix suggestion. This unblocks agents within one turn instead of letting them struggle
-12. **Wait** for all implementation agents to complete, then shut them down
+8. **Present synthesis to user** and WAIT for approval before proceeding to implementation
 
-### Phase 3: Dependency Updates (sequential)
+If the user rejects the synthesis or requests changes: revise the synthesis based on their feedback and re-present. Do NOT proceed to implementation until the user explicitly approves. If the user wants to abort, shut down all agents and call TeamDelete.
 
-13. **After** all implementation agents finish, run `cargo update` to pick up compatible dependency patches
-14. This runs AFTER code changes to avoid Cargo.lock conflicts with parallel agents
-
-### Phase 4: QA (parallel)
-
-15. **Spawn QA agents** (test-runner, ux-reviewer) using `Task` tool with `team_name`, `name`, `subagent_type`, and context about what changed
-16. **Create and assign QA tasks**
-17. **Wait** for QA results
-18. If QA finds issues, either fix them directly or spawn additional fixers
-
-### Phase 5: Finalize
-
-19. **Shut down** all remaining agents
-20. **Verify** final build and test status (cargo clippy, cargo fmt, cargo test)
-21. **Report** summary of all changes to the user
-22. **Cleanup**: `TeamDelete`
-
-### Implementation Agent Rules
+#### Implementation Agent Rules
 
 - **Max 3 fixes per agent.** Split larger groups. Schema/type changes (e.g., changing a field from String to i64) get their own dedicated agent because they have ripple effects across tests.
 - **Type/schema changes MUST be isolated.** Never combine a type change with other fixes. Give it a dedicated agent. The agent prompt must explicitly list all files to update (including test files).
@@ -161,6 +140,40 @@ Use this when you want expert review AND implementation in one pass. For read-on
 - **Parallel build awareness:** Other agents are editing the codebase in parallel. If you see compile errors in files you didn't touch, ignore them — they're from another agent's in-progress work. Only verify YOUR files compile cleanly.
 - **Import cleanup:** When removing a code block, check whether its imports are used elsewhere in the file before removing them. Use Grep/search within the file for each import symbol to verify.
 - **Struct pattern renaming:** In Rust, to rename a field in struct destructuring, use `field_name: ref new_name` syntax (not `ref new_name` alone). The original field name must appear on the left side of the colon.
+
+9. **Create implementation tasks** from action items, grouped by file ownership to avoid conflicts
+10. **Spawn implementation agents** (dynamic — as many as needed based on task groupings). Use `Task` tool with `team_name`, `name`, `subagent_type="general-purpose"`, and `mode="bypassPermissions"`
+11. **Assign tasks** to implementation agents via `TaskUpdate`
+12. **Monitor** build diagnostics actively. When you see compile errors, send targeted hints to the responsible agent via SendMessage with the exact error and fix suggestion. This unblocks agents within one turn instead of letting them struggle
+13. **Wait** for all implementation agents to complete, then shut them down
+
+### Phase 3: Dependency Updates (sequential)
+
+14. **After** all implementation agents finish, run `cargo update` to pick up compatible dependency patches
+15. After running `cargo update`, verify the Cargo.lock changes didn't introduce breakage: run `cargo test --no-run` (NEVER --release) to ensure all targets still compile with the new dependency versions
+16. This runs AFTER code changes to avoid Cargo.lock conflicts with parallel agents
+
+### Phase 4: QA (parallel)
+
+17. **Spawn QA agents** (test-runner, ux-reviewer) using `Task` tool with `team_name`, `name`, `subagent_type`, and context about what changed
+18. **Create and assign QA tasks**
+19. **Wait** for QA results
+20. If QA finds issues, either fix them directly or spawn additional fixers
+
+### Phase 5: Finalize
+
+21. **Shut down** all remaining agents
+22. **Verify** final build and test status (cargo clippy, cargo fmt, cargo test)
+23. **Report** summary of all changes to the user
+24. **Cleanup**: `TeamDelete`
+
+### Handling Stalled Agents
+
+If a discovery or implementation agent has not responded after an unusually long time:
+- Send it a direct message via SendMessage to check its status
+- For discovery agents: if unresponsive, shut down and note the missing expert's perspective in the synthesis
+- For implementation agents: if unresponsive, fix the assigned issues directly yourself or reassign to a new agent
+- Do not wait indefinitely — one missing agent should not block the entire recipe
 
 ### Important Notes
 
@@ -172,7 +185,8 @@ Use this when you want expert review AND implementation in one pass. For read-on
 - QA agents run AFTER implementation to verify the changes
 - Dependency updates (`cargo update`) run AFTER implementation, BEFORE QA — never in parallel with code changes
 - NEVER use `cargo build --release` or `cargo test --release` — always use debug mode
-- The team lead (you) stays active throughout all phases to coordinate"#;
+- **Consolidate documentation fixes into a SINGLE agent** — doc changes don't conflict, and using multiple doc agents risks changes not persisting
+- **The team lead (you) stays active throughout all phases to coordinate** — do not go idle between phases"#;
 
 pub(super) const RECIPE: Recipe = Recipe {
     name: "full-cycle",

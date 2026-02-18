@@ -215,31 +215,41 @@ pub async fn flush_chunks(
     }
 
     // Optionally embed + store to vec_code when embeddings are available.
-    // Process in streaming sub-batches so a failure in one sub-batch doesn't
-    // discard successfully embedded chunks from earlier sub-batches.
+    // Process sub-batches in concurrent groups to parallelise HTTP requests while
+    // capping fan-out so we don't spike rate limits or memory on large flushes.
     if let Some(ref emb) = embeddings {
-        const EMBED_SUB_BATCH: usize = 64;
+        let sub_batch_size = emb.batch_size();
+        let sub_batches: Vec<&[PendingChunk]> = pending_chunks.chunks(sub_batch_size).collect();
         let mut total_embedded = 0usize;
 
-        for sub_batch in pending_chunks.chunks(EMBED_SUB_BATCH) {
-            match embed_chunks(emb, sub_batch).await {
-                Ok(vectors) => {
-                    let chunk_data = prepare_chunk_data(sub_batch, &vectors);
-                    if let Err(e) =
-                        store_chunk_embeddings(pool.clone(), chunk_data, project_id).await
-                    {
-                        tracing::error!("Failed to store sub-batch embeddings: {}", e);
-                    } else {
-                        total_embedded += vectors.len();
+        // Use the same concurrency cap as openai::embed_batch.
+        use crate::embeddings::MAX_CONCURRENT;
+
+        for group in sub_batches.chunks(MAX_CONCURRENT) {
+            let embed_results =
+                futures::future::join_all(group.iter().map(|&sb| embed_chunks(emb, sb))).await;
+
+            for (sub_batch, result) in group.iter().zip(embed_results) {
+                match result {
+                    Ok(vectors) => {
+                        let chunk_data = prepare_chunk_data(sub_batch, &vectors);
+                        match store_chunk_embeddings(pool.clone(), chunk_data, project_id).await {
+                            Ok(errors) => {
+                                total_embedded += vectors.len().saturating_sub(errors);
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to store sub-batch embeddings: {}", e);
+                            }
+                        }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Sub-batch of {} chunks failed embedding (sizes: {:?}), skipping: {}",
-                        sub_batch.len(),
-                        sub_batch.iter().map(|c| c.content.len()).collect::<Vec<_>>(),
-                        e
-                    );
+                    Err(e) => {
+                        tracing::warn!(
+                            "Sub-batch of {} chunks failed embedding (sizes: {:?}), skipping: {}",
+                            sub_batch.len(),
+                            sub_batch.iter().map(|c| c.content.len()).collect::<Vec<_>>(),
+                            e
+                        );
+                    }
                 }
             }
         }

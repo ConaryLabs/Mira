@@ -6,7 +6,7 @@
 set -eu
 umask 077
 
-MIRA_VERSION="0.8.3"
+MIRA_VERSION="0.8.5"
 # Allow version pinning via environment variable
 if [ -n "${MIRA_VERSION_PIN:-}" ]; then
     MIRA_VERSION="$MIRA_VERSION_PIN"
@@ -168,11 +168,9 @@ fi
 
 platform="$(detect_platform)"
 
-# Use .zip for Windows, .tar.gz for everything else
-case "$platform" in
-    *windows*) archive_ext="zip" ;;
-    *)         archive_ext="tar.gz" ;;
-esac
+# Prefer .tar.gz (available in Git Bash, sh, bash on all platforms).
+# Fall back to .zip for older releases that only ship Windows .zip.
+archive_ext="tar.gz"
 
 url="https://github.com/${REPO}/releases/download/v${target}/mira-${platform}.${archive_ext}"
 
@@ -187,7 +185,22 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 archive_file="${tmp_dir}/mira.${archive_ext}"
-fetch "$url" "$archive_file"
+if ! fetch "$url" "$archive_file" 2>/dev/null; then
+    # .tar.gz not available — try .zip fallback (older Windows releases)
+    case "$platform" in
+        *windows*)
+            archive_ext="zip"
+            url="https://github.com/${REPO}/releases/download/v${target}/mira-${platform}.${archive_ext}"
+            archive_file="${tmp_dir}/mira.${archive_ext}"
+            log "[mira] tar.gz not found, trying .zip fallback..."
+            fetch "$url" "$archive_file"
+            ;;
+        *)
+            log "[mira] ERROR: Download failed: ${url}"
+            exit 1
+            ;;
+    esac
+fi
 
 # Verify checksum BEFORE extraction — reject tampered archives early
 checksum_url="https://github.com/${REPO}/releases/download/v${target}/checksums.sha256"
@@ -220,17 +233,9 @@ fi
 
 # Extract verified archive
 if [ "$archive_ext" = "zip" ]; then
-    if command -v unzip >/dev/null 2>&1; then
-        unzip -qo "$archive_file" -d "$tmp_dir"
-    elif command -v powershell.exe >/dev/null 2>&1; then
-        # Fallback for Windows environments without unzip (e.g. Git Bash minimal install)
-        win_archive=$(cygpath -w "$archive_file" 2>/dev/null || echo "$archive_file" | sed 's|/|\\|g')
-        win_dest=$(cygpath -w "$tmp_dir" 2>/dev/null || echo "$tmp_dir" | sed 's|/|\\|g')
-        powershell.exe -NoProfile -Command "Expand-Archive -Path '$win_archive' -DestinationPath '$win_dest' -Force" >&2
-    else
-        log "[mira] Neither unzip nor powershell.exe found — cannot extract archive."
-        exit 1
-    fi
+    # .zip fallback — use PowerShell on Windows (always available, unlike unzip)
+    powershell.exe -NoProfile -Command "Expand-Archive -Force -Path '$(cygpath -w "$archive_file")' -DestinationPath '$(cygpath -w "$tmp_dir")'" 2>/dev/null \
+        || { log "[mira] ERROR: Failed to extract .zip archive"; exit 1; }
 else
     tar -xz -C "$tmp_dir" -f "$archive_file"
 fi

@@ -69,6 +69,8 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path target/${{ matrix.target }}/release/mira.exe -DestinationPath mira-${{ matrix.target }}.zip
+          # Also produce .tar.gz — mira-wrapper uses tar (available in Git Bash)
+          tar -czvf mira-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release mira.exe
 
       - name: Upload artifact (Unix)
         if: runner.os != 'Windows'
@@ -82,7 +84,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mira-${{ matrix.target }}
-          path: mira-${{ matrix.target }}.zip
+          path: |
+            mira-${{ matrix.target }}.zip
+            mira-${{ matrix.target }}.tar.gz
 
   release:
     name: Create Release
@@ -127,4 +131,5 @@ jobs:
             artifacts/mira-x86_64-apple-darwin/mira-x86_64-apple-darwin.tar.gz
             artifacts/mira-aarch64-apple-darwin/mira-aarch64-apple-darwin.tar.gz
             artifacts/mira-x86_64-pc-windows-msvc/mira-x86_64-pc-windows-msvc.zip
+            artifacts/mira-x86_64-pc-windows-msvc/mira-x86_64-pc-windows-msvc.tar.gz
             checksums.sha256

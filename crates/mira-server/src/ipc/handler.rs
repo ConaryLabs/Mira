@@ -4,7 +4,11 @@
 use super::protocol::{IpcRequest, IpcResponse};
 use crate::mcp::MiraServer;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+
+/// Maximum size of a single IPC request line (1 MB).
+/// Prevents OOM from malicious or buggy clients sending unbounded data.
+const MAX_LINE_SIZE: usize = 1_048_576;
 
 /// Returns a per-operation timeout. Slow ops (LLM-dependent, multi-query) get 30s,
 /// medium ops (search/recall) get 10s, fast ops (simple lookups/writes) get 5s.
@@ -29,20 +33,63 @@ fn op_timeout(op: &str) -> Duration {
 /// Hooks typically need 2-3 operations per invocation (e.g., resolve_project
 /// then recall_memories), so we support multiple requests per connection.
 /// The client closes the connection when done (sends EOF).
-pub async fn handle_connection(stream: tokio::net::UnixStream, server: MiraServer) {
-    let (reader, mut writer) = stream.into_split();
+///
+/// Generic over the stream type to support different transports (Unix sockets,
+/// Named Pipes, etc.) — any `AsyncRead + AsyncWrite` works.
+pub async fn handle_connection<S>(stream: S, server: MiraServer)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let (reader, writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
+    let mut writer = writer;
 
     loop {
+        // Bounded line read: uses fill_buf/consume to reject lines exceeding
+        // MAX_LINE_SIZE BEFORE allocating unbounded memory. Plain read_line
+        // would buffer the entire line first, risking OOM on malicious input.
         let mut buf = String::new();
-        match reader.read_line(&mut buf).await {
-            Ok(0) => break, // EOF — client closed connection
-            Ok(_) => {}
-            Err(e) => {
-                let resp = IpcResponse::error(String::new(), format!("read error: {e}"));
-                let _ = write_response(&mut writer, &resp).await;
+        let mut eof = false;
+        let mut too_large = false;
+        loop {
+            let available = match reader.fill_buf().await {
+                Ok([]) => {
+                    eof = true;
+                    break;
+                }
+                Ok(b) => b,
+                Err(e) => {
+                    let resp = IpcResponse::error(String::new(), format!("read error: {e}"));
+                    let _ = write_response(&mut writer, &resp).await;
+                    return;
+                }
+            };
+            let newline_pos = available.iter().position(|&b| b == b'\n');
+            let end = newline_pos.map(|p| p + 1).unwrap_or(available.len());
+            if buf.len() + end > MAX_LINE_SIZE {
+                too_large = true;
+                // Drain the rest of this line so the connection stays usable
+                let consume_len = end;
+                reader.consume(consume_len);
                 break;
             }
+            // Safe: IPC sends JSON (valid UTF-8). Invalid bytes → error on parse.
+            buf.push_str(&String::from_utf8_lossy(&available[..end]));
+            reader.consume(end);
+            if newline_pos.is_some() {
+                break;
+            }
+        }
+        if eof {
+            break;
+        }
+        if too_large {
+            let resp = IpcResponse::error(
+                String::new(),
+                format!("request too large (max {} bytes)", MAX_LINE_SIZE),
+            );
+            let _ = write_response(&mut writer, &resp).await;
+            break;
         }
 
         let buf = buf.trim();
@@ -78,8 +125,8 @@ pub async fn handle_connection(stream: tokio::net::UnixStream, server: MiraServe
     }
 }
 
-async fn write_response(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
+async fn write_response<W: AsyncWrite + Unpin>(
+    writer: &mut W,
     resp: &IpcResponse,
 ) -> std::io::Result<()> {
     let mut json = serde_json::to_string(resp)

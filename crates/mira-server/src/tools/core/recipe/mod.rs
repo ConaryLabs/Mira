@@ -1,11 +1,14 @@
 // crates/mira-server/src/tools/core/recipe/mod.rs
 // Reusable team recipes — static data defining team blueprints for Agent Teams.
 
+mod debug;
 mod expert_review;
 mod full_cycle;
+mod pr_review;
 mod prompts;
 mod qa_hardening;
 mod refactor;
+mod test_gen;
 
 use crate::error::MiraError;
 use crate::mcp::requests::{RecipeAction, RecipeRequest};
@@ -38,10 +41,13 @@ struct RecipeTask {
 
 /// All built-in recipes.
 const ALL_RECIPES: &[&Recipe] = &[
+    &debug::RECIPE,
     &expert_review::RECIPE,
     &full_cycle::RECIPE,
+    &pr_review::RECIPE,
     &qa_hardening::RECIPE,
     &refactor::RECIPE,
+    &test_gen::RECIPE,
 ];
 
 // ============================================================================
@@ -155,17 +161,21 @@ mod tests {
         };
         let Json(output) = handle_recipe(req).await.expect("list should succeed");
         assert_eq!(output.action, "list");
-        assert!(output.message.contains("4 recipe(s)"));
+        assert!(output.message.contains("7 recipe(s)"));
         match output.data {
             Some(RecipeData::List(data)) => {
-                assert_eq!(data.recipes.len(), 4);
-                assert_eq!(data.recipes[0].name, "expert-review");
-                assert_eq!(data.recipes[0].member_count, 7);
+                assert_eq!(data.recipes.len(), 7);
+                assert_eq!(data.recipes[0].name, "debug");
+                assert_eq!(data.recipes[0].member_count, 4);
                 assert!(!data.recipes[0].use_when.is_empty());
-                assert_eq!(data.recipes[2].name, "qa-hardening");
-                assert_eq!(data.recipes[2].member_count, 5);
-                assert_eq!(data.recipes[3].name, "refactor");
-                assert_eq!(data.recipes[3].member_count, 3);
+                assert_eq!(data.recipes[1].name, "expert-review");
+                assert_eq!(data.recipes[1].member_count, 7);
+                assert_eq!(data.recipes[3].name, "pr-review");
+                assert_eq!(data.recipes[3].member_count, 4);
+                assert_eq!(data.recipes[4].name, "qa-hardening");
+                assert_eq!(data.recipes[4].member_count, 5);
+                assert_eq!(data.recipes[5].name, "refactor");
+                assert_eq!(data.recipes[5].member_count, 3);
             }
             _ => panic!("Expected RecipeData::List"),
         }
@@ -209,7 +219,7 @@ mod tests {
                 assert_eq!(data.members[0].name, "architect");
                 assert_eq!(data.members[4].name, "ux-strategist");
                 assert_eq!(data.members[5].name, "growth-strategist");
-                assert_eq!(data.members[6].name, "plan-reviewer");
+                assert_eq!(data.members[6].name, "project-health");
                 // Verify QA agents
                 assert_eq!(data.members[7].name, "test-runner");
                 assert_eq!(data.members[8].name, "ux-reviewer");
@@ -266,6 +276,87 @@ mod tests {
                 assert_eq!(data.members[2].name, "test-runner");
                 assert!(data.coordination.contains("Safe Restructuring"));
                 assert!(data.coordination.contains("Phase 4: Implementation"));
+            }
+            _ => panic!("Expected RecipeData::Get"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_debug_recipe() {
+        let req = RecipeRequest {
+            action: RecipeAction::Get,
+            name: Some("debug".to_string()),
+        };
+        let Json(output) = handle_recipe(req).await.expect("get should succeed");
+        assert_eq!(output.action, "get");
+        match output.data {
+            Some(RecipeData::Get(data)) => {
+                assert_eq!(data.name, "debug");
+                assert_eq!(data.members.len(), 4);
+                assert_eq!(data.tasks.len(), 4);
+                assert_eq!(data.members[0].name, "symptom-analyzer");
+                assert_eq!(data.members[1].name, "root-cause-analyst");
+                assert_eq!(data.members[2].name, "fixer");
+                assert_eq!(data.members[3].name, "regression-tester");
+                assert_eq!(data.tasks[0].assignee, "symptom-analyzer");
+                assert_eq!(data.tasks[1].assignee, "root-cause-analyst");
+                assert_eq!(data.tasks[2].assignee, "fixer");
+                assert_eq!(data.tasks[3].assignee, "regression-tester");
+                assert!(data.coordination.contains("When to Use"));
+            }
+            _ => panic!("Expected RecipeData::Get"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_pr_review_recipe() {
+        let req = RecipeRequest {
+            action: RecipeAction::Get,
+            name: Some("pr-review".to_string()),
+        };
+        let Json(output) = handle_recipe(req).await.expect("get should succeed");
+        assert_eq!(output.action, "get");
+        match output.data {
+            Some(RecipeData::Get(data)) => {
+                assert_eq!(data.name, "pr-review");
+                assert_eq!(data.members.len(), 4);
+                assert_eq!(data.tasks.len(), 4);
+                assert_eq!(data.members[0].name, "correctness-reviewer");
+                assert_eq!(data.members[1].name, "convention-checker");
+                assert_eq!(data.members[2].name, "test-assessor");
+                assert_eq!(data.members[3].name, "doc-checker");
+                assert_eq!(data.tasks[0].assignee, "correctness-reviewer");
+                assert_eq!(data.tasks[1].assignee, "convention-checker");
+                assert_eq!(data.tasks[2].assignee, "test-assessor");
+                assert_eq!(data.tasks[3].assignee, "doc-checker");
+                assert!(data.coordination.contains("When to Use"));
+            }
+            _ => panic!("Expected RecipeData::Get"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_test_gen_recipe() {
+        let req = RecipeRequest {
+            action: RecipeAction::Get,
+            name: Some("test-gen".to_string()),
+        };
+        let Json(output) = handle_recipe(req).await.expect("get should succeed");
+        assert_eq!(output.action, "get");
+        match output.data {
+            Some(RecipeData::Get(data)) => {
+                assert_eq!(data.name, "test-gen");
+                assert_eq!(data.members.len(), 4);
+                assert_eq!(data.tasks.len(), 4);
+                assert_eq!(data.members[0].name, "coverage-analyst");
+                assert_eq!(data.members[1].name, "test-writer");
+                assert_eq!(data.members[2].name, "edge-case-writer");
+                assert_eq!(data.members[3].name, "test-reviewer");
+                assert_eq!(data.tasks[0].assignee, "coverage-analyst");
+                assert_eq!(data.tasks[1].assignee, "test-writer");
+                assert_eq!(data.tasks[2].assignee, "edge-case-writer");
+                assert_eq!(data.tasks[3].assignee, "test-reviewer");
+                assert!(data.coordination.contains("When to Use"));
             }
             _ => panic!("Expected RecipeData::Get"),
         }

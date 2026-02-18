@@ -1,6 +1,6 @@
 [package]
 name = "mira-server"
-version = "0.8.3"
+version = "0.8.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -92,6 +92,7 @@ futures = "0.3.31"
 # Performance optimizations
 moka = { version = "0.12", features = ["future"] }
 rayon = { version = "1.10", optional = true }
+libc = "0.2.182"
 
 [dev-dependencies]
 tempfile = "3.8"
