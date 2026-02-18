@@ -81,11 +81,17 @@ pub async fn run() -> Result<()> {
     }
 
     // Try to auto-link task completion to goal milestones
+    let session_id = if task_input.session_id.is_empty() {
+        None
+    } else {
+        Some(task_input.session_id.as_str())
+    };
     client
         .auto_link_milestone(
             project_id,
             &task_input.task_subject,
             task_input.task_description.as_deref(),
+            session_id,
         )
         .await;
 
@@ -100,6 +106,7 @@ pub fn auto_link_milestone(
     project_id: i64,
     task_subject: &str,
     task_description: Option<&str>,
+    session_id: Option<&str>,
 ) -> Result<()> {
     // Get active goals for this project
     let goals_sql = r#"
@@ -164,11 +171,8 @@ pub fn auto_link_milestone(
             }
         });
         if subject_matches || desc_matches {
-            // Mark milestone as completed
-            conn.execute(
-                "UPDATE milestones SET completed = 1 WHERE id = ?",
-                [milestone_id],
-            )?;
+            // Mark milestone as completed (with temporal fields matching explicit path)
+            crate::db::complete_milestone_sync(conn, *milestone_id, session_id)?;
 
             // Find the goal title for logging
             let goal_title = goal_ids
@@ -240,7 +244,7 @@ mod tests {
         let conn = crate::db::test_support::setup_test_connection();
         crate::db::get_or_create_project_sync(&conn, "/tmp/test-proj", None).unwrap();
         // Should not error even with no goals
-        let result = auto_link_milestone(&conn, 1, "Some task", None);
+        let result = auto_link_milestone(&conn, 1, "Some task", None, None);
         assert!(result.is_ok());
     }
 
@@ -266,17 +270,19 @@ mod tests {
         .unwrap();
 
         // Auto-link with matching task subject
-        auto_link_milestone(&conn, pid, "Fix login bug", None).unwrap();
+        auto_link_milestone(&conn, pid, "Fix login bug", None, Some("test-session")).unwrap();
 
-        // Check milestone was completed
-        let completed: bool = conn
+        // Check milestone was completed with temporal fields
+        let (completed, completed_at, completed_in_session): (bool, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT completed FROM milestones WHERE goal_id = ?",
+                "SELECT completed, completed_at, completed_in_session_id FROM milestones WHERE goal_id = ?",
                 [goal_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
         assert!(completed);
+        assert!(completed_at.is_some(), "completed_at should be set by auto-link");
+        assert_eq!(completed_in_session.as_deref(), Some("test-session"));
     }
 
     #[test]
@@ -299,7 +305,7 @@ mod tests {
         .unwrap();
 
         // Task subject contains milestone title (case-insensitive)
-        auto_link_milestone(&conn, pid, "add authentication endpoint", None).unwrap();
+        auto_link_milestone(&conn, pid, "add authentication endpoint", None, Some("test-session")).unwrap();
 
         let completed: bool = conn
             .query_row(
@@ -331,7 +337,7 @@ mod tests {
         .unwrap();
 
         // Unrelated task
-        auto_link_milestone(&conn, pid, "Fix CSS styling", None).unwrap();
+        auto_link_milestone(&conn, pid, "Fix CSS styling", None, Some("test-session")).unwrap();
 
         let completed: bool = conn
             .query_row(
@@ -368,6 +374,7 @@ mod tests {
             pid,
             "Implement middleware",
             Some("Add rate limiting to API endpoints"),
+            Some("test-session"),
         )
         .unwrap();
 
@@ -402,7 +409,7 @@ mod tests {
         .unwrap();
 
         // Task "Fix login bug" should NOT match short milestone "fix" via substring
-        auto_link_milestone(&conn, pid, "Fix login bug", None).unwrap();
+        auto_link_milestone(&conn, pid, "Fix login bug", None, Some("test-session")).unwrap();
 
         let completed: bool = conn
             .query_row(
@@ -438,7 +445,7 @@ mod tests {
         .unwrap();
 
         // Exact match (case-insensitive) should still work
-        auto_link_milestone(&conn, pid, "fix", None).unwrap();
+        auto_link_milestone(&conn, pid, "fix", None, Some("test-session")).unwrap();
 
         let completed: bool = conn
             .query_row(

@@ -485,6 +485,10 @@ pub async fn auto_link_milestone(server: &MiraServer, params: Value) -> Result<V
         .get("task_description")
         .and_then(|v| v.as_str())
         .map(String::from);
+    let session_id = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     server
         .pool
@@ -494,6 +498,7 @@ pub async fn auto_link_milestone(server: &MiraServer, params: Value) -> Result<V
                 project_id,
                 &task_subject,
                 task_description.as_deref(),
+                session_id.as_deref(),
             )
         })
         .await?;

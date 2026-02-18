@@ -174,6 +174,9 @@ pub fn get_recent_decisions_sync(
     let mut stmt = match conn.prepare(
         "SELECT content, created_at FROM memory_facts
          WHERE project_id = ? AND fact_type = 'decision'
+           AND status != 'archived'
+           AND COALESCE(suspicious, 0) = 0
+           AND (scope = 'project' OR scope IS NULL)
          ORDER BY created_at DESC
          LIMIT ?",
     ) {
@@ -196,11 +199,12 @@ pub fn get_recent_file_activity_sync(
 ) -> Vec<String> {
     // Get file_access events from recent sessions, extract unique file paths
     let mut stmt = match conn.prepare(
-        "SELECT DISTINCT json_extract(event_data, '$.file_path') AS fp
+        "SELECT json_extract(event_data, '$.file_path') AS fp
          FROM session_behavior_log
          WHERE project_id = ? AND event_type = 'file_access'
            AND json_extract(event_data, '$.file_path') IS NOT NULL
-         ORDER BY created_at DESC
+         GROUP BY fp
+         ORDER BY MAX(created_at) DESC
          LIMIT ?",
     ) {
         Ok(s) => s,

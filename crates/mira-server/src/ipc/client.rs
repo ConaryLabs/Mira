@@ -408,12 +408,14 @@ impl HookClient {
         project_id: i64,
         task_subject: &str,
         task_description: Option<&str>,
+        session_id: Option<&str>,
     ) {
         if self.is_ipc() {
             let params = json!({
                 "project_id": project_id,
                 "task_subject": task_subject,
                 "task_description": task_description,
+                "session_id": session_id,
             });
             if self.call("auto_link_milestone", params).await.is_ok() {
                 return;
@@ -423,12 +425,14 @@ impl HookClient {
             let pool = pool.clone();
             let task_subject = task_subject.to_string();
             let task_description = task_description.map(String::from);
+            let session_id = session_id.map(String::from);
             pool.try_interact("auto_link_milestone", move |conn| {
                 crate::hooks::task_completed::auto_link_milestone(
                     conn,
                     project_id,
                     &task_subject,
                     task_description.as_deref(),
+                    session_id.as_deref(),
                 )
             })
             .await;
