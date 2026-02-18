@@ -131,6 +131,21 @@ async fn init_server_context() -> Result<ServerContext> {
             warn!("Failed to ensure vec_memory dimensions: {}", e);
         }
 
+        // Also ensure vec_code (code database) has matching dimensions.
+        // vec_code is created by run_code_migrations with a hardcoded dim; this
+        // detects mismatches at server startup and recreates with the correct dim.
+        let dims_code = emb.dimensions();
+        let dim_code_pool = code_pool.clone();
+        if let Err(e) = dim_code_pool
+            .interact(move |conn| {
+                mira::db::ensure_code_vec_table_dimensions(conn, dims_code)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            })
+            .await
+        {
+            warn!("Failed to ensure vec_code dimensions: {}", e);
+        }
+
         let provider_id = emb.provider_id().to_string();
         let check_pool = pool.clone();
         let check_code_pool = code_pool.clone();
