@@ -1161,8 +1161,7 @@ mod tests {
             // Persist to DB so downstream code that queries sessions finds it
             let id_clone = id.clone();
             let project_id = self.project_id().await;
-            let _ = self
-                .pool
+            self.pool
                 .run(move |conn| {
                     crate::db::create_session_ext_sync(
                         conn,
@@ -1172,7 +1171,8 @@ mod tests {
                         None,
                     )
                 })
-                .await;
+                .await
+                .expect("MockToolContext: failed to persist session to DB");
             self.set_session_id(id.clone()).await;
             id
         }
@@ -1327,12 +1327,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_count_table_nonexistent_table() {
+    async fn test_count_table_rejected_by_allowlist() {
         let pool = DatabasePool::open_in_memory()
             .await
             .expect("pool");
-        // "bogus_table" is not in the allowlist, so count_table returns 0
-        // even though it doesn't exist in the schema either
+        // "bogus_table" is not in ALLOWED_TABLES, so count_table short-circuits to 0
+        // without executing any SQL (prevents SQL injection via table name)
         let count = pool
             .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "bogus_table")))
             .await
@@ -1901,12 +1901,17 @@ mod tests {
             );
         }
 
-        // DismissInsight requires insight_id + insight_source — expected to fail
-        // with InvalidInput, but should not panic.
+        // DismissInsight with valid params but nonexistent ID — should succeed
+        // with a "not found" response, not panic or error.
         let mut req = make_request(SessionAction::DismissInsight);
         req.insight_id = Some(999);
         req.insight_source = Some("pondering".into());
-        let _ = handle_session(&ctx, req).await;
+        let result = handle_session(&ctx, req).await;
+        assert!(
+            result.is_ok(),
+            "DismissInsight with nonexistent ID should succeed: {:?}",
+            result.err()
+        );
     }
 
     // ========================================================================
