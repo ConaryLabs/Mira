@@ -125,7 +125,7 @@ End-to-end expert review with automatic implementation and QA verification.
 -> Prompts for what to review, then runs full discovery -> implementation -> QA cycle
 
 /mira:full-cycle Review the database layer for issues
--> All 6 experts review the DB layer, findings are implemented, QA verifies
+-> All 7 experts review the DB layer, findings are implemented, QA verifies
 
 /mira:full-cycle --discovery-only
 -> Only runs Phase 1 (equivalent to /mira:experts)

@@ -298,6 +298,10 @@ mod tests {
                 assert_eq!(data.members[1].name, "root-cause-analyst");
                 assert_eq!(data.members[2].name, "fixer");
                 assert_eq!(data.members[3].name, "regression-tester");
+                assert_eq!(data.tasks[0].assignee, "symptom-analyzer");
+                assert_eq!(data.tasks[1].assignee, "root-cause-analyst");
+                assert_eq!(data.tasks[2].assignee, "fixer");
+                assert_eq!(data.tasks[3].assignee, "regression-tester");
                 assert!(data.coordination.contains("When to Use"));
             }
             _ => panic!("Expected RecipeData::Get"),
@@ -321,6 +325,10 @@ mod tests {
                 assert_eq!(data.members[1].name, "convention-checker");
                 assert_eq!(data.members[2].name, "test-assessor");
                 assert_eq!(data.members[3].name, "doc-checker");
+                assert_eq!(data.tasks[0].assignee, "correctness-reviewer");
+                assert_eq!(data.tasks[1].assignee, "convention-checker");
+                assert_eq!(data.tasks[2].assignee, "test-assessor");
+                assert_eq!(data.tasks[3].assignee, "doc-checker");
                 assert!(data.coordination.contains("When to Use"));
             }
             _ => panic!("Expected RecipeData::Get"),
@@ -344,6 +352,10 @@ mod tests {
                 assert_eq!(data.members[1].name, "test-writer");
                 assert_eq!(data.members[2].name, "edge-case-writer");
                 assert_eq!(data.members[3].name, "test-reviewer");
+                assert_eq!(data.tasks[0].assignee, "coverage-analyst");
+                assert_eq!(data.tasks[1].assignee, "test-writer");
+                assert_eq!(data.tasks[2].assignee, "edge-case-writer");
+                assert_eq!(data.tasks[3].assignee, "test-reviewer");
                 assert!(data.coordination.contains("When to Use"));
             }
             _ => panic!("Expected RecipeData::Get"),
