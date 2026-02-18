@@ -183,21 +183,38 @@ pub async fn flush_chunks(
         }
     }
 
-    // Optionally embed + store to vec_code when embeddings are available
+    // Optionally embed + store to vec_code when embeddings are available.
+    // Process in streaming sub-batches so a failure in one sub-batch doesn't
+    // discard successfully embedded chunks from earlier sub-batches.
     if let Some(ref emb) = embeddings {
-        match embed_chunks(emb, &pending_chunks).await {
-            Ok(vectors) => {
-                tracing::info!("Embedded {} chunks", vectors.len());
+        const EMBED_SUB_BATCH: usize = 64;
+        let mut total_embedded = 0usize;
 
-                let chunk_data = prepare_chunk_data(&pending_chunks, &vectors);
-
-                if let Err(e) = store_chunk_embeddings(pool.clone(), chunk_data, project_id).await {
-                    tracing::error!("Failed to store embeddings: {}", e);
+        for sub_batch in pending_chunks.chunks(EMBED_SUB_BATCH) {
+            match embed_chunks(emb, sub_batch).await {
+                Ok(vectors) => {
+                    let chunk_data = prepare_chunk_data(sub_batch, &vectors);
+                    if let Err(e) =
+                        store_chunk_embeddings(pool.clone(), chunk_data, project_id).await
+                    {
+                        tracing::error!("Failed to store sub-batch embeddings: {}", e);
+                    } else {
+                        total_embedded += vectors.len();
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Sub-batch of {} chunks failed embedding (sizes: {:?}), skipping: {}",
+                        sub_batch.len(),
+                        sub_batch.iter().map(|c| c.content.len()).collect::<Vec<_>>(),
+                        e
+                    );
                 }
             }
-            Err(e) => {
-                tracing::error!("Batch embedding failed: {}", e);
-            }
+        }
+
+        if total_embedded > 0 {
+            tracing::info!("Embedded {} chunks", total_embedded);
         }
     }
 
