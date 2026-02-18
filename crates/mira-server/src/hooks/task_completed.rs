@@ -281,7 +281,10 @@ mod tests {
             )
             .unwrap();
         assert!(completed);
-        assert!(completed_at.is_some(), "completed_at should be set by auto-link");
+        assert!(
+            completed_at.is_some(),
+            "completed_at should be set by auto-link"
+        );
         assert_eq!(completed_in_session.as_deref(), Some("test-session"));
     }
 
@@ -305,7 +308,14 @@ mod tests {
         .unwrap();
 
         // Task subject contains milestone title (case-insensitive)
-        auto_link_milestone(&conn, pid, "add authentication endpoint", None, Some("test-session")).unwrap();
+        auto_link_milestone(
+            &conn,
+            pid,
+            "add authentication endpoint",
+            None,
+            Some("test-session"),
+        )
+        .unwrap();
 
         let completed: bool = conn
             .query_row(

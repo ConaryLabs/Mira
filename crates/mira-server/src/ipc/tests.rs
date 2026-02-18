@@ -46,7 +46,11 @@ async fn spawn_duplex_handler(
 }
 
 /// Send an IpcRequest over a generic reader/writer and parse the response.
-async fn send_request<R, W>(reader: &mut BufReader<R>, writer: &mut W, req: &IpcRequest) -> IpcResponse
+async fn send_request<R, W>(
+    reader: &mut BufReader<R>,
+    writer: &mut W,
+    req: &IpcRequest,
+) -> IpcResponse
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
