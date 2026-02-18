@@ -24,7 +24,7 @@ pub async fn search_code<C: ToolContext>(
     query: String,
     limit: Option<i64>,
 ) -> Result<Json<CodeOutput>, MiraError> {
-    let limit = limit.unwrap_or(10).max(0) as usize;
+    let limit = limit.unwrap_or(10).clamp(1, 100) as usize;
     let pi = get_project_info(ctx).await;
     let project_id = pi.id;
     let project_path = pi.path.clone();
@@ -34,7 +34,10 @@ pub async fn search_code<C: ToolContext>(
     let query_clone = query.clone();
     let crossref_result = ctx
         .code_pool()
-        .run(move |conn| Ok::<_, MiraError>(crossref_search(conn, &query_clone, project_id, limit)))
+        .run(move |conn| {
+            crossref_search(conn, &query_clone, project_id, limit)
+                .map_err(|e| MiraError::Other(format!("Failed to search code cross-references: {}", e)))
+        })
         .await
         .map_err(|e| MiraError::Other(format!("Failed to search code cross-references: {}. Try re-indexing with index(action=\"project\").", e)))?;
 
@@ -179,10 +182,10 @@ pub async fn find_function_callers<C: ToolContext>(
         ));
     }
 
-    let limit = limit.unwrap_or(20).max(0) as usize;
+    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
     let context_header = get_project_info(ctx).await.header;
 
-    let results = query_callers(ctx, &function_name, limit).await;
+    let results = query_callers(ctx, &function_name, limit).await?;
 
     if results.is_empty() {
         return Ok(Json(CodeOutput {
@@ -236,10 +239,10 @@ pub async fn find_function_callees<C: ToolContext>(
         ));
     }
 
-    let limit = limit.unwrap_or(20).max(0) as usize;
+    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
     let context_header = get_project_info(ctx).await.header;
 
-    let results = query_callees(ctx, &function_name, limit).await;
+    let results = query_callees(ctx, &function_name, limit).await?;
 
     if results.is_empty() {
         return Ok(Json(CodeOutput {
@@ -302,6 +305,18 @@ pub fn get_symbols(
             )));
         }
 
+        // Guard against reading very large files (e.g. generated code).
+        // The indexer skips files > 1MB; apply the same limit at query time.
+        const MAX_SYMBOLS_FILE_BYTES: u64 = 1_024 * 1_024;
+        if let Ok(meta) = std::fs::metadata(path) {
+            if meta.len() > MAX_SYMBOLS_FILE_BYTES {
+                return Err(MiraError::InvalidInput(format!(
+                    "File is too large ({:.1} MB) for symbol extraction. Max: 1 MB.",
+                    meta.len() as f64 / (1_024.0 * 1_024.0)
+                )));
+            }
+        }
+
         // Parse file for symbols
         let symbols = indexer::extract_symbols(path)?;
 
@@ -343,8 +358,10 @@ pub fn get_symbols(
             response.push_str(&format!("  ... and {} more\n", total - 10));
         }
 
+        // Cap structured data at 500 symbols to prevent oversized MCP responses
         let symbol_items: Vec<SymbolInfo> = symbols
             .iter()
+            .take(500)
             .map(|sym| SymbolInfo {
                 name: sym.name.clone(),
                 symbol_type: sym.symbol_type.clone(),

@@ -48,7 +48,10 @@ pub fn build_impact_graph(
             let mut next_level = Vec::new();
 
             for name in &current_level {
-                let callers = find_callers(conn, project_id, name, 20);
+                let callers = find_callers(conn, project_id, name, 20).unwrap_or_else(|e| {
+                    tracing::warn!(function = %name, error = %e, "impact analysis: failed to query callers");
+                    Vec::new()
+                });
                 for caller in callers {
                     if !seen.contains(&caller.symbol_name) {
                         seen.insert(caller.symbol_name.clone());

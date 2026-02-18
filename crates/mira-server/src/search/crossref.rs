@@ -97,8 +97,8 @@ pub fn find_callers(
     project_id: Option<i64>,
     target_name: &str,
     limit: usize,
-) -> Vec<CrossRefResult> {
-    find_callers_sync(conn, target_name, project_id, limit)
+) -> rusqlite::Result<Vec<CrossRefResult>> {
+    Ok(find_callers_sync(conn, target_name, project_id, limit)?
         .into_iter()
         .map(|r| CrossRefResult {
             symbol_name: r.symbol_name,
@@ -106,7 +106,7 @@ pub fn find_callers(
             ref_type: CrossRefType::Caller,
             call_count: r.call_count,
         })
-        .collect()
+        .collect())
 }
 
 /// Check if a function name is a stdlib/utility call that should be filtered
@@ -310,8 +310,8 @@ pub fn find_callees(
     project_id: Option<i64>,
     caller_name: &str,
     limit: usize,
-) -> Vec<CrossRefResult> {
-    find_callees_sync(conn, caller_name, project_id, limit)
+) -> rusqlite::Result<Vec<CrossRefResult>> {
+    Ok(find_callees_sync(conn, caller_name, project_id, limit)?
         .into_iter()
         .map(|r| CrossRefResult {
             symbol_name: r.symbol_name,
@@ -321,27 +321,32 @@ pub fn find_callees(
         })
         // Filter out stdlib/utility calls
         .filter(|r| !is_stdlib_call(&r.symbol_name))
-        .collect()
+        .collect())
 }
 
 /// Cross-reference search: find callers or callees based on query (connection-based)
-/// Returns None if query doesn't match cross-reference patterns
+///
+/// Returns `Ok(None)` if query doesn't match cross-reference patterns.
+/// Returns `Ok(Some(...))` on a successful pattern match + DB lookup.
+/// Returns `Err(...)` if the pattern matched but the DB query failed.
 pub fn crossref_search(
     conn: &Connection,
     query: &str,
     project_id: Option<i64>,
     limit: usize,
-) -> Option<(String, CrossRefType, Vec<CrossRefResult>)> {
+) -> rusqlite::Result<Option<(String, CrossRefType, Vec<CrossRefResult>)>> {
     tracing::debug!(query = %query, "crossref_search: checking query");
-    let (target, ref_type) = extract_crossref_target(query)?;
+    let Some((target, ref_type)) = extract_crossref_target(query) else {
+        return Ok(None);
+    };
     tracing::info!(target = %target, ref_type = ?ref_type, "crossref_search: pattern matched");
 
     let results = match ref_type {
-        CrossRefType::Caller => find_callers(conn, project_id, &target, limit),
-        CrossRefType::Callee => find_callees(conn, project_id, &target, limit),
+        CrossRefType::Caller => find_callers(conn, project_id, &target, limit)?,
+        CrossRefType::Callee => find_callees(conn, project_id, &target, limit)?,
     };
 
-    Some((target, ref_type, results))
+    Ok(Some((target, ref_type, results)))
 }
 
 /// Format cross-reference results for display
@@ -655,7 +660,7 @@ mod tests {
         );
         seed_call_edge(&conn, handler_id, "process_request");
 
-        let results = find_callers(&conn, Some(project_id), "process_request", 10);
+        let results = find_callers(&conn, Some(project_id), "process_request", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].symbol_name, "handler");
         assert_eq!(results[0].file_path, "src/api.rs");
@@ -675,7 +680,7 @@ mod tests {
         seed_call_edge(&conn, b_id, "target");
         seed_call_edge(&conn, c_id, "target");
 
-        let results = find_callers(&conn, Some(project_id), "target", 10);
+        let results = find_callers(&conn, Some(project_id), "target", 10).unwrap();
         assert_eq!(results.len(), 3);
         let names: Vec<&str> = results.iter().map(|r| r.symbol_name.as_str()).collect();
         assert!(names.contains(&"a"));
@@ -689,7 +694,7 @@ mod tests {
         let (project_id, _) =
             crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
 
-        let results = find_callers(&conn, Some(project_id), "nonexistent_function", 10);
+        let results = find_callers(&conn, Some(project_id), "nonexistent_function", 10).unwrap();
         assert!(results.is_empty());
     }
 
@@ -702,7 +707,7 @@ mod tests {
         let main_id = seed_symbol(&conn, project_id, "main", "src/main.rs", "function", 1, 20);
         seed_call_edge(&conn, main_id, "init");
 
-        let results = find_callees(&conn, Some(project_id), "main", 10);
+        let results = find_callees(&conn, Some(project_id), "main", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].symbol_name, "init");
         assert_eq!(results[0].ref_type, CrossRefType::Callee);
@@ -719,7 +724,7 @@ mod tests {
         seed_call_edge(&conn, main_id, "run_server");
         seed_call_edge(&conn, main_id, "shutdown");
 
-        let results = find_callees(&conn, Some(project_id), "main", 10);
+        let results = find_callees(&conn, Some(project_id), "main", 10).unwrap();
         assert_eq!(results.len(), 3);
         let names: Vec<&str> = results.iter().map(|r| r.symbol_name.as_str()).collect();
         assert!(names.contains(&"init"));
@@ -747,7 +752,7 @@ mod tests {
         seed_call_edge(&conn, handler_id, "clone");
         seed_call_edge(&conn, handler_id, "to_string");
 
-        let results = find_callees(&conn, Some(project_id), "handler", 10);
+        let results = find_callees(&conn, Some(project_id), "handler", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].symbol_name, "my_function");
     }
@@ -769,7 +774,8 @@ mod tests {
         );
         seed_call_edge(&conn, handler_id, "process_request");
 
-        let result = crossref_search(&conn, "who calls process_request", Some(project_id), 10);
+        let result = crossref_search(&conn, "who calls process_request", Some(project_id), 10)
+            .unwrap();
         assert!(result.is_some());
         let (target, ref_type, results) = result.unwrap();
         assert_eq!(target, "process_request");
@@ -788,7 +794,8 @@ mod tests {
         seed_call_edge(&conn, main_id, "init");
         seed_call_edge(&conn, main_id, "run_server");
 
-        let result = crossref_search(&conn, "what does main call", Some(project_id), 10);
+        let result = crossref_search(&conn, "what does main call", Some(project_id), 10)
+            .unwrap();
         assert!(result.is_some());
         let (target, ref_type, results) = result.unwrap();
         assert_eq!(target, "main");
@@ -811,11 +818,11 @@ mod tests {
         seed_call_edge(&conn, handler_id, "process_request");
 
         // Query with project_a should find the caller
-        let results_a = find_callers(&conn, Some(project_a), "process_request", 10);
+        let results_a = find_callers(&conn, Some(project_a), "process_request", 10).unwrap();
         assert_eq!(results_a.len(), 1);
 
         // Query with project_b should find nothing
-        let results_b = find_callers(&conn, Some(project_b), "process_request", 10);
+        let results_b = find_callers(&conn, Some(project_b), "process_request", 10).unwrap();
         assert!(results_b.is_empty());
     }
 
@@ -842,7 +849,7 @@ mod tests {
             crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
 
         // No symbols or edges at all
-        let results = find_callers(&conn, Some(project_id), "anything", 10);
+        let results = find_callers(&conn, Some(project_id), "anything", 10).unwrap();
         assert!(results.is_empty());
     }
 
@@ -852,7 +859,7 @@ mod tests {
         let (project_id, _) =
             crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
 
-        let results = find_callees(&conn, Some(project_id), "anything", 10);
+        let results = find_callees(&conn, Some(project_id), "anything", 10).unwrap();
         assert!(results.is_empty());
     }
 
@@ -863,7 +870,8 @@ mod tests {
             crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
 
         // Query that doesn't match any crossref pattern
-        let result = crossref_search(&conn, "explain this code", Some(project_id), 10);
+        let result = crossref_search(&conn, "explain this code", Some(project_id), 10)
+            .unwrap();
         assert!(result.is_none(), "non-crossref query should return None");
     }
 
@@ -935,7 +943,7 @@ mod tests {
         seed_call_edge(&conn, fn_id, "to_string");
         seed_call_edge(&conn, fn_id, "map");
 
-        let results = find_callees(&conn, Some(project_id), "my_fn", 10);
+        let results = find_callees(&conn, Some(project_id), "my_fn", 10).unwrap();
         assert!(
             results.is_empty(),
             "all-stdlib callees should be filtered out"
@@ -956,7 +964,7 @@ mod tests {
         seed_call_edge(&conn, a_id, "target");
 
         // limit=0 should return empty
-        let results = find_callers(&conn, Some(project_id), "target", 0);
+        let results = find_callers(&conn, Some(project_id), "target", 0).unwrap();
         assert!(results.is_empty(), "limit=0 should return empty");
     }
 }

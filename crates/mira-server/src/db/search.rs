@@ -24,32 +24,23 @@ pub fn find_callers_sync(
     target_name: &str,
     project_id: Option<i64>,
     limit: usize,
-) -> Vec<CrossRefResult> {
-    conn.prepare(
+) -> rusqlite::Result<Vec<CrossRefResult>> {
+    let mut stmt = conn.prepare(
         "SELECT cs.name, cs.file_path, cg.call_count
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
          WHERE cg.callee_name = ?1 AND (?2 IS NULL OR cs.project_id = ?2)
          ORDER BY cg.call_count DESC
          LIMIT ?3",
-    )
-    .and_then(|mut stmt| {
-        stmt.query_map(params![target_name, project_id, limit as i64], |row| {
-            Ok(CrossRefResult {
-                symbol_name: row.get(0)?,
-                file_path: row.get(1)?,
-                call_count: row.get::<_, i32>(2).unwrap_or(1),
-            })
+    )?;
+    let rows = stmt.query_map(params![target_name, project_id, limit as i64], |row| {
+        Ok(CrossRefResult {
+            symbol_name: row.get(0)?,
+            file_path: row.get(1)?,
+            call_count: row.get::<_, i32>(2).unwrap_or(1),
         })
-        .map(|rows| rows.filter_map(log_and_discard).collect())
-    })
-    .unwrap_or_else(|e| {
-        tracing::warn!(
-            "find_callers_sync query failed (possible index corruption): {}",
-            e
-        );
-        Vec::new()
-    })
+    })?;
+    Ok(rows.filter_map(log_and_discard).collect())
 }
 
 /// Find functions that are called by the given function
@@ -58,8 +49,8 @@ pub fn find_callees_sync(
     caller_name: &str,
     project_id: Option<i64>,
     limit: usize,
-) -> Vec<CrossRefResult> {
-    conn.prepare(
+) -> rusqlite::Result<Vec<CrossRefResult>> {
+    let mut stmt = conn.prepare(
         "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
@@ -67,24 +58,15 @@ pub fn find_callees_sync(
          GROUP BY cg.callee_name
          ORDER BY cnt DESC
          LIMIT ?3",
-    )
-    .and_then(|mut stmt| {
-        stmt.query_map(params![caller_name, project_id, limit as i64], |row| {
-            Ok(CrossRefResult {
-                symbol_name: row.get(0)?,
-                file_path: row.get(1)?,
-                call_count: row.get::<_, i32>(2).unwrap_or(1),
-            })
+    )?;
+    let rows = stmt.query_map(params![caller_name, project_id, limit as i64], |row| {
+        Ok(CrossRefResult {
+            symbol_name: row.get(0)?,
+            file_path: row.get(1)?,
+            call_count: row.get::<_, i32>(2).unwrap_or(1),
         })
-        .map(|rows| rows.filter_map(log_and_discard).collect())
-    })
-    .unwrap_or_else(|e| {
-        tracing::warn!(
-            "find_callees_sync query failed (possible index corruption): {}",
-            e
-        );
-        Vec::new()
-    })
+    })?;
+    Ok(rows.filter_map(log_and_discard).collect())
 }
 
 /// Get the start and end line of a symbol
@@ -358,7 +340,7 @@ mod tests {
         let caller_id = seed_symbol(&conn, pid, "handler", "src/api.rs", "function", 1, 10);
         seed_call_edge(&conn, caller_id, "process_request");
 
-        let results = find_callers_sync(&conn, "process_request", Some(pid), 10);
+        let results = find_callers_sync(&conn, "process_request", Some(pid), 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].symbol_name, "handler");
         assert_eq!(results[0].file_path, "src/api.rs");
@@ -373,7 +355,7 @@ mod tests {
         seed_call_edge(&conn, a, "target");
         seed_call_edge(&conn, b, "target");
 
-        let results = find_callers_sync(&conn, "target", Some(pid), 10);
+        let results = find_callers_sync(&conn, "target", Some(pid), 10).unwrap();
         assert_eq!(results.len(), 2);
     }
 
@@ -381,7 +363,7 @@ mod tests {
     fn test_find_callers_no_results() {
         let (conn, pid) = setup_conn_with_code_schema();
 
-        let results = find_callers_sync(&conn, "nonexistent_fn", Some(pid), 10);
+        let results = find_callers_sync(&conn, "nonexistent_fn", Some(pid), 10).unwrap();
         assert!(results.is_empty());
     }
 
@@ -392,7 +374,7 @@ mod tests {
         let main_id = seed_symbol(&conn, pid, "main", "src/main.rs", "function", 1, 20);
         seed_call_edge(&conn, main_id, "init");
 
-        let results = find_callees_sync(&conn, "main", Some(pid), 10);
+        let results = find_callees_sync(&conn, "main", Some(pid), 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].symbol_name, "init");
     }
@@ -406,7 +388,7 @@ mod tests {
         seed_call_edge(&conn, main_id, "run_server");
         seed_call_edge(&conn, main_id, "shutdown");
 
-        let results = find_callees_sync(&conn, "main", Some(pid), 10);
+        let results = find_callees_sync(&conn, "main", Some(pid), 10).unwrap();
         assert_eq!(results.len(), 3);
     }
 

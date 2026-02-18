@@ -46,13 +46,21 @@ pub async fn query_callers<C: ToolContext>(
     ctx: &C,
     fn_name: &str,
     limit: usize,
-) -> Vec<CrossRefResult> {
+) -> Result<Vec<CrossRefResult>, MiraError> {
     let project_id = ctx.project_id().await;
     let fn_name = fn_name.to_string();
     ctx.code_pool()
-        .run(move |conn| Ok::<_, MiraError>(find_callers(conn, project_id, &fn_name, limit)))
+        .run(move |conn| {
+            find_callers(conn, project_id, &fn_name, limit)
+                .map_err(|e| MiraError::Other(format!("Failed to query callers: {}", e)))
+        })
         .await
-        .unwrap_or_default()
+        .map_err(|e| {
+            MiraError::Other(format!(
+                "Failed to query callers: {}. Try re-indexing with index(action=\"project\").",
+                e
+            ))
+        })
 }
 
 /// Find callees of a function. Returns raw crossref results.
@@ -60,13 +68,21 @@ pub async fn query_callees<C: ToolContext>(
     ctx: &C,
     fn_name: &str,
     limit: usize,
-) -> Vec<CrossRefResult> {
+) -> Result<Vec<CrossRefResult>, MiraError> {
     let project_id = ctx.project_id().await;
     let fn_name = fn_name.to_string();
     ctx.code_pool()
-        .run(move |conn| Ok::<_, MiraError>(find_callees(conn, project_id, &fn_name, limit)))
+        .run(move |conn| {
+            find_callees(conn, project_id, &fn_name, limit)
+                .map_err(|e| MiraError::Other(format!("Failed to query callees: {}", e)))
+        })
         .await
-        .unwrap_or_default()
+        .map_err(|e| {
+            MiraError::Other(format!(
+                "Failed to query callees: {}. Try re-indexing with index(action=\"project\").",
+                e
+            ))
+        })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

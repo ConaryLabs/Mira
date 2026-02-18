@@ -55,6 +55,18 @@ pub fn expand_context(
     expand_context_with_conn(file_path, chunk_content, project_path, None, None)
 }
 
+/// Max file size for context expansion reads (same as indexer limit).
+/// Files larger than this are typically generated code — skip expansion
+/// and return the chunk as-is to avoid oversized MCP responses.
+const MAX_EXPAND_FILE_BYTES: u64 = 1_024 * 1_024;
+
+/// Check if a file is small enough for context expansion.
+fn file_within_size_limit(path: &std::path::Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.len() <= MAX_EXPAND_FILE_BYTES)
+        .unwrap_or(false)
+}
+
 /// Expand search result to full symbol using code_symbols table (with Connection for pool.interact)
 pub fn expand_context_with_conn(
     file_path: &str,
@@ -76,6 +88,7 @@ pub fn expand_context_with_conn(
         && let Some((start_line, end_line)) =
             lookup_symbol_bounds_sync(conn, project_id, file_path, &name)
         && let Some(full_path) = safe_join(Path::new(proj_path), file_path)
+        && file_within_size_limit(&full_path)
         && let Ok(file_content) = std::fs::read_to_string(&full_path)
     {
         let all_lines: Vec<&str> = file_content.lines().collect();
@@ -94,6 +107,7 @@ pub fn expand_context_with_conn(
     // Fallback: use original +-5 line approach
     if let Some(proj_path) = project_path
         && let Some(full_path) = safe_join(Path::new(proj_path), file_path)
+        && file_within_size_limit(&full_path)
         && let Ok(file_content) = std::fs::read_to_string(&full_path)
     {
         let search_content = if chunk_content.starts_with("// ") {
