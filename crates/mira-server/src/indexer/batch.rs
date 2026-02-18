@@ -41,11 +41,12 @@ pub struct PendingFileBatch {
 
 /// Maximum characters per chunk sent to the embedding model.
 ///
-/// Ollama's `nomic-embed-text` (and most local models) have an 8192-token context window.
-/// At ~4 chars/token that is ~32768 chars, but we use a conservative 24000 to leave
-/// headroom for the model's BPE overhead. Chunks larger than this are truncated at a
-/// valid UTF-8 char boundary before embedding — the stored chunk content is unchanged.
-const MAX_EMBED_CHARS: usize = 24_000;
+/// nomic-embed-text has an 8192-token context window. Dense C# code (camelCase identifiers
+/// split by BPE into many sub-tokens) can tokenize at ~2 chars/token, so 8192 tokens ≈ 16384
+/// chars. We use 12000 chars for a comfortable safety margin. This matches the limit in
+/// ollama.rs's MAX_TEXT_CHARS. Chunks larger than this are truncated at a valid UTF-8 char
+/// boundary before embedding — the stored chunk content is always unchanged.
+const MAX_EMBED_CHARS: usize = 12_000;
 
 /// Truncate a string to at most `max_chars` characters at a valid UTF-8 boundary.
 #[inline]
