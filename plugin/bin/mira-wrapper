@@ -168,11 +168,10 @@ fi
 
 platform="$(detect_platform)"
 
-# Use .zip for Windows, .tar.gz for everything else
-case "$platform" in
-    *windows*) archive_ext="zip" ;;
-    *)         archive_ext="tar.gz" ;;
-esac
+# Always use .tar.gz — the wrapper runs in a shell environment (sh/bash/Git Bash)
+# that has GNU tar available. Git Bash on Windows does NOT ship `unzip`, so .zip
+# would fail there. The .zip release artifacts remain for manual Windows downloads.
+archive_ext="tar.gz"
 
 url="https://github.com/${REPO}/releases/download/v${target}/mira-${platform}.${archive_ext}"
 
@@ -219,11 +218,7 @@ else
 fi
 
 # Extract verified archive
-if [ "$archive_ext" = "zip" ]; then
-    unzip -qo "$archive_file" -d "$tmp_dir"
-else
-    tar -xz -C "$tmp_dir" -f "$archive_file"
-fi
+tar -xz -C "$tmp_dir" -f "$archive_file"
 
 # Determine extracted binary name
 src_bin="${tmp_dir}/mira${MIRA_EXE_EXT}"

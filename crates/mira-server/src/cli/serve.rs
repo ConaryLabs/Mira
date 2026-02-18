@@ -298,12 +298,11 @@ pub async fn run_mcp_server() -> Result<()> {
     info!("File watcher started");
     server.watcher = Some(watcher_handle);
 
-    // Start IPC socket listener (shares MiraServer state via Arc fields)
-    #[cfg(unix)]
+    // Start IPC listener (Unix socket on Unix, Named Pipe on Windows)
     let ipc_handle = {
         let ipc_server = server.clone();
         tokio::spawn(async move {
-            if let Err(e) = mira::ipc::run_socket_listener(ipc_server).await {
+            if let Err(e) = mira::ipc::run_ipc_listener(ipc_server).await {
                 tracing::warn!("IPC listener failed: {}", e);
             }
         })
@@ -338,10 +337,10 @@ pub async fn run_mcp_server() -> Result<()> {
     let service = rmcp::serve_server(server, transport).await?;
     service.waiting().await?;
 
-    // Cleanup IPC socket on shutdown
+    // Cleanup IPC on shutdown
+    ipc_handle.abort();
     #[cfg(unix)]
     {
-        ipc_handle.abort();
         let _ = std::fs::remove_file(mira::ipc::socket_path());
     }
 
