@@ -31,6 +31,54 @@ impl<T, E: Display> ResultExt<T, E> for Result<T, E> {
     }
 }
 
+/// Normalize a project path to a canonical, consistent form.
+///
+/// 1. Expands `~` prefix to the user's home directory
+/// 2. Canonicalizes the path (resolving symlinks, `.`, `..`), falling back to
+///    the raw path if it doesn't exist yet
+/// 3. Strips trailing slashes
+/// 4. Converts to string with forward slashes via `path_to_string()`
+///
+/// This ensures that `~/project`, `/home/user/project`, and symlinked paths
+/// all resolve to the same canonical string for database lookups.
+pub fn normalize_project_path(path: &str) -> String {
+    let path = path.trim();
+    if path.is_empty() {
+        return String::new();
+    }
+
+    // Expand ~ to home directory
+    let expanded: PathBuf = if let Some(rest) = path.strip_prefix("~/") {
+        match dirs::home_dir() {
+            Some(home) => home.join(rest),
+            None => PathBuf::from(path),
+        }
+    } else if path == "~" {
+        match dirs::home_dir() {
+            Some(home) => home,
+            None => PathBuf::from(path),
+        }
+    } else {
+        PathBuf::from(path)
+    };
+
+    // Canonicalize (resolves symlinks, `.`, `..`), fall back to raw path
+    let canonical = std::fs::canonicalize(&expanded).unwrap_or_else(|e| {
+        tracing::debug!("canonicalize failed for {}: {e}", expanded.display());
+        expanded
+    });
+
+    // Convert to string with forward slashes, then strip trailing slashes
+    let s = path_to_string(&canonical);
+    let s = s.trim_end_matches('/').trim_end_matches('\\');
+    if s.is_empty() {
+        // Edge case: root path "/" would become empty after trimming
+        "/".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 /// Safely join a relative path to a base directory, preventing path traversal.
 ///
 /// Returns `None` if the resulting path escapes the base directory (e.g. via `../`).
@@ -332,5 +380,56 @@ mod tests {
         let input = "ANTHROPIC_API_KEY=sk-ant-api03-longsecretvalue123 is invalid";
         let result = redact_sensitive(input);
         assert!(!result.contains("longsecretvalue"));
+    }
+
+    #[test]
+    fn test_normalize_project_path_strips_trailing_slash() {
+        let result = normalize_project_path("/tmp/test/");
+        assert!(!result.ends_with('/'));
+    }
+
+    #[test]
+    fn test_normalize_project_path_tilde_expansion() {
+        let result = normalize_project_path("~/some-project");
+        assert!(!result.starts_with('~'), "tilde should be expanded");
+        assert!(result.contains("some-project"));
+    }
+
+    #[test]
+    fn test_normalize_project_path_bare_tilde() {
+        let result = normalize_project_path("~");
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(result, path_to_string(&home));
+    }
+
+    #[test]
+    fn test_normalize_project_path_empty() {
+        assert_eq!(normalize_project_path(""), "");
+        assert_eq!(normalize_project_path("  "), "");
+    }
+
+    #[test]
+    fn test_normalize_project_path_root() {
+        assert_eq!(normalize_project_path("/"), "/");
+    }
+
+    #[test]
+    fn test_normalize_project_path_existing_dir() {
+        // /tmp always exists on Linux
+        let result = normalize_project_path("/tmp");
+        assert_eq!(result, "/tmp");
+    }
+
+    #[test]
+    fn test_normalize_project_path_nonexistent_falls_back() {
+        let result = normalize_project_path("/nonexistent/path/xyz123");
+        assert_eq!(result, "/nonexistent/path/xyz123");
+    }
+
+    #[test]
+    fn test_normalize_project_path_idempotent() {
+        let first = normalize_project_path("/tmp");
+        let second = normalize_project_path(&first);
+        assert_eq!(first, second);
     }
 }

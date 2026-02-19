@@ -128,7 +128,8 @@ async fn save_pre_compaction_state(
     trigger: &str,
     transcript: Option<&str>,
 ) -> Result<()> {
-    let project_id = client.resolve_project(None).await.map(|(id, _)| id);
+    let sid = Some(session_id).filter(|s| !s.is_empty());
+    let project_id = client.resolve_project(None, sid).await.map(|(id, _)| id);
 
     // Store compaction event as an audit marker
     let note_content = format!(

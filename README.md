@@ -15,7 +15,7 @@ The result: Claude Code that remembers what you decided last week, understands y
 ## The Short Version
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
+claude plugin install mira
 mira setup  # optional: configure API keys for enhanced features
 ```
 
@@ -36,6 +36,7 @@ That's it. Mira auto-configures itself, starts injecting context on every prompt
 - **Changes are analyzed, not just diffed.** Mira classifies what changed semantically, traces impact through the call graph, scores risk based on historical patterns, and learns which parts of your codebase are fragile.
 - **Agent teams share a brain.** Automatic team detection, file ownership tracking, cross-teammate conflict detection, and shared memory distillation. Built-in recipes for expert review, full-cycle development, QA hardening, and safe refactoring.
 - **Knowledge compounds.** Memories start as candidates, gain confidence through repeated cross-session use, and get promoted over time. A background distillation system extracts cross-cutting patterns from accumulated knowledge into higher-level insights.
+- **Cross-project knowledge.** Mira can surface relevant solutions from your other projects when applicable.
 
 ## How It Works
 
@@ -54,11 +55,11 @@ Everything runs locally. Two SQLite databases (`~/.mira/`): one for memories, se
 
 ### Quick Install (Recommended)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
-```
+Install from the Claude Code plugin marketplace:
 
-Detects your OS, downloads the binary, installs the Claude Code plugin (auto-configures all hooks and skills), and creates `~/.mira/`.
+```bash
+claude plugin install mira
+```
 
 Then optionally configure providers:
 ```bash
@@ -66,6 +67,16 @@ mira setup          # interactive wizard with live validation + Ollama auto-dete
 mira setup --yes    # non-interactive (CI/scripted installs)
 mira setup --check  # read-only validation
 ```
+
+Verify installation: Start a new Claude Code session in any project. You should see "Mira: Loading session context..." in the status bar.
+
+### Alternative: Script Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
+```
+
+Detects your OS, downloads the binary, installs the Claude Code plugin (auto-configures all hooks and skills), and creates `~/.mira/`.
 
 ### Manual Install
 
@@ -227,6 +238,8 @@ The **MCP server** (cargo install / build from source) provides the core tools. 
 | Agent team coordination | Full | Full |
 | Error pattern learning | Remembers how errors were fixed across sessions — Claude gets the solution faster next time | Same |
 | Memory poisoning defense | Prompt injection attempts in memory writes are detected and flagged | Same |
+
+OpenAI embeddings use text-embedding-3-small, which typically costs less than $1/month for normal development usage.
 
 ## Troubleshooting
 

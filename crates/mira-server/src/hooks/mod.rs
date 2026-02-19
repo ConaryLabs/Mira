@@ -36,37 +36,85 @@ pub fn get_code_db_path() -> PathBuf {
     get_db_path().with_file_name("mira-code.db")
 }
 
-/// Resolve active project ID and path in a single DB call.
-/// Returns (Option<project_id>, Option<project_path>).
+/// Resolve active project ID, path, and name.
+/// Returns (Option<project_id>, Option<project_path>, Option<project_name>).
+///
+/// Resolution order:
+/// 1. Per-session file (`~/.mira/sessions/{session_id}/claude-cwd`) when session_id is provided
+/// 2. Global file (`~/.mira/claude-cwd`)
+/// 3. Database fallback (`get_last_active_project_sync`)
 pub async fn resolve_project(
     pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
-) -> (Option<i64>, Option<String>) {
+    session_id: Option<&str>,
+) -> (Option<i64>, Option<String>, Option<String>) {
+    // Try per-session cwd first, then global, then DB fallback
+    let cwd_from_file = read_session_or_global_cwd(session_id);
+
+    let cwd = cwd_from_file.clone();
     pool.interact(move |conn| {
-        let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
-            tracing::warn!("Failed to get last active project: {e}");
-            None
+        // Use file-based cwd if available, otherwise fall back to DB
+        let path = cwd.or_else(|| {
+            crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
+                tracing::warn!("Failed to get last active project: {e}");
+                None
+            })
         });
         let result = if let Some(ref path) = path {
-            crate::db::get_or_create_project_sync(conn, path, None)
-                .ok()
-                .map(|(id, _)| id)
+            crate::db::get_or_create_project_sync(conn, path, None).ok()
         } else {
             None
         };
-        Ok::<_, anyhow::Error>((result, path))
+        match result {
+            Some((id, name)) => Ok::<_, anyhow::Error>((Some(id), path, name)),
+            None => Ok((None, path, None)),
+        }
     })
     .await
     .unwrap_or_else(|e| {
         tracing::warn!("Failed to resolve project: {e}");
-        (None, None)
+        (None, None, None)
     })
 }
 
 /// Resolve only the active project ID (convenience wrapper).
 pub async fn resolve_project_id(
     pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
+    session_id: Option<&str>,
 ) -> Option<i64> {
-    resolve_project(pool).await.0
+    resolve_project(pool, session_id).await.0
+}
+
+/// Read cwd from per-session file first, falling back to global file.
+///
+/// When `session_id` is provided, tries `~/.mira/sessions/{session_id}/claude-cwd` first.
+/// Falls back to global `~/.mira/claude-cwd` if the per-session file doesn't exist.
+fn read_session_or_global_cwd(session_id: Option<&str>) -> Option<String> {
+    if let Some(sid) = session_id {
+        // Defense-in-depth: reject empty strings even though callers should filter them
+        if sid.is_empty() {
+            // Fall through to global cwd
+        } else if sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            let home = dirs::home_dir()?;
+            let per_session_cwd = home.join(format!(".mira/sessions/{}/claude-cwd", sid));
+            if let Ok(content) = std::fs::read_to_string(&per_session_cwd) {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    tracing::debug!(
+                        "Resolved cwd from per-session file for {}",
+                        &sid[..sid.len().min(8)]
+                    );
+                    return Some(trimmed);
+                }
+            }
+        } else {
+            tracing::warn!(
+                "Invalid session_id for per-session cwd lookup: contains unsafe characters"
+            );
+        }
+    }
+
+    // Fall back to global cwd file
+    crate::hooks::session::read_claude_cwd()
 }
 
 /// Performance threshold in milliseconds - warn if hook exceeds this.

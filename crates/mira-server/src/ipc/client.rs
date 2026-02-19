@@ -246,12 +246,20 @@ impl HookClient {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Resolve the active project, returning (project_id, project_path).
-    pub async fn resolve_project(&mut self, cwd: Option<&str>) -> Option<(i64, String)> {
+    /// When `session_id` is provided, per-session cwd files are checked first.
+    pub async fn resolve_project(
+        &mut self,
+        cwd: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Option<(i64, String)> {
         if self.is_ipc() {
-            let params = match cwd {
-                Some(c) => json!({"cwd": c}),
-                None => json!({}),
-            };
+            let mut params = json!({});
+            if let Some(c) = cwd {
+                params["cwd"] = json!(c);
+            }
+            if let Some(s) = session_id {
+                params["session_id"] = json!(s);
+            }
             if let Ok(result) = self.call("resolve_project", params).await {
                 let project_id = result.get("project_id")?.as_i64()?;
                 let path = result.get("path")?.as_str()?.to_string();
@@ -260,7 +268,7 @@ impl HookClient {
             // IPC failed — call() may have switched to Direct, fall through
         }
         if let Backend::Direct { pool } = &self.inner {
-            let (id, path) = crate::hooks::resolve_project(pool).await;
+            let (id, path, _name) = crate::hooks::resolve_project(pool, session_id).await;
             return Some((id?, path?));
         }
         None
@@ -988,15 +996,27 @@ impl HookClient {
     }
 
     /// Get startup context for a fresh session.
-    pub async fn get_startup_context(&mut self, cwd: Option<&str>) -> Option<String> {
+    pub async fn get_startup_context(
+        &mut self,
+        cwd: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Option<String> {
         if self.is_ipc() {
-            let params = json!({"cwd": cwd});
+            let mut params = json!({"cwd": cwd});
+            if let Some(s) = session_id {
+                params["session_id"] = json!(s);
+            }
             if let Ok(result) = self.call("get_startup_context", params).await {
                 return result.get("context")?.as_str().map(String::from);
             }
         }
         if let Backend::Direct { pool } = &self.inner {
-            return crate::hooks::session::build_startup_context(cwd, Some(pool.clone())).await;
+            return crate::hooks::session::build_startup_context(
+                cwd,
+                Some(pool.clone()),
+                session_id,
+            )
+            .await;
         }
         None
     }

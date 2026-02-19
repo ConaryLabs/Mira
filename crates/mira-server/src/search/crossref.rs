@@ -774,8 +774,8 @@ mod tests {
         );
         seed_call_edge(&conn, handler_id, "process_request");
 
-        let result = crossref_search(&conn, "who calls process_request", Some(project_id), 10)
-            .unwrap();
+        let result =
+            crossref_search(&conn, "who calls process_request", Some(project_id), 10).unwrap();
         assert!(result.is_some());
         let (target, ref_type, results) = result.unwrap();
         assert_eq!(target, "process_request");
@@ -794,8 +794,7 @@ mod tests {
         seed_call_edge(&conn, main_id, "init");
         seed_call_edge(&conn, main_id, "run_server");
 
-        let result = crossref_search(&conn, "what does main call", Some(project_id), 10)
-            .unwrap();
+        let result = crossref_search(&conn, "what does main call", Some(project_id), 10).unwrap();
         assert!(result.is_some());
         let (target, ref_type, results) = result.unwrap();
         assert_eq!(target, "main");
@@ -870,8 +869,7 @@ mod tests {
             crate::db::get_or_create_project_sync(&conn, "/test/project", Some("test")).unwrap();
 
         // Query that doesn't match any crossref pattern
-        let result = crossref_search(&conn, "explain this code", Some(project_id), 10)
-            .unwrap();
+        let result = crossref_search(&conn, "explain this code", Some(project_id), 10).unwrap();
         assert!(result.is_none(), "non-crossref query should return None");
     }
 

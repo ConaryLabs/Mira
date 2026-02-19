@@ -66,7 +66,8 @@ pub async fn run() -> Result<()> {
     let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some((project_id, _)) = client.resolve_project(None).await else {
+    let sid = Some(failure_input.session_id.as_str()).filter(|s| !s.is_empty());
+    let Some((project_id, _)) = client.resolve_project(None, sid).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };

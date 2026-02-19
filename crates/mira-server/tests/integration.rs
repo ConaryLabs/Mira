@@ -316,7 +316,8 @@ async fn test_search_code_empty() {
     assert!(result.is_ok(), "search_code failed: {:?}", result.err());
     let output = result.unwrap();
     assert!(
-        msg!(output).contains("No code matches found"),
+        msg!(output).contains("No code index found")
+            || msg!(output).contains("No code matches found"),
         "Output: {}",
         msg!(output)
     );

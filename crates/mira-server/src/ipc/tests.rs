@@ -392,7 +392,7 @@ mod unix_tests {
         let stream = UnixStream::connect(&sock_path).await.unwrap();
         let mut client = HookClient::from_stream(stream);
 
-        let result = client.resolve_project(Some("/test/path")).await;
+        let result = client.resolve_project(Some("/test/path"), None).await;
         assert!(result.is_some(), "resolve_project should return a result");
         let (id, path) = result.unwrap();
         assert!(id > 0);

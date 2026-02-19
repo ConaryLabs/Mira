@@ -163,10 +163,10 @@ pub(crate) fn current_vec_code_dims(conn: &Connection) -> Option<usize> {
             let sql: String = row.get(0)?;
             if let Some(start) = sql.find("float[") {
                 let rest = &sql[start + 6..];
-                if let Some(end) = rest.find(']') {
-                    if let Ok(dim) = rest[..end].parse::<usize>() {
-                        return Ok(Some(dim));
-                    }
+                if let Some(end) = rest.find(']')
+                    && let Ok(dim) = rest[..end].parse::<usize>()
+                {
+                    return Ok(Some(dim));
                 }
             }
             Ok(None)

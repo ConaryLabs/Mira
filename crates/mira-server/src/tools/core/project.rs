@@ -588,6 +588,73 @@ pub async fn session_start<C: ToolContext>(
         ));
     }
 
+    // Lightweight stale index detection: compare last indexed_at against git HEAD
+    if symbol_count > 0 {
+        let pp = project_path.clone();
+        let stale_check = async {
+            // Get the newest indexed_at timestamp for this project
+            let last_indexed: Option<String> = ctx
+                .code_pool()
+                .run(move |conn| {
+                    conn.query_row(
+                        "SELECT MAX(indexed_at) FROM code_symbols WHERE project_id = ?",
+                        rusqlite::params![project_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| MiraError::Other(e.to_string()))
+                })
+                .await
+                .ok();
+
+            let last_indexed = last_indexed?;
+
+            // Check if git HEAD has changed since the last index
+            // by looking for commits after the indexed_at timestamp
+            let output = Command::new("git")
+                .args([
+                    "log",
+                    "--oneline",
+                    "-1",
+                    &format!("--after={}", last_indexed),
+                ])
+                .current_dir(&pp)
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.trim().is_empty() {
+                // No commits after indexed_at — index is up to date
+                None
+            } else {
+                Some(())
+            }
+        };
+
+        if stale_check.await.is_some() {
+            if ctx.watcher().is_some() {
+                response.push_str(
+                    "\nNote: Code index may be stale (new commits detected). Background re-index triggered; run index(action='project') to force a full refresh.\n",
+                );
+            } else {
+                response.push_str(
+                    "\nNote: Code index may be stale (new commits detected). Run index(action='project') to refresh.\n",
+                );
+            }
+            // Trigger background re-index if file watcher is available
+            if let Some(watcher) = ctx.watcher() {
+                tracing::info!(
+                    "Stale index detected for project {}, triggering background re-index",
+                    project_id
+                );
+                watcher
+                    .watch(project_id, std::path::PathBuf::from(&project_path))
+                    .await;
+            }
+        }
+    }
+
     response.push_str("\nReady.");
     Ok(Json(ProjectOutput {
         action: "start".into(),

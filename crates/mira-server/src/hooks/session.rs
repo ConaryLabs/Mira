@@ -40,9 +40,70 @@ pub fn task_list_file_path() -> PathBuf {
     home_dir_or_fallback().join(".mira/claude-task-list-id")
 }
 
+/// Per-session directory path: `~/.mira/sessions/{session_id}/`
+fn per_session_dir(session_id: &str) -> Option<PathBuf> {
+    // Empty string passes `.chars().all()` vacuously — reject it explicitly
+    if session_id.is_empty() {
+        return None;
+    }
+    // Validate session_id to prevent path traversal
+    if !session_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        tracing::warn!(
+            "Invalid characters in session_id for per-session dir, skipping: {:?}",
+            session_id
+        );
+        return None;
+    }
+    Some(home_dir_or_fallback().join(format!(".mira/sessions/{}/", session_id)))
+}
+
+/// Write a file to both the global path and the per-session directory.
+/// The global file is written for backward compatibility; the per-session copy
+/// provides session isolation. Per-session writes are best-effort.
+fn write_global_and_per_session(
+    global_path: &std::path::Path,
+    session_id: Option<&str>,
+    filename: &str,
+    content: &str,
+) -> std::io::Result<()> {
+    // Always write the global file
+    write_file_restricted(global_path, content)?;
+
+    // Also write per-session copy when session_id is available
+    if let Some(sid) = session_id
+        && let Some(session_dir) = per_session_dir(sid)
+    {
+        if let Err(e) = fs::create_dir_all(&session_dir) {
+            tracing::warn!("Failed to create per-session dir: {e}");
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&session_dir, fs::Permissions::from_mode(0o700));
+            }
+            let per_session_path = session_dir.join(filename);
+            if let Err(e) = write_file_restricted(&per_session_path, content) {
+                tracing::warn!("Failed to write per-session file {filename}: {e}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Marker file path for tracking whether goals were already shown this session.
 /// Other hooks can check this to avoid re-injecting goals.
-fn goals_shown_path() -> PathBuf {
+/// When session_id is provided, uses a per-session path to avoid cross-session clobbering.
+fn goals_shown_path_for(session_id: Option<&str>) -> PathBuf {
+    if let Some(sid) = session_id
+        && let Some(session_dir) = per_session_dir(sid)
+    {
+        return session_dir.join("goals_shown");
+    }
+    // Fallback to global tmp path
     home_dir_or_fallback().join(".mira/tmp/goals_shown")
 }
 
@@ -63,8 +124,8 @@ fn write_file_restricted(path: &std::path::Path, content: &str) -> std::io::Resu
 
 /// Mark that goals have been injected into the session context.
 /// Called by SessionStart after injecting goals, so other hooks can skip them.
-fn mark_goals_shown() {
-    let path = goals_shown_path();
+fn mark_goals_shown(session_id: Option<&str>) {
+    let path = goals_shown_path_for(session_id);
     if let Some(parent) = path.parent()
         && let Err(e) = fs::create_dir_all(parent)
     {
@@ -78,8 +139,8 @@ fn mark_goals_shown() {
 /// Check whether goals have already been shown this session.
 /// Returns true if goals were shown within the last 30 minutes
 /// (stale markers from crashed sessions are ignored).
-pub fn were_goals_shown() -> bool {
-    let path = goals_shown_path();
+pub fn were_goals_shown(session_id: Option<&str>) -> bool {
+    let path = goals_shown_path_for(session_id);
     let content = match fs::read_to_string(&path) {
         Ok(c) => c,
         Err(_) => return false,
@@ -153,16 +214,26 @@ pub async fn run() -> Result<()> {
     // Extract session_id from Claude's hook input
     let session_id = input.get("session_id").and_then(|v| v.as_str());
     if let Some(sid) = session_id {
-        let path = session_file_path();
-        write_file_restricted(&path, sid)?;
+        // Create per-session directory early so subsequent writes can use it
+        if let Some(session_dir) = per_session_dir(sid) {
+            if let Err(e) = fs::create_dir_all(&session_dir) {
+                tracing::debug!("Failed to create per-session dir: {e}");
+            } else {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&session_dir, fs::Permissions::from_mode(0o700));
+                }
+            }
+        }
+        write_global_and_per_session(&session_file_path(), Some(sid), "claude-session-id", sid)?;
         tracing::debug!(session_id = sid, "Captured Claude session");
     }
 
     // Extract cwd from Claude's hook input for auto-project detection
     let cwd = input.get("cwd").and_then(|v| v.as_str());
     if let Some(cwd_val) = cwd {
-        let path = cwd_file_path();
-        write_file_restricted(&path, cwd_val)?;
+        write_global_and_per_session(&cwd_file_path(), session_id, "claude-cwd", cwd_val)?;
         tracing::debug!(cwd = cwd_val, "Captured Claude cwd");
     }
 
@@ -185,13 +256,22 @@ pub async fn run() -> Result<()> {
         })
         .unwrap_or("startup");
 
-    // Write source info atomically (temp file + rename)
+    // Write source info atomically (temp file + rename) for global path
     let source_info = SourceInfo::new(session_id.map(String::from), source);
     let source_json = serde_json::to_string(&source_info)?;
     let source_path = source_file_path();
     let temp_path = source_path.with_extension("tmp");
     write_file_restricted(&temp_path, &source_json)?;
     fs::rename(&temp_path, &source_path)?;
+    // Also write per-session copy (non-atomic is fine for this)
+    if let Some(sid) = session_id
+        && let Some(session_dir) = per_session_dir(sid)
+    {
+        let per_session_path = session_dir.join("claude-source.json");
+        if let Err(e) = write_file_restricted(&per_session_path, &source_json) {
+            tracing::debug!("Failed to write per-session source file: {e}");
+        }
+    }
     tracing::debug!(source = source, "Captured Claude source");
 
     // Extract task_list_id from Claude's hook input or env var
@@ -202,8 +282,12 @@ pub async fn run() -> Result<()> {
         .or_else(|| std::env::var("CLAUDE_CODE_TASK_LIST_ID").ok());
 
     if let Some(ref list_id) = task_list_id {
-        let path = task_list_file_path();
-        write_file_restricted(&path, list_id)?;
+        write_global_and_per_session(
+            &task_list_file_path(),
+            session_id,
+            "claude-task-list-id",
+            list_id,
+        )?;
         tracing::debug!(task_list_id = %list_id, "Captured Claude task list");
     }
 
@@ -267,7 +351,9 @@ pub async fn run() -> Result<()> {
             .get_resume_context(cwd_owned.as_deref(), session_id_owned.as_deref())
             .await
     } else {
-        client.get_startup_context(cwd_owned.as_deref()).await
+        client
+            .get_startup_context(cwd_owned.as_deref(), session_id_owned.as_deref())
+            .await
     };
 
     if let Some(ctx) = context {
@@ -286,9 +372,11 @@ pub async fn run() -> Result<()> {
 
 /// Build lightweight context for a fresh startup session.
 /// Includes active goals and a brief note about the last session.
+/// `session_id` is used for per-session goals-shown tracking.
 pub(crate) async fn build_startup_context(
     cwd: Option<&str>,
     pool: Option<Arc<DatabasePool>>,
+    session_id: Option<&str>,
 ) -> Option<String> {
     let pool = match pool {
         Some(p) => p,
@@ -296,31 +384,62 @@ pub(crate) async fn build_startup_context(
             let db_path = get_db_path();
             match DatabasePool::open_hook(&db_path).await {
                 Ok(p) => Arc::new(p),
-                Err(_) => return None,
+                Err(e) => {
+                    tracing::warn!("Failed to open DB for startup context: {e}");
+                    return None;
+                }
             }
         }
     };
 
-    let project_id: Option<i64> = if let Some(cwd_path) = cwd {
+    let (project_id, is_new_project): (Option<i64>, bool) = if let Some(cwd_path) = cwd {
         let pool_clone = pool.clone();
-        let cwd_owned = cwd_path.to_string();
-        pool_clone
+        // Normalize before checking existence to match the path that get_or_create_project_sync
+        // will INSERT, preventing false-positive "new project" when the same directory is
+        // referenced via different path forms (symlink, trailing slash, tilde).
+        let cwd_owned = crate::utils::normalize_project_path(cwd_path);
+        let result: Option<(i64, bool)> = pool_clone
             .interact(move |conn| {
+                // Check if the project already exists before upserting
+                let existing: Option<i64> = conn
+                    .query_row(
+                        "SELECT id FROM projects WHERE path = ?",
+                        [&cwd_owned as &str],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                let is_new = existing.is_none();
                 Ok::<_, anyhow::Error>(
                     crate::db::get_or_create_project_sync(conn, &cwd_owned, None)
                         .ok()
-                        .map(|(id, _)| id),
+                        .map(|(id, _)| (id, is_new)),
                 )
             })
             .await
             .ok()
-            .flatten()
+            .flatten();
+        match result {
+            Some((id, is_new)) => (Some(id), is_new),
+            None => (None, false),
+        }
     } else {
-        super::resolve_project_id(&pool).await
+        (super::resolve_project_id(&pool, session_id).await, false)
     };
     let project_id = project_id?;
 
     let mut context_parts: Vec<String> = Vec::new();
+
+    // Surface a message when Mira encounters a new project directory
+    if is_new_project {
+        let project_name = cwd
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|f| f.to_str())
+            .unwrap_or("unknown");
+        context_parts.push(format!(
+            "[Mira] New project detected: {}. Memories and goals are scoped to this project.",
+            project_name
+        ));
+    }
 
     // Brief note about last session (summary only, not detailed tool history)
     let pool_clone = pool.clone();
@@ -367,14 +486,14 @@ pub(crate) async fn build_startup_context(
             "[Mira/goals] Active goals:\n{}",
             goal_lines.join("\n")
         ));
-        mark_goals_shown();
+        mark_goals_shown(session_id);
     }
 
     if context_parts.is_empty() {
         if previous_session.is_none() {
             // First-ever session for this user — show a welcome message
             return Some(
-                "[Mira] Welcome! Mira is now tracking this project. Try session(action=\"recap\") for context, or memory(action=\"remember\", content=\"...\") to store your first decision.".to_string()
+                "[Mira] Welcome! Mira is now tracking this project. Try /mira:recap for context, or /mira:remember to store your first decision.".to_string()
             );
         }
         return None;
@@ -395,7 +514,10 @@ pub(crate) async fn build_resume_context(
             let db_path = get_db_path();
             match DatabasePool::open_hook(&db_path).await {
                 Ok(p) => Arc::new(p),
-                Err(_) => return None,
+                Err(e) => {
+                    tracing::warn!("Failed to open DB for resume context: {e}");
+                    return None;
+                }
             }
         }
     };
@@ -418,7 +540,7 @@ pub(crate) async fn build_resume_context(
             .flatten()
     } else {
         // Fallback to last active project only if no cwd available
-        super::resolve_project_id(&pool).await
+        super::resolve_project_id(&pool, session_id).await
     };
     let project_id = project_id?;
 
@@ -574,7 +696,7 @@ pub(crate) async fn build_resume_context(
             "[Mira/goals] Active goals:\n{}",
             goal_lines.join("\n")
         ));
-        mark_goals_shown();
+        mark_goals_shown(session_id);
     }
 
     // Add team context if in a team
@@ -864,6 +986,18 @@ pub fn cleanup_team_file(session_id: &str) {
         return;
     };
     let _ = fs::remove_file(&path);
+}
+
+/// Remove the per-session directory and all its contents.
+/// Best-effort: logs a warning on failure but never panics.
+pub(crate) fn cleanup_per_session_dir(session_id: &str) {
+    if let Some(dir) = per_session_dir(session_id) {
+        if dir.exists() {
+            if let Err(e) = fs::remove_dir_all(&dir) {
+                tracing::warn!("Failed to clean up per-session dir: {e}");
+            }
+        }
+    }
 }
 
 /// Detect team membership from Claude Code's Agent Teams config files.
@@ -1238,6 +1372,39 @@ mod tests {
         });
         let result = build_compaction_summary(&snapshot);
         assert!(result.is_none());
+    }
+
+    // ============================================================================
+    // per_session_dir tests (M1)
+    // ============================================================================
+
+    #[test]
+    fn test_per_session_dir_empty_string() {
+        assert!(per_session_dir("").is_none(), "empty string should return None");
+    }
+
+    #[test]
+    fn test_per_session_dir_valid_id() {
+        let result = per_session_dir("abc-123");
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("sessions/abc-123"));
+    }
+
+    #[test]
+    fn test_per_session_dir_invalid_chars() {
+        // Path traversal attempt
+        assert!(per_session_dir("../etc/passwd").is_none());
+        // Slash
+        assert!(per_session_dir("foo/bar").is_none());
+        // Spaces
+        assert!(per_session_dir("foo bar").is_none());
+    }
+
+    #[test]
+    fn test_cleanup_per_session_dir_nonexistent() {
+        // Should not panic when the directory doesn't exist
+        cleanup_per_session_dir("nonexistent-session-id-12345");
     }
 
     #[test]

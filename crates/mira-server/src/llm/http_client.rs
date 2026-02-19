@@ -156,7 +156,10 @@ mod tests {
     fn test_client_creation() {
         let client = LlmHttpClient::new(Duration::from_secs(10), Duration::from_secs(5));
         assert_eq!(client.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(client.base_backoff, Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS));
+        assert_eq!(
+            client.base_backoff,
+            Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS)
+        );
         assert_eq!(client.request_timeout, Duration::from_secs(10));
         assert_eq!(client.connect_timeout, Duration::from_secs(5));
     }
@@ -166,9 +169,18 @@ mod tests {
         let reqwest_client = Client::new();
         let client = LlmHttpClient::from_client(reqwest_client);
         assert_eq!(client.max_attempts, DEFAULT_MAX_ATTEMPTS);
-        assert_eq!(client.base_backoff, Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS));
-        assert_eq!(client.request_timeout, Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS));
-        assert_eq!(client.connect_timeout, Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS));
+        assert_eq!(
+            client.base_backoff,
+            Duration::from_secs(DEFAULT_BASE_BACKOFF_SECS)
+        );
+        assert_eq!(
+            client.request_timeout,
+            Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            client.connect_timeout,
+            Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)
+        );
     }
 
     #[test]

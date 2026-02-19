@@ -258,12 +258,51 @@ pub async fn setup_server_context() -> Result<MiraServer> {
     Ok(ctx.server)
 }
 
+/// Check if we're a plugin-launched MCP server that conflicts with a project's
+/// dev `.mcp.json` entry. When developing Mira itself, both the plugin and the
+/// project config try to launch separate MCP servers, causing duplicate tools
+/// and shared DB conflicts.
+fn check_dev_mode_collision() {
+    // Only relevant when launched by the plugin system
+    if std::env::var("CLAUDE_PLUGIN_ROOT").is_err() {
+        return;
+    }
+
+    // Check if the project's .mcp.json has a "mira" entry
+    let mcp_json_path = std::env::current_dir().ok().map(|p| p.join(".mcp.json"));
+
+    let Some(path) = mcp_json_path else { return };
+
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return;
+    };
+
+    // Parse as JSON and look for a "mira" key in mcpServers
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+        let has_mira = json
+            .get("mcpServers")
+            .and_then(|s| s.as_object())
+            .is_some_and(|servers| servers.contains_key("mira"));
+
+        if has_mira {
+            warn!(
+                "Dev mode detected: project .mcp.json has a Mira entry. \
+                 Plugin MCP server may conflict with the project's debug instance. \
+                 Consider disabling the Mira plugin for this project."
+            );
+        }
+    }
+}
+
 /// Run the MCP server with stdio transport
 pub async fn run_mcp_server() -> Result<()> {
     let ctx = init_server_context().await?;
     let mut server = ctx.server;
     let pool = ctx.pool;
     let env_config = ctx.env_config;
+
+    // Warn if plugin MCP server conflicts with a project dev instance
+    check_dev_mode_collision();
 
     if let Some(ref emb) = server.embeddings {
         info!(

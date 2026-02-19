@@ -113,7 +113,11 @@ mod tests {
 
     #[test]
     fn test_with_tools_sets_tool_choice_auto() {
-        let tools = vec![Tool::function("search", "Search code", serde_json::json!({}))];
+        let tools = vec![Tool::function(
+            "search",
+            "Search code",
+            serde_json::json!({}),
+        )];
         let req = ChatRequest::new("model", vec![]).with_tools(Some(tools));
         assert!(req.tools.is_some());
         assert_eq!(req.tool_choice, Some("auto".into()));
@@ -150,10 +154,7 @@ mod tests {
 
     #[test]
     fn test_messages_serialized_correctly() {
-        let msgs = vec![
-            Message::system("You are helpful"),
-            Message::user("Hello"),
-        ];
+        let msgs = vec![Message::system("You are helpful"), Message::user("Hello")];
         let req = ChatRequest::new("model", msgs);
         let json = serde_json::to_value(&req).unwrap();
         let messages = json["messages"].as_array().unwrap();

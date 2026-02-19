@@ -219,7 +219,10 @@ mod tests {
 
     #[test]
     fn test_max_tokens_reasoner() {
-        assert_eq!(DeepSeekClient::max_tokens_for_model("deepseek-reasoner"), 65536);
+        assert_eq!(
+            DeepSeekClient::max_tokens_for_model("deepseek-reasoner"),
+            65536
+        );
     }
 
     #[test]
@@ -235,7 +238,10 @@ mod tests {
     #[test]
     fn test_max_tokens_reasoner_substring() {
         // Any model containing "reasoner" gets the high limit
-        assert_eq!(DeepSeekClient::max_tokens_for_model("my-reasoner-v2"), 65536);
+        assert_eq!(
+            DeepSeekClient::max_tokens_for_model("my-reasoner-v2"),
+            65536
+        );
     }
 
     // ========================================================================

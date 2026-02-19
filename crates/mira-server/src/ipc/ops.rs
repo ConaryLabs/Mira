@@ -5,28 +5,34 @@ use crate::mcp::MiraServer;
 use anyhow::Result;
 use serde_json::{Value, json};
 
-/// Resolve a project by CWD or return the last active project.
+/// Resolve a project by CWD, per-session state, or last active project.
 pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value> {
-    let cwd = params.get("cwd").and_then(|v| v.as_str()).map(String::from);
+    let cwd = params.get("cwd").and_then(|v| v.as_str());
+    let session_id = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
 
-    let (id, path) = server
-        .pool
-        .interact(move |conn| {
-            let project_path = if let Some(cwd) = cwd {
-                cwd
-            } else if let Ok(Some(p)) = crate::db::get_last_active_project_sync(conn) {
-                p
-            } else {
-                anyhow::bail!("no cwd provided and no active project found");
-            };
-
-            let (id, _name) = crate::db::get_or_create_project_sync(conn, &project_path, None)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            Ok((id, project_path))
-        })
-        .await?;
-
-    Ok(json!({"project_id": id, "path": path}))
+    if let Some(cwd_val) = cwd {
+        // Explicit cwd provided — use it directly
+        let cwd_owned = cwd_val.to_string();
+        let (id, path) = server
+            .pool
+            .interact(move |conn| {
+                let (id, _name) = crate::db::get_or_create_project_sync(conn, &cwd_owned, None)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok((id, cwd_owned))
+            })
+            .await?;
+        Ok(json!({"project_id": id, "path": path}))
+    } else {
+        // No explicit cwd — use per-session/global file resolution
+        let (id, path, _name) = crate::hooks::resolve_project(&server.pool, session_id).await;
+        match (id, path) {
+            (Some(id), Some(path)) => Ok(json!({"project_id": id, "path": path})),
+            _ => anyhow::bail!("no cwd provided and no active project found (checked per-session file, global file, and database)"),
+        }
+    }
 }
 
 /// Recall memories relevant to a query for the given project.
@@ -684,8 +690,13 @@ pub async fn register_team_session(server: &MiraServer, params: Value) -> Result
 /// Get startup context (for fresh sessions).
 pub async fn get_startup_context(server: &MiraServer, params: Value) -> Result<Value> {
     let cwd = params.get("cwd").and_then(|v| v.as_str());
+    let session_id = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
     let context =
-        crate::hooks::session::build_startup_context(cwd, Some(server.pool.clone())).await;
+        crate::hooks::session::build_startup_context(cwd, Some(server.pool.clone()), session_id)
+            .await;
     Ok(json!({"context": context}))
 }
 
@@ -903,7 +914,9 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
         .unwrap_or("");
 
     // Resolve project
-    let (project_id, project_path) = crate::hooks::resolve_project(&server.pool).await;
+    let (project_id, project_path, _project_name) =
+        crate::hooks::resolve_project(&server.pool, Some(session_id).filter(|s| !s.is_empty()))
+            .await;
 
     // Log behavior (fire-and-forget, non-blocking)
     if let Some(pid) = project_id {

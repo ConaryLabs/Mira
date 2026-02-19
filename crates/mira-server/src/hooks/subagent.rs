@@ -17,6 +17,7 @@ const MIN_SIGNIFICANT_ENTITIES: usize = 3;
 struct SubagentStartInput {
     subagent_type: String,
     task_description: Option<String>,
+    session_id: String,
 }
 
 impl SubagentStartInput {
@@ -32,6 +33,11 @@ impl SubagentStartInput {
                 .or_else(|| json.get("prompt"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            session_id: json
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }
     }
 }
@@ -43,6 +49,7 @@ struct SubagentStopInput {
     subagent_output: Option<String>,
     stop_hook_active: bool,
     agent_transcript_path: Option<String>,
+    session_id: String,
 }
 
 impl SubagentStopInput {
@@ -67,6 +74,11 @@ impl SubagentStopInput {
                 .get("agent_transcript_path")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            session_id: json
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }
     }
 }
@@ -99,18 +111,31 @@ pub async fn run_start() -> Result<()> {
     let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some((project_id, _)) = client.resolve_project(None).await else {
+    let sid = Some(start_input.session_id.as_str()).filter(|s| !s.is_empty());
+    let Some((project_id, project_path)) = client.resolve_project(None, sid).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
+
+    // Derive a short project label from the path (last component)
+    let project_label = std::path::Path::new(&project_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("");
 
     let mut context_parts: Vec<String> = Vec::new();
 
     // Get active goals
     let goal_lines = client.get_active_goals(project_id, 3).await;
     if !goal_lines.is_empty() {
+        let label = if project_label.is_empty() {
+            "[Mira/goals]".to_string()
+        } else {
+            format!("[Mira/goals ({})]", project_label)
+        };
         context_parts.push(format!(
-            "[Mira/goals] Active goals:\n{}",
+            "{} Active goals:\n{}",
+            label,
             goal_lines.join("\n")
         ));
     }
@@ -119,8 +144,14 @@ pub async fn run_start() -> Result<()> {
     if let Some(task) = &start_input.task_description {
         let memories = client.recall_memories(project_id, task).await;
         if !memories.is_empty() {
+            let label = if project_label.is_empty() {
+                "[Mira/memory]".to_string()
+            } else {
+                format!("[Mira/memory ({})]", project_label)
+            };
             context_parts.push(format!(
-                "[Mira/memory] Relevant context:\n{}",
+                "{} Relevant context:\n{}",
+                label,
                 memories.join("\n")
             ));
         }
@@ -221,7 +252,8 @@ pub async fn run_stop() -> Result<()> {
     let mut client = crate::ipc::client::HookClient::connect().await;
 
     // Get current project
-    let Some((project_id, _)) = client.resolve_project(None).await else {
+    let sid = Some(stop_input.session_id.as_str()).filter(|s| !s.is_empty());
+    let Some((project_id, _)) = client.resolve_project(None, sid).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };

@@ -75,12 +75,47 @@ pub async fn search_code<C: ToolContext>(
     let result = query_search_code(ctx, &query, limit).await?;
 
     if result.results.is_empty() {
+        // Check whether the project has any indexed data at all
+        let has_index = ctx
+            .code_pool()
+            .run(move |conn| {
+                let symbols: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM code_symbols WHERE project_id IS ?1",
+                        rusqlite::params![project_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                if symbols > 0 {
+                    return Ok::<bool, MiraError>(true);
+                }
+                let chunks: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM code_chunks WHERE project_id IS ?1",
+                        rusqlite::params![project_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                Ok(chunks > 0)
+            })
+            .await
+            .unwrap_or(false);
+
+        let empty_message = if has_index {
+            format!(
+                "{}No code matches found for '{}'. Try different search terms or check spelling.",
+                context_header, query
+            )
+        } else {
+            format!(
+                "{}No code index found for this project. The index builds automatically as you work, or run index(action='project') to index now.",
+                context_header
+            )
+        };
+
         return Ok(Json(CodeOutput {
             action: "search".into(),
-            message: format!(
-                "{}No code matches found. Ensure the project is indexed with index(action=\"project\").",
-                context_header
-            ),
+            message: empty_message,
             data: Some(CodeData::Search(SearchResultsData {
                 results: vec![],
                 search_type: result.search_type.to_string(),
@@ -308,13 +343,13 @@ pub fn get_symbols(
         // Guard against reading very large files (e.g. generated code).
         // The indexer skips files > 1MB; apply the same limit at query time.
         const MAX_SYMBOLS_FILE_BYTES: u64 = 1_024 * 1_024;
-        if let Ok(meta) = std::fs::metadata(path) {
-            if meta.len() > MAX_SYMBOLS_FILE_BYTES {
-                return Err(MiraError::InvalidInput(format!(
-                    "File is too large ({:.1} MB) for symbol extraction. Max: 1 MB.",
-                    meta.len() as f64 / (1_024.0 * 1_024.0)
-                )));
-            }
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.len() > MAX_SYMBOLS_FILE_BYTES
+        {
+            return Err(MiraError::InvalidInput(format!(
+                "File is too large ({:.1} MB) for symbol extraction. Max: 1 MB.",
+                meta.len() as f64 / (1_024.0 * 1_024.0)
+            )));
         }
 
         // Parse file for symbols

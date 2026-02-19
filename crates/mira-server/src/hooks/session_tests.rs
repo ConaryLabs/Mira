@@ -550,7 +550,34 @@ async fn test_compaction_context_end_to_end() {
 }
 
 // =============================================================================
-// Test 11: Project isolation - sessions scoped to their project
+// Test 11: Path normalization dedup (M5)
+// =============================================================================
+
+#[tokio::test]
+async fn test_path_normalization_dedup() {
+    let (pool, _project_id) = setup_test_pool_with_project().await;
+
+    // Create project via "/foo/bar" and "/foo/bar/" — should get the same ID
+    let id_without_slash = db(&pool, |conn| {
+        let (id, _name) = crate::db::get_or_create_project_sync(conn, "/foo/bar", None)?;
+        Ok(id)
+    })
+    .await;
+
+    let id_with_slash = db(&pool, |conn| {
+        let (id, _name) = crate::db::get_or_create_project_sync(conn, "/foo/bar/", None)?;
+        Ok(id)
+    })
+    .await;
+
+    assert_eq!(
+        id_without_slash, id_with_slash,
+        "'/foo/bar' and '/foo/bar/' should resolve to the same project ID"
+    );
+}
+
+// =============================================================================
+// Test 12: Project isolation - sessions scoped to their project
 // =============================================================================
 
 #[tokio::test]

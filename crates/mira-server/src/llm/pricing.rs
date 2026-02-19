@@ -193,7 +193,10 @@ mod tests {
     #[test]
     fn test_unknown_deepseek_model_gets_default_pricing() {
         let pricing = get_pricing(Provider::DeepSeek, "deepseek-future-model");
-        assert!(pricing.is_some(), "models starting with 'deepseek' should get default pricing");
+        assert!(
+            pricing.is_some(),
+            "models starting with 'deepseek' should get default pricing"
+        );
     }
 
     #[test]

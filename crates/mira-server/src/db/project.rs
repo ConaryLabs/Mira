@@ -4,23 +4,30 @@
 use mira_types::MemoryFact;
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::utils::normalize_project_path;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sync functions for pool.interact() usage
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Get or create a project, returning (id, name) - sync version for pool.interact()
+///
+/// The path is normalized via [`normalize_project_path`] before insertion,
+/// so `~/project`, `/home/user/project`, and symlinked variants all resolve
+/// to the same canonical row.
 pub fn get_or_create_project_sync(
     conn: &Connection,
     path: &str,
     name: Option<&str>,
 ) -> rusqlite::Result<(i64, Option<String>)> {
+    let normalized = normalize_project_path(path);
     conn.query_row(
         "INSERT INTO projects (path, name) VALUES (?, ?)
          ON CONFLICT(path) DO UPDATE SET
              name = COALESCE(projects.name, excluded.name),
              created_at = projects.created_at
          RETURNING id, name",
-        params![path, name],
+        params![normalized, name],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
 }

@@ -108,7 +108,7 @@ pub(crate) async fn get_proactive_context(
 }
 
 /// Get pending native tasks as context string
-fn get_task_context() -> Option<String> {
+fn get_task_context(project_label: &str) -> Option<String> {
     let dir = crate::tasks::find_current_task_list()?;
     match crate::tasks::get_pending_tasks(&dir) {
         Ok(pending) if !pending.is_empty() => {
@@ -127,8 +127,14 @@ fn get_task_context() -> Option<String> {
                 .map(|(c, r)| c + r)
                 .unwrap_or(0);
             let completed = total.saturating_sub(pending.len());
+            let tag = if project_label.is_empty() {
+                "[Mira/tasks]".to_string()
+            } else {
+                format!("[Mira/tasks ({})]", project_label)
+            };
             Some(format!(
-                "[Mira/tasks] {} pending task(s) ({}/{} completed):\n{}",
+                "{} {} pending task(s) ({}/{} completed):\n{}",
+                tag,
                 pending.len(),
                 completed,
                 total,
@@ -188,8 +194,15 @@ fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) ->
         PRIORITY_TASKS, PRIORITY_TEAM,
     };
 
+    // Derive project label from path for context tags
+    let project_label = ctx
+        .project_path
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).file_name().and_then(|f| f.to_str()))
+        .unwrap_or("");
+
     // Get pending native tasks (filesystem-only, not served via IPC)
-    let task_context = get_task_context();
+    let task_context = get_task_context(project_label);
     if task_context.is_some() {
         tracing::debug!("[mira] Added pending task context");
     }
@@ -294,7 +307,22 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
             .await;
 
     // Resolve project once (eliminates duplicate get_last_active_project_sync calls)
-    let (project_id, project_path) = resolve_project(&pool).await;
+    let sid = if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id)
+    };
+    let (project_id, project_path, project_name) = resolve_project(&pool, sid).await;
+
+    // Derive project label for context tags
+    let project_label = project_name
+        .as_deref()
+        .or_else(|| {
+            project_path
+                .as_deref()
+                .and_then(|p| std::path::Path::new(p).file_name()?.to_str())
+        })
+        .unwrap_or("");
 
     // Log query event for behavior tracking
     if let Some(project_id) = project_id {
@@ -357,7 +385,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     };
 
     // Get pending native tasks
-    let task_context = get_task_context();
+    let task_context = get_task_context(project_label);
     if task_context.is_some() {
         tracing::debug!("[mira] Added pending task context");
     }

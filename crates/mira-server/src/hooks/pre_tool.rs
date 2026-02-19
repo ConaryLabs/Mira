@@ -169,6 +169,7 @@ struct PreToolInput {
     path: Option<String>,
     /// File path for Edit/Write tools (extracted from tool_input.file_path)
     file_path: Option<String>,
+    session_id: String,
 }
 
 impl PreToolInput {
@@ -205,6 +206,11 @@ impl PreToolInput {
             pattern,
             path,
             file_path,
+            session_id: json
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }
     }
 }
@@ -283,7 +289,8 @@ pub async fn run() -> Result<()> {
     );
 
     // Get current project
-    let Some((project_id, _path)) = client.resolve_project(None).await else {
+    let sid = Some(pre_input.session_id.as_str()).filter(|s| !s.is_empty());
+    let Some((project_id, project_path)) = client.resolve_project(None, sid).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -294,11 +301,22 @@ pub async fn run() -> Result<()> {
     // Record this query in cooldown state
     write_cooldown(&search_query);
 
+    // Derive project label from path for context tags
+    let project_label = std::path::Path::new(&project_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("");
+
     // Build output
     let output = if memories.is_empty() {
         serde_json::json!({})
     } else {
-        let context = format!("[Mira/memory] Relevant context:\n{}", memories.join("\n\n"));
+        let tag = if project_label.is_empty() {
+            "[Mira/memory]".to_string()
+        } else {
+            format!("[Mira/memory ({})]", project_label)
+        };
+        let context = format!("{} Relevant context:\n{}", tag, memories.join("\n\n"));
         serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -380,8 +398,9 @@ async fn handle_edit_write_patterns(
         }
     };
 
-    // Resolve project
-    let (project_id, _) = crate::hooks::resolve_project(&pool).await;
+    // Resolve project using session_id for per-session isolation
+    let sid = Some(pre_input.session_id.as_str()).filter(|s| !s.is_empty());
+    let (project_id, _, _) = crate::hooks::resolve_project(&pool, sid).await;
     let Some(project_id) = project_id else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
@@ -578,6 +597,7 @@ mod tests {
             pattern: Some("authentication".into()),
             path: None,
             file_path: None,
+            session_id: String::new(),
         };
         assert_eq!(build_search_query(&input), "authentication");
     }
@@ -589,6 +609,7 @@ mod tests {
             pattern: Some("fn\\s+\\w+.*handler".into()),
             path: None,
             file_path: None,
+            session_id: String::new(),
         };
         let result = build_search_query(&input);
         assert!(!result.contains("\\s+"));
@@ -605,6 +626,7 @@ mod tests {
             pattern: Some("^pub fn$".into()),
             path: None,
             file_path: None,
+            session_id: String::new(),
         };
         let result = build_search_query(&input);
         assert!(!result.contains('^'));
@@ -619,6 +641,7 @@ mod tests {
             pattern: None,
             path: Some("src/hooks/session.rs".into()),
             file_path: None,
+            session_id: String::new(),
         };
         let result = build_search_query(&input);
         assert_eq!(result, "session.rs");
@@ -631,6 +654,7 @@ mod tests {
             pattern: None,
             path: Some("./src/lib".into()),
             file_path: None,
+            session_id: String::new(),
         };
         let result = build_search_query(&input);
         // ".", "src", and "lib" are all filtered out, so result might be empty
@@ -645,6 +669,7 @@ mod tests {
             pattern: None,
             path: None,
             file_path: None,
+            session_id: String::new(),
         };
         assert!(build_search_query(&input).is_empty());
     }
@@ -656,6 +681,7 @@ mod tests {
             pattern: Some("handler".into()),
             path: Some("src/hooks/session.rs".into()),
             file_path: None,
+            session_id: String::new(),
         };
         let result = build_search_query(&input);
         assert!(result.contains("handler"));
@@ -669,6 +695,7 @@ mod tests {
             pattern: Some(".*".into()),
             path: None,
             file_path: None,
+            session_id: String::new(),
         };
         let result = build_search_query(&input);
         // ".*" becomes " " after cleanup, which trims to empty

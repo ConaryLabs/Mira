@@ -1289,9 +1289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_table_allowed_table() {
-        let pool = DatabasePool::open_in_memory()
-            .await
-            .expect("pool");
+        let pool = DatabasePool::open_in_memory().await.expect("pool");
         let count = pool
             .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "sessions")))
             .await
@@ -1302,9 +1300,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_table_disallowed_table() {
-        let pool = DatabasePool::open_in_memory()
-            .await
-            .expect("pool");
+        let pool = DatabasePool::open_in_memory().await.expect("pool");
         let count = pool
             .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "projects")))
             .await
@@ -1315,9 +1311,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_table_allowed_empty_table() {
-        let pool = DatabasePool::open_in_memory()
-            .await
-            .expect("pool");
+        let pool = DatabasePool::open_in_memory().await.expect("pool");
         let count = pool
             .run(|conn| Ok::<_, rusqlite::Error>(count_table(conn, "memory_facts")))
             .await
@@ -1328,9 +1322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_table_rejected_by_allowlist() {
-        let pool = DatabasePool::open_in_memory()
-            .await
-            .expect("pool");
+        let pool = DatabasePool::open_in_memory().await.expect("pool");
         // "bogus_table" is not in ALLOWED_TABLES, so count_table short-circuits to 0
         // without executing any SQL (prevents SQL injection via table name)
         let count = pool
@@ -1345,7 +1337,14 @@ mod tests {
         let ctx = MockToolContext::with_project().await;
         let project_id = ctx.project_id().await.unwrap();
         insert_session(&ctx.pool, "sess-1", project_id, "active", Some("startup")).await;
-        insert_session(&ctx.pool, "sess-2", project_id, "completed", Some("startup")).await;
+        insert_session(
+            &ctx.pool,
+            "sess-2",
+            project_id,
+            "completed",
+            Some("startup"),
+        )
+        .await;
 
         let count = ctx
             .pool
@@ -1776,7 +1775,11 @@ mod tests {
             .unwrap();
         match result.0.data {
             Some(SessionData::Capabilities(data)) => {
-                let semantic = data.capabilities.iter().find(|c| c.name == "semantic_search").unwrap();
+                let semantic = data
+                    .capabilities
+                    .iter()
+                    .find(|c| c.name == "semantic_search")
+                    .unwrap();
                 assert_eq!(semantic.status, "unavailable");
                 assert!(semantic.detail.is_some());
             }
@@ -1792,7 +1795,11 @@ mod tests {
             .unwrap();
         match result.0.data {
             Some(SessionData::Capabilities(data)) => {
-                let llm = data.capabilities.iter().find(|c| c.name == "background_llm").unwrap();
+                let llm = data
+                    .capabilities
+                    .iter()
+                    .find(|c| c.name == "background_llm")
+                    .unwrap();
                 assert_eq!(llm.status, "unavailable");
             }
             other => panic!("Expected SessionData::Capabilities, got {:?}", other),

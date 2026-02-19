@@ -31,6 +31,26 @@ if [ -L "$MIRA_BIN" ] && [ -x "$MIRA_BIN" ]; then
     exec "$MIRA_BIN" "$@"
 fi
 
+# --- First-install hook fast-path: if invoked as a hook but the binary hasn't
+# been downloaded yet, return a minimal valid JSON response immediately and
+# trigger the download in the background. This prevents hooks from timing out
+# (SessionStart has a 10s timeout) while the binary is being fetched.
+is_hook_invocation=false
+for arg in "$@"; do
+    case "$arg" in
+        hook) is_hook_invocation=true; break ;;
+    esac
+done
+
+if "$is_hook_invocation" && [ ! -x "$MIRA_BIN" ]; then
+    printf '{"hookSpecificOutput": {"message": "Mira is installing... features will activate next session."}}\n'
+    # Trigger download in background — re-invoke ourselves with --version so
+    # the slow path downloads the binary. Once downloaded, `mira --version`
+    # prints and exits immediately, so the background process is short-lived.
+    ( "$0" --version >/dev/null 2>&1 || true ) &
+    exit 0
+fi
+
 # --- Fast path: binary exists, version known, update cache fresh ---
 if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ]; then
     installed="$(cat "$VERSION_FILE")"

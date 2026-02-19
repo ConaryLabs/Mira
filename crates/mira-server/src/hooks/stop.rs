@@ -56,7 +56,8 @@ pub async fn run() -> Result<()> {
     let mut client = HookClient::connect().await;
 
     // Get current project
-    let Some((project_id, _)) = client.resolve_project(None).await else {
+    let sid = Some(stop_input.session_id.as_str()).filter(|s| !s.is_empty());
+    let Some((project_id, _)) = client.resolve_project(None, sid).await else {
         // No active project, just allow stop
         write_hook_output(&serde_json::json!({}));
         return Ok(());
@@ -112,7 +113,11 @@ pub async fn run_session_end() -> Result<()> {
     if !session_id.is_empty() {
         if let Some(membership) = client.get_team_membership(session_id).await {
             // Trigger knowledge distillation before deactivating
-            let distill_project_id = client.resolve_project(None).await.map(|(id, _)| id);
+            let end_sid = Some(session_id).filter(|s| !s.is_empty());
+            let distill_project_id = client
+                .resolve_project(None, end_sid)
+                .await
+                .map(|(id, _)| id);
             let (distilled, findings_count, team_name) = client
                 .distill_team_session(membership.team_id, distill_project_id)
                 .await;
@@ -139,14 +144,17 @@ pub async fn run_session_end() -> Result<()> {
     // Close the session (builds summary, saves snapshot, updates status)
     if !session_id.is_empty() {
         client.close_session(session_id).await;
+
         tracing::debug!(
             session = %truncate_at_boundary(session_id, 8),
             "SessionEnd closed session"
         );
     }
 
-    // Get current project (id and path)
-    let (project_id, project_path) = match client.resolve_project(None).await {
+    // Get current project (id and path) — must happen BEFORE per-session cleanup
+    // so resolve_project can still read the per-session cwd file
+    let end_sid = Some(session_id).filter(|s| !s.is_empty());
+    let (project_id, project_path) = match client.resolve_project(None, end_sid).await {
         Some((id, path)) => (Some(id), Some(path)),
         None => (None, None),
     };
@@ -159,6 +167,11 @@ pub async fn run_session_end() -> Result<()> {
 
         // Auto-export to Claude Code's auto memory (if feature available)
         client.write_auto_memory(project_id, project_path).await;
+    }
+
+    // Clean up per-session directory AFTER all project resolution is done
+    if !session_id.is_empty() {
+        crate::hooks::session::cleanup_per_session_dir(session_id);
     }
 
     write_hook_output(&serde_json::json!({}));
