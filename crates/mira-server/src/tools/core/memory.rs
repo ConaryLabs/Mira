@@ -11,10 +11,17 @@ use crate::mcp::responses::{
 };
 use crate::search::embedding_to_bytes;
 use crate::tools::core::{ToolContext, get_project_info};
-use crate::utils::truncate;
+use crate::utils::{prepare_recall_query, truncate};
 use mira_types::MemoryFact;
 use regex::Regex;
 use std::sync::LazyLock;
+
+/// Strong distance threshold for semantic recall -- only high-confidence matches.
+const STRONG_THRESHOLD: f32 = 0.7;
+
+/// Weak distance threshold for semantic recall -- used when no strong matches exist.
+/// Stricter threshold (0.80) is used in hooks (see hooks/recall.rs).
+const WEAK_THRESHOLD: f32 = 0.85;
 
 /// Patterns that look like prompt injection attempts.
 /// Each tuple is (description, regex).
@@ -598,6 +605,18 @@ pub async fn recall<C: ToolContext>(
 ) -> Result<Json<MemoryOutput>, MiraError> {
     use crate::db::search_memories_sync;
 
+    // Empty query guard: reject queries that are too short to be meaningful
+    if query.trim().len() < 2 {
+        return Ok(Json(MemoryOutput {
+            action: "recall".into(),
+            message: "Query too short for recall (minimum 2 characters).".into(),
+            data: Some(MemoryData::Recall(RecallData {
+                memories: vec![],
+                total: 0,
+            })),
+        }));
+    }
+
     let pi = get_project_info(ctx).await;
     let project_id = pi.id;
     let session_id = ctx.get_session_id().await;
@@ -622,9 +641,12 @@ pub async fn recall<C: ToolContext>(
             .collect()
     };
 
+    // Expand short queries for better embedding quality
+    let expanded_query = prepare_recall_query(&query);
+
     // Try semantic search first if embeddings available (with branch-aware + entity boosting)
     if let Some(embeddings) = ctx.embeddings()
-        && let Ok(query_embedding) = embeddings.embed(&query).await
+        && let Ok(query_embedding) = embeddings.embed(&expanded_query).await
     {
         let embedding_bytes = embedding_to_bytes(&query_embedding);
         let user_id_for_query = user_id.clone();
@@ -657,8 +679,23 @@ pub async fn recall<C: ToolContext>(
             }
         };
 
-        // Filter out low-quality results (distance >= 0.7 means similarity < 0.3)
-        let results: Vec<_> = results.into_iter().filter(|r| r.distance < 0.7).collect();
+        // Adaptive two-tier threshold: prefer strong matches, fall back to weak
+        // matches rather than dropping to keyword search immediately.
+        // (Hook thresholds in hooks/recall.rs are stricter: weak = 0.80)
+        let strong: Vec<_> = results
+            .iter()
+            .filter(|r| r.distance < STRONG_THRESHOLD)
+            .cloned()
+            .collect();
+        let results = if !strong.is_empty() {
+            strong
+        } else {
+            // No strong matches -- use weak matches rather than falling to keyword
+            results
+                .into_iter()
+                .filter(|r| r.distance < WEAK_THRESHOLD)
+                .collect()
+        };
 
         if !results.is_empty() {
             // Apply category/fact_type filters if requested (using inline metadata)

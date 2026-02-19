@@ -2,19 +2,28 @@
 // Shared semantic recall with keyword fallback for hooks
 
 use crate::db::pool::DatabasePool;
-use crate::utils::truncate_at_boundary;
+use crate::utils::{prepare_recall_query, truncate_at_boundary};
 use std::sync::Arc;
 
-/// Maximum cosine distance for a memory to be considered relevant.
-/// Lower = stricter matching. 0.7 is a moderate threshold that balances
-/// recall vs precision for memory facts (tested empirically).
-const SEMANTIC_DISTANCE_THRESHOLD: f32 = 0.7;
+/// Strong threshold for hook recall -- only high-confidence matches.
+const STRONG_THRESHOLD: f32 = 0.7;
+
+/// Weak threshold for hook recall -- stricter than MCP tool (0.85)
+/// because hooks auto-inject context and need higher precision.
+const WEAK_THRESHOLD: f32 = 0.80;
 
 /// Maximum number of memories to return from recall
 const MAX_RECALL_RESULTS: usize = 3;
 
 /// Fetch extra candidates for semantic search, then filter and take top results
 const SEMANTIC_FETCH_LIMIT: usize = 5;
+
+/// Context for hook-based recall, providing optional identity and branch info.
+pub struct RecallContext {
+    pub project_id: i64,
+    pub user_id: Option<String>,
+    pub current_branch: Option<String>,
+}
 
 /// Recall relevant memories using semantic search with keyword fallback.
 ///
@@ -26,24 +35,29 @@ const SEMANTIC_FETCH_LIMIT: usize = 5;
 /// potentially poisoned memories from influencing the LLM.
 pub async fn recall_memories(
     pool: &Arc<DatabasePool>,
-    project_id: i64,
+    ctx: &RecallContext,
     query: &str,
 ) -> Vec<String> {
+    // Empty/short query guard: avoid wasting embedding API calls on noise
+    if query.trim().len() < 2 {
+        return Vec::new();
+    }
+
     // Try embedding-based recall first
-    if let Some(memories) = try_semantic_recall(pool, project_id, query).await
+    if let Some(memories) = try_semantic_recall(pool, ctx, query).await
         && !memories.is_empty()
     {
         return memories;
     }
 
     // Fall back to keyword matching
-    keyword_recall(pool, project_id, query).await
+    keyword_recall(pool, ctx.project_id, query).await
 }
 
 /// Attempt semantic recall using embeddings. Returns None if embeddings unavailable.
 async fn try_semantic_recall(
     pool: &Arc<DatabasePool>,
-    project_id: i64,
+    ctx: &RecallContext,
     query: &str,
 ) -> Option<Vec<String>> {
     use crate::config::{ApiKeys, EmbeddingsConfig};
@@ -55,8 +69,11 @@ async fn try_semantic_recall(
     let emb =
         EmbeddingClient::from_config(&ApiKeys::from_env(), &EmbeddingsConfig::from_env(), None)?;
 
+    // Expand short queries for better embedding quality
+    let expanded_query = prepare_recall_query(query);
+
     // Embed the query
-    let query_embedding = emb.embed(query).await.ok()?;
+    let query_embedding = emb.embed(&expanded_query).await.ok()?;
     let embedding_bytes = embedding_to_bytes(&query_embedding);
 
     // Extract entities from query for boosting
@@ -66,26 +83,49 @@ async fn try_semantic_recall(
         .collect();
 
     let pool_clone = pool.clone();
-    let result: Vec<crate::db::RecallRow> = pool_clone
+    let project_id = ctx.project_id;
+    let user_id = ctx.user_id.clone();
+    let current_branch = ctx.current_branch.clone();
+    let result: Vec<crate::db::RecallRow> = match pool_clone
         .interact(move |conn| {
             Ok::<_, anyhow::Error>(crate::db::recall_semantic_with_entity_boost_sync(
                 conn,
                 &embedding_bytes,
                 Some(project_id),
-                None, // user_id
-                None, // team_id
-                None, // current_branch
+                user_id.as_deref(),
+                None, // team_id (hooks don't have team context)
+                current_branch.as_deref(),
                 &query_entity_names,
                 SEMANTIC_FETCH_LIMIT,
             )?)
         })
         .await
-        .ok()?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("Hook semantic recall failed, falling back to keyword: {e}");
+            return None;
+        }
+    };
 
-    // Filter by distance threshold and confirmed status (using inline metadata)
-    let memories: Vec<String> = result
+    // Adaptive two-tier threshold with confirmed-only filter (security boundary).
+    // Prefer strong matches; fall back to weak matches rather than dropping to keyword.
+    let strong: Vec<_> = result
+        .iter()
+        .filter(|r| r.distance < STRONG_THRESHOLD && r.status == "confirmed")
+        .collect();
+
+    let filtered: Vec<_> = if !strong.is_empty() {
+        strong
+    } else {
+        result
+            .iter()
+            .filter(|r| r.distance < WEAK_THRESHOLD && r.status == "confirmed")
+            .collect()
+    };
+
+    let memories: Vec<String> = filtered
         .into_iter()
-        .filter(|r| r.distance < SEMANTIC_DISTANCE_THRESHOLD && r.status == "confirmed")
         .take(MAX_RECALL_RESULTS)
         .map(|r| format_memory_line(&r.content))
         .collect();
@@ -132,7 +172,7 @@ async fn keyword_recall(pool: &Arc<DatabasePool>, project_id: i64, query: &str) 
                 r#"
                 SELECT content, fact_type
                 FROM memory_facts
-                WHERE project_id = ?
+                WHERE (project_id = ? OR project_id IS NULL)
                   AND (scope = 'project' OR scope IS NULL)
                   AND fact_type IN ('general','preference','decision','pattern','context','persona')
                   AND status = 'confirmed'
@@ -189,7 +229,13 @@ async fn keyword_recall(pool: &Arc<DatabasePool>, project_id: i64, query: &str) 
         })
         .await;
 
-    result.unwrap_or_default()
+    match result {
+        Ok(memories) => memories,
+        Err(e) => {
+            tracing::debug!("Hook keyword recall failed: {e}");
+            Vec::new()
+        }
+    }
 }
 
 /// Format a memory line with truncation and data marker.
@@ -241,9 +287,45 @@ mod tests {
     }
 
     #[test]
-    fn semantic_distance_threshold_is_moderate() {
-        // Sanity check: threshold should be between 0 and 1
-        const { assert!(SEMANTIC_DISTANCE_THRESHOLD > 0.0) };
-        const { assert!(SEMANTIC_DISTANCE_THRESHOLD < 1.0) };
+    fn prepare_recall_query_short_query() {
+        let result = prepare_recall_query("auth");
+        assert!(result.contains("Information about: auth"));
+        assert!(result.contains("Related concepts"));
+    }
+
+    #[test]
+    fn prepare_recall_query_three_words() {
+        let result = prepare_recall_query("builder pattern config");
+        assert!(result.contains("Information about: builder pattern config"));
+    }
+
+    #[test]
+    fn prepare_recall_query_long_query_unchanged() {
+        let q = "how does the authentication system handle tokens";
+        let result = prepare_recall_query(q);
+        assert_eq!(result, q);
+    }
+
+    #[test]
+    fn recall_context_creation() {
+        let ctx = RecallContext {
+            project_id: 42,
+            user_id: Some("alice".into()),
+            current_branch: Some("main".into()),
+        };
+        assert_eq!(ctx.project_id, 42);
+        assert_eq!(ctx.user_id.as_deref(), Some("alice"));
+        assert_eq!(ctx.current_branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn recall_context_without_optional_fields() {
+        let ctx = RecallContext {
+            project_id: 1,
+            user_id: None,
+            current_branch: None,
+        };
+        assert!(ctx.user_id.is_none());
+        assert!(ctx.current_branch.is_none());
     }
 }

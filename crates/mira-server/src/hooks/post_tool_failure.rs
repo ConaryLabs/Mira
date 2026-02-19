@@ -67,7 +67,7 @@ pub async fn run() -> Result<()> {
 
     // Get current project
     let sid = Some(failure_input.session_id.as_str()).filter(|s| !s.is_empty());
-    let Some((project_id, _)) = client.resolve_project(None, sid).await else {
+    let Some((project_id, project_path)) = client.resolve_project(None, sid).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -140,7 +140,12 @@ pub async fn run() -> Result<()> {
         }
 
         // Fall back to memory recall if no resolved pattern found
-        let memories = client.recall_memories(project_id, &error_summary).await;
+        let recall_ctx = crate::hooks::recall::RecallContext {
+            project_id,
+            user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
+            current_branch: crate::git::get_git_branch(&project_path),
+        };
+        let memories = client.recall_memories(&recall_ctx, &error_summary).await;
 
         if !memories.is_empty() {
             let context = format!(

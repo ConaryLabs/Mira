@@ -142,7 +142,12 @@ pub async fn run_start() -> Result<()> {
 
     // Get relevant memories based on task description (semantic with keyword fallback)
     if let Some(task) = &start_input.task_description {
-        let memories = client.recall_memories(project_id, task).await;
+        let recall_ctx = crate::hooks::recall::RecallContext {
+            project_id,
+            user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
+            current_branch: crate::git::get_git_branch(&project_path),
+        };
+        let memories = client.recall_memories(&recall_ctx, task).await;
         if !memories.is_empty() {
             let label = if project_label.is_empty() {
                 "[Mira/memory]".to_string()

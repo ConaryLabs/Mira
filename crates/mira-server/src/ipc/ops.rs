@@ -49,7 +49,21 @@ pub async fn recall_memories(server: &MiraServer, params: Value) -> Result<Value
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing required param: query"))?;
 
-    let memories = crate::hooks::recall::recall_memories(&server.pool, project_id, query).await;
+    let user_id = params
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let current_branch = params
+        .get("current_branch")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let ctx = crate::hooks::recall::RecallContext {
+        project_id,
+        user_id,
+        current_branch,
+    };
+    let memories = crate::hooks::recall::recall_memories(&server.pool, &ctx, query).await;
     Ok(json!({"memories": memories}))
 }
 

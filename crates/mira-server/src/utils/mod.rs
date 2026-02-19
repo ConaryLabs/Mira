@@ -205,6 +205,23 @@ pub fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Expand short queries with context to improve embedding similarity.
+///
+/// Very short queries (1-3 words) produce poor embeddings because there's
+/// not enough semantic signal. Wrapping them with a template provides the
+/// embedding model with richer context, improving recall quality.
+pub fn prepare_recall_query(query: &str) -> String {
+    let word_count = query.split_whitespace().count();
+    if word_count <= 3 {
+        format!(
+            "Information about: {}. Related concepts, decisions, and preferences.",
+            query
+        )
+    } else {
+        query.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

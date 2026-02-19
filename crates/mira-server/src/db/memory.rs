@@ -16,6 +16,7 @@ pub struct RecallRow {
     pub fact_type: String,
     pub category: Option<String>,
     pub status: String,
+    pub updated_at: Option<String>,
 }
 
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
@@ -80,6 +81,35 @@ pub fn apply_branch_boost(
     }
 }
 
+/// Apply recency boost to a distance score.
+///
+/// Recent memories get a small distance reduction (up to 5%), with a 90-day half-life.
+/// Applied uniformly to all memory statuses so that confirmed memories are not
+/// displaced from the truncated top-N by boosted candidates (hooks filter to
+/// confirmed-only *after* truncation).
+/// Formula: distance * (1.0 - 0.05 * exp(-days_ago / 90.0))
+pub fn apply_recency_boost(distance: f32, updated_at: Option<&str>) -> f32 {
+    let Some(ts) = updated_at else {
+        return distance;
+    };
+
+    // Parse ISO 8601 datetime (SQLite CURRENT_TIMESTAMP format: "YYYY-MM-DD HH:MM:SS")
+    let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S"));
+
+    let Ok(dt) = parsed else {
+        return distance;
+    };
+
+    let now = chrono::Utc::now().naive_utc();
+    // Clamp to >= 0 so future timestamps (clock skew) don't produce negative distances
+    let days_ago = ((now - dt).num_seconds() as f64 / 86400.0).max(0.0);
+
+    // 5% max boost, 90-day half-life exponential decay
+    let boost = 1.0 - 0.05 * (-days_ago / 90.0_f64).exp();
+    distance * boost as f32
+}
+
 /// Parse MemoryFact from a rusqlite Row with standard column order:
 /// (id, project_id, key, content, fact_type, category, confidence, created_at,
 ///  session_count, first_session_id, last_session_id, status, user_id, scope, team_id,
@@ -130,7 +160,7 @@ pub fn scope_filter_sql(prefix: &str) -> String {
 
 /// Cached semantic recall query with scope filtering.
 ///
-/// Returns SQL that selects (fact_id, content, distance, branch, team_id, fact_type, category, status)
+/// Returns SQL that selects (fact_id, content, distance, branch, team_id, fact_type, category, status, updated_at)
 /// from vec_memory + memory_facts. Inlines metadata to avoid N+1 queries.
 /// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id, ?5 = team_id
 /// User memory fact_types -- system types live in system_observations now
@@ -140,7 +170,7 @@ const USER_FACT_TYPES_SQL: &str =
 static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "SELECT v.fact_id, f.content, vec_distance_cosine(v.embedding, ?1) as distance,
-                f.branch, f.team_id, f.fact_type, f.category, f.status
+                f.branch, f.team_id, f.fact_type, f.category, f.status, f.updated_at
          FROM vec_memory v
          JOIN memory_facts f ON v.fact_id = f.id
          WHERE {}
@@ -343,30 +373,6 @@ pub fn store_fact_embedding_sync(
     Ok(())
 }
 
-/// Semantic search for memories with scope filtering (sync version for pool.interact())
-///
-/// Convenience wrapper around `recall_semantic_with_branch_sync` with no branch boosting.
-/// Returns (fact_id, content, distance) tuples.
-#[inline]
-pub fn recall_semantic_sync(
-    conn: &rusqlite::Connection,
-    embedding_bytes: &[u8],
-    project_id: Option<i64>,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
-    limit: usize,
-) -> rusqlite::Result<Vec<(i64, String, f32)>> {
-    recall_semantic_with_branch_sync(
-        conn,
-        embedding_bytes,
-        project_id,
-        user_id,
-        team_id,
-        None,
-        limit,
-    )
-}
-
 /// Semantic search with entity boost applied.
 ///
 /// Wraps the branch-info recall to also apply entity-overlap ranking boost.
@@ -410,6 +416,7 @@ pub fn recall_semantic_with_entity_boost_sync(
                     fact_type: row.get(5)?,
                     category: row.get(6)?,
                     status: row.get(7)?,
+                    updated_at: row.get(8)?,
                 })
             },
         )?
@@ -423,8 +430,11 @@ pub fn recall_semantic_with_entity_boost_sync(
         std::collections::HashMap::new()
     };
 
-    // Apply branch boost + entity boost + team boost, then re-sort
-    let mut boosted: Vec<RecallRow> = results
+    // Filter by raw distance before any boosts -- quality gate on true semantic similarity
+    let filtered: Vec<RecallRow> = results.into_iter().filter(|r| r.distance < 0.85).collect();
+
+    // Apply branch + entity + team + recency boosts for ranking only
+    let mut boosted: Vec<RecallRow> = filtered
         .into_iter()
         .map(|mut r| {
             r.distance = apply_branch_boost(r.distance, r.branch.as_deref(), current_branch);
@@ -435,6 +445,8 @@ pub fn recall_semantic_with_entity_boost_sync(
             if team_id.is_some() && r.team_id == team_id {
                 r.distance *= TEAM_SCOPE_BOOST;
             }
+            // Recency boost: recent memories get up to 5% distance reduction
+            r.distance = apply_recency_boost(r.distance, r.updated_at.as_deref());
             r
         })
         .collect();
@@ -449,60 +461,11 @@ pub fn recall_semantic_with_entity_boost_sync(
     Ok(boosted)
 }
 
-/// Branch-aware semantic recall with boosting
-///
-/// Returns (fact_id, content, boosted_distance) tuples.
-/// When current_branch is provided, memories on the same branch get boosted,
-/// and main/master memories get a smaller boost.
-pub fn recall_semantic_with_branch_sync(
-    conn: &rusqlite::Connection,
-    embedding_bytes: &[u8],
-    project_id: Option<i64>,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
-    current_branch: Option<&str>,
-    limit: usize,
-) -> rusqlite::Result<Vec<(i64, String, f32)>> {
-    // Fetch more results than needed to allow for re-ranking after boosting
-    let fetch_limit = (limit * 2).min(100);
-
-    let sql = semantic_recall_sql();
-    let mut stmt = conn.prepare(sql)?;
-
-    let results: Vec<(i64, String, f32, Option<String>)> = stmt
-        .query_map(
-            rusqlite::params![
-                embedding_bytes,
-                project_id,
-                fetch_limit as i64,
-                user_id,
-                team_id
-            ],
-            // Parse only the columns this function needs (ignore fact_type/category/status)
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )?
-        .filter_map(super::log_and_discard)
-        .collect();
-
-    // Apply branch boosting and re-sort
-    let mut boosted: Vec<(i64, String, f32)> = results
-        .into_iter()
-        .map(|(id, content, distance, branch)| {
-            let boosted_distance = apply_branch_boost(distance, branch.as_deref(), current_branch);
-            (id, content, boosted_distance)
-        })
-        .collect();
-
-    // Re-sort by boosted distance (ascending - lower is better)
-    boosted.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
-
-    // Truncate to requested limit
-    boosted.truncate(limit);
-
-    Ok(boosted)
-}
-
 /// Search memories by text with scope filtering (sync version for pool.interact())
+///
+/// Splits query into keywords (>3 chars, up to 5) and OR-joins LIKE clauses
+/// for better multi-word matching. Results are ranked by keyword match count,
+/// then by recency. Falls back to full-string LIKE for very short queries.
 pub fn search_memories_sync(
     conn: &rusqlite::Connection,
     project_id: Option<i64>,
@@ -511,37 +474,102 @@ pub fn search_memories_sync(
     team_id: Option<i64>,
     limit: usize,
 ) -> rusqlite::Result<Vec<MemoryFact>> {
-    // Escape SQL LIKE wildcards to prevent injection
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    let pattern = format!("%{}%", escaped);
+    /// Escape SQL LIKE wildcards in a single keyword
+    fn escape_like(s: &str) -> String {
+        s.replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    }
+
+    // Extract keywords: words > 3 chars, take up to 5
+    let keywords: Vec<String> = query
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .take(5)
+        .map(|w| format!("%{}%", escape_like(w)))
+        .collect();
+
+    let scope_sql = scope_filter_sql("")
+        .replace("?{pid}", "?1")
+        .replace("?{uid}", "?2")
+        .replace("?{tid}", "?3");
+
+    // If no keywords > 3 chars, fall back to full-string LIKE
+    if keywords.is_empty() {
+        let escaped = escape_like(query);
+        let pattern = format!("%{}%", escaped);
+
+        let sql = format!(
+            "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
+                    session_count, first_session_id, last_session_id, status,
+                    user_id, scope, team_id, updated_at, branch
+             FROM memory_facts
+             WHERE {scope_sql}
+               AND fact_type IN ('general','preference','decision','pattern','context','persona')
+               AND status != 'archived'
+               AND COALESCE(suspicious, 0) = 0
+               AND content LIKE ?4 ESCAPE '\\'
+             ORDER BY updated_at DESC
+             LIMIT ?5"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            rusqlite::params![project_id, user_id, team_id, pattern, limit as i64],
+            parse_memory_fact_row,
+        )?;
+        return rows.collect();
+    }
+
+    // Build OR-joined WHERE filter and match-count ORDER BY scoring
+    // Keywords appear twice in params: once for WHERE filter, once for ORDER BY scoring
+    let where_clauses: Vec<String> = (0..keywords.len())
+        .map(|i| format!("content LIKE ?{} ESCAPE '\\'", 4 + i))
+        .collect();
+    let where_sql = where_clauses.join(" OR ");
+
+    let score_cases: Vec<String> = (0..keywords.len())
+        .map(|i| {
+            format!(
+                "CASE WHEN content LIKE ?{} ESCAPE '\\' THEN 1 ELSE 0 END",
+                4 + keywords.len() + i
+            )
+        })
+        .collect();
+    let score_sql = score_cases.join(" + ");
 
     let sql = format!(
         "SELECT id, project_id, key, content, fact_type, category, confidence, created_at,
                 session_count, first_session_id, last_session_id, status,
                 user_id, scope, team_id, updated_at, branch
          FROM memory_facts
-         WHERE {}
+         WHERE {scope_sql}
            AND fact_type IN ('general','preference','decision','pattern','context','persona')
            AND status != 'archived'
            AND COALESCE(suspicious, 0) = 0
-           AND content LIKE ?2 ESCAPE '\\'
-         ORDER BY updated_at DESC
-         LIMIT ?3",
-        scope_filter_sql("")
-            .replace("?{pid}", "?1")
-            .replace("?{uid}", "?4")
-            .replace("?{tid}", "?5")
+           AND ({where_sql})
+         ORDER BY ({score_sql}) DESC, updated_at DESC
+         LIMIT ?{}",
+        4 + keywords.len() * 2
     );
+
     let mut stmt = conn.prepare(&sql)?;
 
-    let rows = stmt.query_map(
-        rusqlite::params![project_id, pattern, limit as i64, user_id, team_id],
-        parse_memory_fact_row,
-    )?;
+    // Build params: project_id, user_id, team_id, [keywords for WHERE], [keywords for ORDER BY], limit
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    params.push(Box::new(project_id));
+    params.push(Box::new(user_id.map(|s| s.to_string())));
+    params.push(Box::new(team_id));
+    // Keywords for WHERE filter
+    for kw in &keywords {
+        params.push(Box::new(kw.clone()));
+    }
+    // Same keywords again for ORDER BY scoring
+    for kw in &keywords {
+        params.push(Box::new(kw.clone()));
+    }
+    params.push(Box::new(limit as i64));
 
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), parse_memory_fact_row)?;
     rows.collect()
 }
 
@@ -962,6 +990,84 @@ mod branch_boost_tests {
 
         // Same branch should have lower (better) distance
         assert!(same_branch < main_branch);
+    }
+}
+
+#[cfg(test)]
+mod recency_boost_tests {
+    use super::*;
+
+    #[test]
+    fn test_none_updated_at_returns_unchanged() {
+        let distance = 0.5;
+        let boosted = apply_recency_boost(distance, None);
+        assert!((boosted - distance).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_invalid_timestamp_returns_unchanged() {
+        let distance = 0.5;
+        let boosted = apply_recency_boost(distance, Some("not-a-date"));
+        assert!((boosted - distance).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_recent_memory_gets_boost() {
+        let now = chrono::Utc::now().naive_utc();
+        let ts = now.format("%Y-%m-%d %H:%M:%S").to_string();
+        let distance = 0.5;
+        let boosted = apply_recency_boost(distance, Some(&ts));
+        // Recent memory should have lower (better) distance
+        assert!(boosted < distance);
+        // Max boost is 5%: 0.5 * 0.95 = 0.475
+        assert!((boosted - 0.475).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_old_memory_gets_negligible_boost() {
+        let now = chrono::Utc::now().naive_utc();
+        let old = now - chrono::Duration::days(365);
+        let ts = old.format("%Y-%m-%d %H:%M:%S").to_string();
+        let distance = 0.5;
+        let boosted = apply_recency_boost(distance, Some(&ts));
+        // 365 days ago: exp(-365/90) ~= 0.017, boost = 1.0 - 0.05 * 0.017 ~= 0.999
+        // Distance barely changes
+        assert!((boosted - distance).abs() < 0.005);
+    }
+
+    #[test]
+    fn test_future_timestamp_clamped_no_negative_distance() {
+        let now = chrono::Utc::now().naive_utc();
+        let future = now + chrono::Duration::days(365);
+        let ts = future.format("%Y-%m-%d %H:%M:%S").to_string();
+        let distance = 0.5;
+        let boosted = apply_recency_boost(distance, Some(&ts));
+        // Future timestamp should be clamped to 0 days_ago (max boost, not negative)
+        assert!(boosted > 0.0);
+        assert!(boosted <= distance);
+        // Should get max boost (same as "just now")
+        assert!((boosted - 0.475).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_iso_t_separator_format_parsed() {
+        let now = chrono::Utc::now().naive_utc();
+        let ts = now.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let distance = 0.5;
+        let boosted = apply_recency_boost(distance, Some(&ts));
+        // Should parse and apply boost
+        assert!(boosted < distance);
+    }
+
+    #[test]
+    fn test_90_day_old_memory_half_life() {
+        let now = chrono::Utc::now().naive_utc();
+        let old = now - chrono::Duration::days(90);
+        let ts = old.format("%Y-%m-%d %H:%M:%S").to_string();
+        let distance = 1.0;
+        let boosted = apply_recency_boost(distance, Some(&ts));
+        // At 90 days: exp(-1) ~= 0.368, boost = 1.0 - 0.05 * 0.368 ~= 0.982
+        assert!((boosted - 0.982).abs() < 0.005);
     }
 }
 
@@ -1472,5 +1578,84 @@ mod scope_tests {
         .unwrap();
 
         assert_eq!(id1, id2, "same key + same scope should upsert in place");
+    }
+
+    #[test]
+    fn test_multi_keyword_search_ranks_by_match_count() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+
+        // Store memories with different keyword overlap
+        store(
+            &conn,
+            "database connection pooling is important",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store(
+            &conn,
+            "connection timeout configuration",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+        store(
+            &conn,
+            "database schema migration strategy for connection pooling",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+
+        // Multi-word query: "database connection pooling"
+        // Keywords > 3 chars: ["database", "connection", "pooling"]
+        let results = search_memories_sync(
+            &conn,
+            Some(pid),
+            "database connection pooling",
+            None,
+            None,
+            10,
+        )
+        .unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "multi-keyword search should find results"
+        );
+
+        // Memory matching all 3 keywords should rank first
+        assert!(
+            results[0].content.contains("database") && results[0].content.contains("pooling"),
+            "first result should match the most keywords"
+        );
+    }
+
+    #[test]
+    fn test_short_query_falls_back_to_full_string() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+
+        store(
+            &conn,
+            "use bun for package management",
+            "project",
+            Some(pid),
+            None,
+            None,
+        );
+
+        // Query "use bun" has no words > 3 chars, falls back to full-string LIKE
+        let results = search_memories_sync(&conn, Some(pid), "use bun", None, None, 10).unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "short-word query should use full-string fallback"
+        );
+        assert!(results[0].content.contains("use bun"));
     }
 }

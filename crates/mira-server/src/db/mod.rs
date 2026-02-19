@@ -141,7 +141,6 @@ pub use memory::{
     import_confirmed_memory_sync,
     mark_fact_has_embedding_sync,
     parse_memory_fact_row,
-    recall_semantic_sync,
     recall_semantic_with_entity_boost_sync,
     record_memory_access_sync,
     search_memories_sync,

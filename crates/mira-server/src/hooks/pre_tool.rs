@@ -296,7 +296,12 @@ pub async fn run() -> Result<()> {
     };
 
     // Query for relevant memories (semantic search with keyword fallback)
-    let memories = client.recall_memories(project_id, &search_query).await;
+    let recall_ctx = crate::hooks::recall::RecallContext {
+        project_id,
+        user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
+        current_branch: crate::git::get_git_branch(&project_path),
+    };
+    let memories = client.recall_memories(&recall_ctx, &search_query).await;
 
     // Record this query in cooldown state
     write_cooldown(&search_query);

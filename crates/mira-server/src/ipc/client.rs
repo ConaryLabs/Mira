@@ -275,9 +275,25 @@ impl HookClient {
     }
 
     /// Recall relevant memories for a project and query string.
-    pub async fn recall_memories(&mut self, project_id: i64, query: &str) -> Vec<String> {
+    ///
+    /// Accepts a `RecallContext` for passing user identity and branch info
+    /// through to the semantic recall layer for better result ranking.
+    pub async fn recall_memories(
+        &mut self,
+        ctx: &crate::hooks::recall::RecallContext,
+        query: &str,
+    ) -> Vec<String> {
         if self.is_ipc() {
-            let params = json!({"project_id": project_id, "query": query});
+            let mut params = json!({
+                "project_id": ctx.project_id,
+                "query": query,
+            });
+            if let Some(ref uid) = ctx.user_id {
+                params["user_id"] = json!(uid);
+            }
+            if let Some(ref branch) = ctx.current_branch {
+                params["current_branch"] = json!(branch);
+            }
             if let Ok(result) = self.call("recall_memories", params).await {
                 return result
                     .get("memories")
@@ -291,7 +307,7 @@ impl HookClient {
             }
         }
         if let Backend::Direct { pool } = &self.inner {
-            return crate::hooks::recall::recall_memories(pool, project_id, query).await;
+            return crate::hooks::recall::recall_memories(pool, ctx, query).await;
         }
         Vec::new()
     }
