@@ -657,9 +657,15 @@ pub(crate) async fn build_resume_context(
                 context_parts.insert(0, format!("**You were working on:** {}", working_on));
             }
 
-            // Surface pre-compaction context if available
+            // Surface pre-compaction context right after "working on" for prominence.
+            // This is the richest signal from the previous session.
             if let Some(compaction_summary) = build_compaction_summary(&snap) {
-                context_parts.push(compaction_summary);
+                // Position after "working on" (index 0) if it exists, otherwise at top
+                let insert_pos = context_parts
+                    .iter()
+                    .position(|p| p.starts_with("**You were working on:"))
+                    .map_or(0, |i| i + 1);
+                context_parts.insert(insert_pos, compaction_summary);
             }
         }
 
@@ -809,11 +815,19 @@ pub(crate) fn build_working_on_summary(snapshot: &serde_json::Value) -> Option<S
 
 /// Build a summary of pre-compaction context from the snapshot's `compaction_context` field.
 ///
-/// Returns a formatted string with decisions, pending tasks, issues, and active work,
-/// or None if no compaction context is present or all categories are empty.
+/// Returns a formatted string with user intent, decisions, active work, issues, pending tasks,
+/// and files referenced — ordered most-valuable-first.
+/// Returns None if no compaction context is present or all categories are empty.
 pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<String> {
     let cc = snapshot.get("compaction_context")?;
     let mut parts: Vec<String> = Vec::new();
+
+    // User intent (most valuable - what they were trying to accomplish)
+    if let Some(intent) = cc.get("user_intent").and_then(|v| v.as_str())
+        && !intent.is_empty()
+    {
+        parts.push(format!("Original request: {}", intent));
+    }
 
     if let Some(decisions) = cc.get("decisions").and_then(|v| v.as_array()) {
         let items: Vec<&str> = decisions
@@ -826,10 +840,10 @@ pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<S
         }
     }
 
-    if let Some(pending) = cc.get("pending_tasks").and_then(|v| v.as_array()) {
-        let items: Vec<&str> = pending.iter().filter_map(|d| d.as_str()).take(3).collect();
+    if let Some(active) = cc.get("active_work").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = active.iter().filter_map(|d| d.as_str()).take(1).collect();
         if !items.is_empty() {
-            parts.push(format!("Pending: {}", items.join("; ")));
+            parts.push(format!("Active work: {}", items[0]));
         }
     }
 
@@ -840,10 +854,18 @@ pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<S
         }
     }
 
-    if let Some(active) = cc.get("active_work").and_then(|v| v.as_array()) {
-        let items: Vec<&str> = active.iter().filter_map(|d| d.as_str()).take(1).collect();
+    if let Some(pending) = cc.get("pending_tasks").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = pending.iter().filter_map(|d| d.as_str()).take(3).collect();
         if !items.is_empty() {
-            parts.push(format!("Active work: {}", items[0]));
+            parts.push(format!("Remaining tasks: {}", items.join("; ")));
+        }
+    }
+
+    // Files referenced (compact, comma-separated, up to 8)
+    if let Some(files) = cc.get("files_referenced").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = files.iter().filter_map(|f| f.as_str()).take(8).collect();
+        if !items.is_empty() {
+            parts.push(format!("Files discussed: {}", items.join(", ")));
         }
     }
 
@@ -1310,10 +1332,12 @@ mod tests {
         let snapshot = serde_json::json!({
             "tool_count": 10,
             "compaction_context": {
+                "user_intent": "Refactor the database layer",
                 "decisions": ["chose builder pattern for Config"],
                 "pending_tasks": ["add validation for user input"],
                 "issues": ["connection refused when connecting to database"],
-                "active_work": ["working on database migration"]
+                "active_work": ["working on database migration"],
+                "files_referenced": ["src/db.rs", "src/main.rs"]
             }
         });
         let result = build_compaction_summary(&snapshot);
@@ -1324,11 +1348,47 @@ mod tests {
             "got: {}",
             summary
         );
+        assert!(
+            summary.contains("Original request: Refactor the database layer"),
+            "got: {}",
+            summary
+        );
         assert!(summary.contains("Decisions:"), "got: {}", summary);
         assert!(summary.contains("builder pattern"), "got: {}", summary);
-        assert!(summary.contains("Pending:"), "got: {}", summary);
-        assert!(summary.contains("Issues:"), "got: {}", summary);
         assert!(summary.contains("Active work:"), "got: {}", summary);
+        assert!(summary.contains("Issues:"), "got: {}", summary);
+        assert!(summary.contains("Remaining tasks:"), "got: {}", summary);
+        assert!(
+            summary.contains("Files discussed: src/db.rs, src/main.rs"),
+            "got: {}",
+            summary
+        );
+
+        // Verify ordering: user_intent before decisions, decisions before active_work,
+        // active_work before issues, issues before pending, pending before files
+        let intent_pos = summary.find("Original request:").unwrap();
+        let decisions_pos = summary.find("Decisions:").unwrap();
+        let active_pos = summary.find("Active work:").unwrap();
+        let issues_pos = summary.find("Issues:").unwrap();
+        let pending_pos = summary.find("Remaining tasks:").unwrap();
+        let files_pos = summary.find("Files discussed:").unwrap();
+        assert!(
+            intent_pos < decisions_pos,
+            "intent should come before decisions"
+        );
+        assert!(
+            decisions_pos < active_pos,
+            "decisions should come before active work"
+        );
+        assert!(
+            active_pos < issues_pos,
+            "active work should come before issues"
+        );
+        assert!(
+            issues_pos < pending_pos,
+            "issues should come before pending"
+        );
+        assert!(pending_pos < files_pos, "pending should come before files");
     }
 
     #[test]
@@ -1345,7 +1405,7 @@ mod tests {
         assert!(result.is_some());
         let summary = result.unwrap();
         assert!(summary.contains("Decisions:"), "got: {}", summary);
-        assert!(!summary.contains("Pending:"), "got: {}", summary);
+        assert!(!summary.contains("Remaining tasks:"), "got: {}", summary);
         assert!(!summary.contains("Issues:"), "got: {}", summary);
     }
 
@@ -1426,5 +1486,157 @@ mod tests {
         assert!(summary.contains("d1"), "got: {}", summary);
         assert!(summary.contains("d3"), "got: {}", summary);
         assert!(!summary.contains("d4"), "got: {}", summary);
+    }
+
+    #[test]
+    fn test_compaction_summary_user_intent_only() {
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "user_intent": "Implement caching for API responses",
+                "decisions": [],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": []
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(
+            summary.contains("Original request: Implement caching for API responses"),
+            "got: {}",
+            summary
+        );
+    }
+
+    #[test]
+    fn test_compaction_summary_empty_user_intent_skipped() {
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "user_intent": "",
+                "decisions": ["chose SQLite"],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": []
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(
+            !summary.contains("Original request:"),
+            "empty intent should be skipped, got: {}",
+            summary
+        );
+        assert!(summary.contains("Decisions:"), "got: {}", summary);
+    }
+
+    #[test]
+    fn test_compaction_summary_files_referenced() {
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "decisions": [],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": [],
+                "files_referenced": ["src/main.rs", "src/lib.rs", "Cargo.toml"]
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(
+            summary.contains("Files discussed: src/main.rs, src/lib.rs, Cargo.toml"),
+            "got: {}",
+            summary
+        );
+    }
+
+    #[test]
+    fn test_compaction_summary_files_referenced_limits_to_8() {
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "decisions": [],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": [],
+                "files_referenced": [
+                    "f1.rs", "f2.rs", "f3.rs", "f4.rs",
+                    "f5.rs", "f6.rs", "f7.rs", "f8.rs",
+                    "f9.rs", "f10.rs"
+                ]
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(
+            summary.contains("f8.rs"),
+            "should include 8th file, got: {}",
+            summary
+        );
+        assert!(
+            !summary.contains("f9.rs"),
+            "should exclude 9th file, got: {}",
+            summary
+        );
+    }
+
+    #[test]
+    fn test_compaction_summary_backward_compat_old_snapshot() {
+        // Old snapshots without user_intent or files_referenced should still work
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "decisions": ["chose builder pattern"],
+                "pending_tasks": ["finish tests"],
+                "issues": [],
+                "active_work": ["refactoring config"]
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(summary.contains("Decisions:"), "got: {}", summary);
+        assert!(summary.contains("Active work:"), "got: {}", summary);
+        assert!(summary.contains("Remaining tasks:"), "got: {}", summary);
+        assert!(
+            !summary.contains("Original request:"),
+            "missing field should be skipped, got: {}",
+            summary
+        );
+        assert!(
+            !summary.contains("Files discussed:"),
+            "missing field should be skipped, got: {}",
+            summary
+        );
+    }
+
+    #[test]
+    fn test_compaction_summary_null_new_fields_backward_compat() {
+        // Explicitly null values for new fields (as serde(default) would produce)
+        let snapshot = serde_json::json!({
+            "compaction_context": {
+                "user_intent": null,
+                "decisions": ["d1"],
+                "pending_tasks": [],
+                "issues": [],
+                "active_work": [],
+                "files_referenced": null
+            }
+        });
+        let result = build_compaction_summary(&snapshot);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert!(summary.contains("Decisions: d1"), "got: {}", summary);
+        assert!(
+            !summary.contains("Original request:"),
+            "null intent should be skipped, got: {}",
+            summary
+        );
+        assert!(
+            !summary.contains("Files discussed:"),
+            "null files should be skipped, got: {}",
+            summary
+        );
     }
 }

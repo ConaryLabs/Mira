@@ -4,9 +4,12 @@
 use crate::ipc::client::HookClient;
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 /// Confidence level for compaction log entries
 const COMPACTION_CONFIDENCE: f64 = 0.3;
@@ -14,8 +17,14 @@ const COMPACTION_CONFIDENCE: f64 = 0.3;
 const MAX_ITEMS_PER_CATEGORY: usize = 5;
 /// Minimum content length for extracted paragraphs (skip trivial entries)
 const MIN_CONTENT_LEN: usize = 10;
-/// Maximum content length for extracted paragraphs (skip code pastes)
+/// Maximum content length for extracted paragraphs (truncate beyond this)
 const MAX_CONTENT_LEN: usize = 800;
+/// Maximum transcript file size (50 MB) -- skip reading to prevent OOM
+const MAX_TRANSCRIPT_BYTES: u64 = 50 * 1024 * 1024;
+/// Maximum file path references to extract
+const MAX_FILE_REFS: usize = 10;
+/// Minimum match length for file path regex (filters out noise)
+const MIN_FILE_PATH_LEN: usize = 5;
 
 /// A parsed message from the JSONL transcript
 #[derive(Debug)]
@@ -34,6 +43,10 @@ pub(crate) struct CompactionContext {
     pub active_work: Vec<String>,
     pub issues: Vec<String>,
     pub pending_tasks: Vec<String>,
+    #[serde(default)]
+    pub user_intent: Option<String>,
+    #[serde(default)]
+    pub files_referenced: Vec<String>,
 }
 
 impl CompactionContext {
@@ -42,11 +55,78 @@ impl CompactionContext {
             && self.active_work.is_empty()
             && self.issues.is_empty()
             && self.pending_tasks.is_empty()
+            && self.user_intent.is_none()
+            && self.files_referenced.is_empty()
     }
 
     fn total_items(&self) -> usize {
-        self.decisions.len() + self.active_work.len() + self.issues.len() + self.pending_tasks.len()
+        self.decisions.len()
+            + self.active_work.len()
+            + self.issues.len()
+            + self.pending_tasks.len()
+            + self.user_intent.as_ref().map_or(0, |_| 1)
+            + self.files_referenced.len()
     }
+}
+
+/// Merge a new compaction context into an existing one.
+///
+/// Vec fields: combine old + new, deduplicate (exact string match), keep the
+/// last `MAX_ITEMS_PER_CATEGORY` (or `MAX_FILE_REFS` for files) entries so
+/// that recent items are preferred.
+///
+/// `user_intent`: keep the FIRST one (the original intent from the earliest
+/// compaction). Only set if the existing value is `None`.
+pub(crate) fn merge_compaction_contexts(
+    existing: &serde_json::Value,
+    new: &serde_json::Value,
+) -> serde_json::Value {
+    let old: CompactionContext = serde_json::from_value(existing.clone()).unwrap_or_default();
+    let incoming: CompactionContext = serde_json::from_value(new.clone()).unwrap_or_default();
+
+    let merged = CompactionContext {
+        decisions: merge_vec_field(&old.decisions, &incoming.decisions, MAX_ITEMS_PER_CATEGORY),
+        active_work: merge_vec_field(
+            &old.active_work,
+            &incoming.active_work,
+            MAX_ITEMS_PER_CATEGORY,
+        ),
+        issues: merge_vec_field(&old.issues, &incoming.issues, MAX_ITEMS_PER_CATEGORY),
+        pending_tasks: merge_vec_field(
+            &old.pending_tasks,
+            &incoming.pending_tasks,
+            MAX_ITEMS_PER_CATEGORY,
+        ),
+        user_intent: old.user_intent.or(incoming.user_intent),
+        files_referenced: merge_vec_field(
+            &old.files_referenced,
+            &incoming.files_referenced,
+            MAX_FILE_REFS,
+        ),
+    };
+
+    serde_json::to_value(&merged).unwrap_or_else(|_| new.clone())
+}
+
+/// Combine two Vec<String> fields: append new after old, deduplicate by exact
+/// match (keeping the later occurrence), then keep only the last `max` items.
+fn merge_vec_field(old: &[String], new: &[String], max: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut combined: Vec<String> = Vec::with_capacity(old.len() + new.len());
+
+    // Walk in reverse so when we reverse back, the *last* occurrence wins
+    for item in old.iter().chain(new.iter()).rev() {
+        if seen.insert(item.as_str().to_owned()) {
+            combined.push(item.clone());
+        }
+    }
+    combined.reverse();
+
+    // Keep the last `max` entries (prefer recent)
+    if combined.len() > max {
+        combined.drain(..combined.len() - max);
+    }
+    combined
 }
 
 /// Handle PreCompact hook from Claude Code
@@ -102,10 +182,30 @@ pub async fn run() -> Result<()> {
         "PreCompact hook triggered"
     );
 
-    // Read transcript if available
-    let transcript = transcript_path
-        .as_ref()
-        .and_then(|p| fs::read_to_string(p).ok());
+    // Read transcript if available (with size guard to prevent OOM)
+    let transcript = transcript_path.as_ref().and_then(|p| {
+        match fs::metadata(p) {
+            Ok(meta) if meta.len() > MAX_TRANSCRIPT_BYTES => {
+                tracing::warn!(
+                    path = %p.display(),
+                    size_mb = meta.len() / (1024 * 1024),
+                    "Skipping transcript read: file exceeds 50 MB limit"
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "Could not stat transcript file");
+                return None;
+            }
+            _ => {}
+        }
+        fs::read_to_string(p)
+            .map_err(|e| {
+                tracing::debug!(error = %e, path = %p.display(), "Failed to read transcript file");
+                e
+            })
+            .ok()
+    });
 
     // Connect via IPC (falls back to direct DB)
     let mut client = HookClient::connect().await;
@@ -288,49 +388,188 @@ fn matches_any(lower: &str, keywords: &[&str]) -> bool {
     keywords.iter().any(|kw| lower.contains(kw))
 }
 
+/// Check issue keywords only within the first ~80 chars of the paragraph.
+/// Real error reports lead with the error pattern; matching the full text
+/// produces false positives from incidental mentions.
+fn matches_issue_keyword(lower: &str) -> bool {
+    let prefix = if lower.len() > 80 {
+        &lower[..lower.floor_char_boundary(80)]
+    } else {
+        lower
+    };
+    ISSUE_KEYWORDS.iter().any(|kw| prefix.contains(kw))
+}
+
+/// Continuation prompt patterns (lowercased).
+/// These are generic session-continuation phrases that carry no meaningful intent.
+const CONTINUATION_PATTERNS: &[&str] = &[
+    "continue",
+    "keep going",
+    "carry on",
+    "go on",
+    "go ahead",
+    "resume",
+    "yes",
+    "yeah",
+    "yep",
+    "ok",
+    "okay",
+    "sure",
+    "do it",
+    "let's do it",
+    "sounds good",
+    "lgtm",
+    "proceed",
+];
+
+/// Check if the user's first message is a generic continuation prompt
+/// rather than a meaningful request.
+fn is_continuation_prompt(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let trimmed = lower.trim_end_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
+    CONTINUATION_PATTERNS.contains(&trimmed)
+}
+
+/// Regex for common source file paths referenced in assistant messages.
+static FILE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // SAFETY: This is a static literal regex pattern; compilation cannot fail.
+    #[allow(clippy::expect_used)]
+    Regex::new(
+        r"[\w/.@-]+\.(rs|py|ts|js|tsx|jsx|toml|json|md|yaml|yml|go|java|rb|sh|css|html|sql)\b",
+    )
+    .expect("file path regex")
+});
+
+/// Extract file paths referenced in assistant messages.
+fn extract_file_paths(messages: &[TranscriptMessage]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut paths = Vec::new();
+    for msg in messages.iter().rev() {
+        if msg.role != "assistant" {
+            continue;
+        }
+        for m in FILE_PATH_RE.find_iter(&msg.text_content) {
+            let path = m.as_str();
+            // Skip very short matches and URL-like fragments
+            // The regex can't match ":" so URLs like https://docs.rs/foo.html
+            // get captured as "//docs.rs/foo.html". Filter those too.
+            if path.len() < MIN_FILE_PATH_LEN || path.contains("://") || path.starts_with("//") {
+                continue;
+            }
+            if seen.insert(path.to_string()) {
+                paths.push(path.to_string());
+                if paths.len() >= MAX_FILE_REFS {
+                    return paths;
+                }
+            }
+        }
+    }
+    paths
+}
+
 /// Extract structured context from parsed transcript messages.
 ///
-/// Scans paragraphs for decision keywords, pending tasks, and issues.
-/// Captures the last assistant message's opening paragraph as active work.
+/// Iterates messages in reverse so the 5-item cap captures the most recent
+/// matches. After collection, reverses each vec to restore chronological order.
+/// Also extracts user intent and referenced file paths.
 pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> CompactionContext {
     let mut ctx = CompactionContext::default();
 
-    for msg in messages {
+    // Extract user_intent from the first user message that isn't a
+    // continuation prompt ("keep going", "continue", etc.)
+    for user_msg in messages.iter().filter(|m| m.role == "user") {
+        let Some(first_para) = user_msg
+            .text_content
+            .split("\n\n")
+            .next()
+            .map(|s| s.trim())
+            .filter(|s| s.len() >= MIN_CONTENT_LEN)
+        else {
+            continue;
+        };
+        // Skip generic continuation prompts that carry no intent
+        if is_continuation_prompt(first_para) {
+            continue;
+        }
+        let intent = if first_para.len() > MAX_CONTENT_LEN {
+            truncate_at_boundary(first_para, MAX_CONTENT_LEN).to_string()
+        } else {
+            first_para.to_string()
+        };
+        ctx.user_intent = Some(intent);
+        break;
+    }
+
+    // Extract file paths from assistant messages
+    ctx.files_referenced = extract_file_paths(messages);
+
+    // Reverse iteration: scan from most recent to oldest so the 5-item cap
+    // captures the most recent matches. Only scan assistant messages to avoid
+    // capturing user descriptions ("I decided to...") as actual decisions.
+    for msg in messages.iter().rev() {
+        if msg.role != "assistant" {
+            continue;
+        }
         for paragraph in msg.text_content.split("\n\n") {
             let trimmed = paragraph.trim();
-            if trimmed.len() < MIN_CONTENT_LEN || trimmed.len() > MAX_CONTENT_LEN {
+            if trimmed.len() < MIN_CONTENT_LEN {
                 continue;
             }
-            let lower = trimmed.to_lowercase();
+            // Truncate instead of dropping paragraphs that exceed MAX_CONTENT_LEN
+            let content = if trimmed.len() > MAX_CONTENT_LEN {
+                truncate_at_boundary(trimmed, MAX_CONTENT_LEN)
+            } else {
+                trimmed
+            };
+            let lower = content.to_lowercase();
 
             if ctx.decisions.len() < MAX_ITEMS_PER_CATEGORY
                 && matches_any(&lower, DECISION_KEYWORDS)
             {
-                ctx.decisions.push(trimmed.to_string());
+                ctx.decisions.push(content.to_string());
             }
 
             if ctx.pending_tasks.len() < MAX_ITEMS_PER_CATEGORY
                 && matches_any(&lower, TASK_KEYWORDS)
             {
-                ctx.pending_tasks.push(trimmed.to_string());
+                ctx.pending_tasks.push(content.to_string());
             }
 
-            if ctx.issues.len() < MAX_ITEMS_PER_CATEGORY && matches_any(&lower, ISSUE_KEYWORDS) {
-                ctx.issues.push(trimmed.to_string());
+            if ctx.issues.len() < MAX_ITEMS_PER_CATEGORY && matches_issue_keyword(&lower) {
+                ctx.issues.push(content.to_string());
             }
         }
     }
 
-    // Capture active work from the last assistant message's first substantial paragraph
-    if let Some(last_assistant) = messages.iter().rev().find(|m| m.role == "assistant")
-        && let Some(first_para) = last_assistant
+    // Restore chronological order after reverse collection
+    ctx.decisions.reverse();
+    ctx.pending_tasks.reverse();
+    ctx.issues.reverse();
+
+    // Capture active work: walk backward to find the last assistant message
+    // with substantial text, take up to 2 paragraphs.
+    for msg in messages.iter().rev() {
+        if msg.role != "assistant" {
+            continue;
+        }
+        let paras: Vec<&str> = msg
             .text_content
             .split("\n\n")
-            .next()
             .map(|s| s.trim())
-            .filter(|s| s.len() >= MIN_CONTENT_LEN && s.len() <= MAX_CONTENT_LEN)
-    {
-        ctx.active_work.push(first_para.to_string());
+            .filter(|s| s.len() > 30)
+            .take(2)
+            .collect();
+        if !paras.is_empty() {
+            for p in paras {
+                let content = if p.len() > MAX_CONTENT_LEN {
+                    truncate_at_boundary(p, MAX_CONTENT_LEN)
+                } else {
+                    p
+                };
+                ctx.active_work.push(content.to_string());
+            }
+            break;
+        }
     }
 
     ctx
@@ -578,8 +817,10 @@ mod tests {
             },
         ];
         let ctx = extract_compaction_context(&messages);
-        assert_eq!(ctx.active_work.len(), 1);
+        // Now captures up to 2 paragraphs from the last assistant message
+        assert_eq!(ctx.active_work.len(), 2);
         assert!(ctx.active_work[0].contains("database migration"));
+        assert!(ctx.active_work[1].contains("details of the change"));
     }
 
     #[test]
@@ -611,14 +852,18 @@ mod tests {
     }
 
     #[test]
-    fn filters_long_paragraphs() {
+    fn truncates_long_paragraphs_instead_of_dropping() {
+        // "error: " is in the prefix, so even after truncation the keyword matches
         let long_text = format!("error: {}", "x".repeat(800));
+        assert!(long_text.len() > MAX_CONTENT_LEN);
         let messages = vec![TranscriptMessage {
             role: "assistant".to_string(),
             text_content: long_text,
         }];
         let ctx = extract_compaction_context(&messages);
-        assert!(ctx.issues.is_empty());
+        assert_eq!(ctx.issues.len(), 1);
+        // The stored text should be truncated to MAX_CONTENT_LEN
+        assert!(ctx.issues[0].len() <= MAX_CONTENT_LEN);
     }
 
     #[test]
@@ -712,8 +957,11 @@ mod tests {
             active_work: vec!["a1".into()],
             issues: vec!["i1".into()],
             pending_tasks: vec!["p1".into(), "p2".into(), "p3".into()],
+            user_intent: Some("intent".into()),
+            files_referenced: vec!["src/main.rs".into()],
         };
-        assert_eq!(ctx.total_items(), 7);
+        // 2 + 1 + 1 + 3 + 1 (intent) + 1 (file) = 9
+        assert_eq!(ctx.total_items(), 9);
     }
 
     // ── Serialization round-trip ──────────────────────────────────────────
@@ -725,6 +973,8 @@ mod tests {
             active_work: vec!["working on migration".into()],
             issues: vec!["connection refused".into()],
             pending_tasks: vec!["add validation".into()],
+            user_intent: Some("Fix the auth bug".into()),
+            files_referenced: vec!["src/main.rs".into(), "src/lib.rs".into()],
         };
         let json = serde_json::to_value(&ctx).unwrap();
         let roundtrip: CompactionContext = serde_json::from_value(json).unwrap();
@@ -732,6 +982,183 @@ mod tests {
         assert_eq!(roundtrip.active_work, ctx.active_work);
         assert_eq!(roundtrip.issues, ctx.issues);
         assert_eq!(roundtrip.pending_tasks, ctx.pending_tasks);
+        assert_eq!(roundtrip.user_intent, ctx.user_intent);
+        assert_eq!(roundtrip.files_referenced, ctx.files_referenced);
+    }
+
+    // ── merge_compaction_contexts ────────────────────────────────────────
+
+    #[test]
+    fn merge_combines_vec_fields() {
+        let existing = serde_json::to_value(CompactionContext {
+            decisions: vec!["decision A".into()],
+            active_work: vec!["work A".into()],
+            issues: vec![],
+            pending_tasks: vec![],
+            user_intent: None,
+            files_referenced: vec!["src/a.rs".into()],
+        })
+        .unwrap();
+        let new = serde_json::to_value(CompactionContext {
+            decisions: vec!["decision B".into()],
+            active_work: vec!["work B".into()],
+            issues: vec!["issue B".into()],
+            pending_tasks: vec!["task B".into()],
+            user_intent: None,
+            files_referenced: vec!["src/b.rs".into()],
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        assert_eq!(merged.decisions, vec!["decision A", "decision B"]);
+        assert_eq!(merged.active_work, vec!["work A", "work B"]);
+        assert_eq!(merged.issues, vec!["issue B"]);
+        assert_eq!(merged.pending_tasks, vec!["task B"]);
+        assert_eq!(merged.files_referenced, vec!["src/a.rs", "src/b.rs"]);
+    }
+
+    #[test]
+    fn merge_deduplicates_exact_strings() {
+        let existing = serde_json::to_value(CompactionContext {
+            decisions: vec!["dup".into(), "unique old".into()],
+            ..Default::default()
+        })
+        .unwrap();
+        let new = serde_json::to_value(CompactionContext {
+            decisions: vec!["dup".into(), "unique new".into()],
+            ..Default::default()
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        assert_eq!(merged.decisions, vec!["unique old", "dup", "unique new"]);
+    }
+
+    #[test]
+    fn merge_keeps_first_user_intent() {
+        let existing = serde_json::to_value(CompactionContext {
+            user_intent: Some("original intent".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let new = serde_json::to_value(CompactionContext {
+            user_intent: Some("later intent".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        assert_eq!(merged.user_intent.as_deref(), Some("original intent"));
+    }
+
+    #[test]
+    fn merge_sets_intent_when_existing_is_none() {
+        let existing = serde_json::to_value(CompactionContext {
+            user_intent: None,
+            ..Default::default()
+        })
+        .unwrap();
+        let new = serde_json::to_value(CompactionContext {
+            user_intent: Some("first real intent".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        assert_eq!(merged.user_intent.as_deref(), Some("first real intent"));
+    }
+
+    #[test]
+    fn merge_caps_vec_at_max_items() {
+        let existing = serde_json::to_value(CompactionContext {
+            decisions: (0..4).map(|i| format!("old decision {i}")).collect(),
+            ..Default::default()
+        })
+        .unwrap();
+        let new = serde_json::to_value(CompactionContext {
+            decisions: (0..4).map(|i| format!("new decision {i}")).collect(),
+            ..Default::default()
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        // MAX_ITEMS_PER_CATEGORY = 5, 8 unique items -> keep last 5
+        assert_eq!(merged.decisions.len(), MAX_ITEMS_PER_CATEGORY);
+        // Should prefer recent (last 5 of combined)
+        assert_eq!(merged.decisions[4], "new decision 3");
+    }
+
+    #[test]
+    fn merge_caps_files_at_max_file_refs() {
+        let existing = serde_json::to_value(CompactionContext {
+            files_referenced: (0..8).map(|i| format!("src/old_{i}.rs")).collect(),
+            ..Default::default()
+        })
+        .unwrap();
+        let new = serde_json::to_value(CompactionContext {
+            files_referenced: (0..8).map(|i| format!("src/new_{i}.rs")).collect(),
+            ..Default::default()
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        // MAX_FILE_REFS = 10, 16 unique items -> keep last 10
+        assert_eq!(merged.files_referenced.len(), MAX_FILE_REFS);
+        assert_eq!(merged.files_referenced[9], "src/new_7.rs");
+    }
+
+    #[test]
+    fn merge_handles_empty_existing() {
+        let existing = serde_json::json!({});
+        let new = serde_json::to_value(CompactionContext {
+            decisions: vec!["decision A".into()],
+            user_intent: Some("intent".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        assert_eq!(merged.decisions, vec!["decision A"]);
+        assert_eq!(merged.user_intent.as_deref(), Some("intent"));
+    }
+
+    #[test]
+    fn merge_handles_null_existing() {
+        let existing = serde_json::Value::Null;
+        let new = serde_json::to_value(CompactionContext {
+            issues: vec!["bug".into()],
+            ..Default::default()
+        })
+        .unwrap();
+        let merged: CompactionContext =
+            serde_json::from_value(merge_compaction_contexts(&existing, &new)).unwrap();
+        assert_eq!(merged.issues, vec!["bug"]);
+    }
+
+    // ── merge_vec_field ─────────────────────────────────────────────────
+
+    #[test]
+    fn merge_vec_field_basic_combine() {
+        let result = merge_vec_field(&["a".into()], &["b".into()], 5);
+        assert_eq!(result, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn merge_vec_field_dedup_keeps_later() {
+        let result = merge_vec_field(&["x".into(), "y".into()], &["y".into(), "z".into()], 5);
+        // "y" appears in both -- the later (new) occurrence wins position
+        assert_eq!(result, vec!["x", "y", "z"]);
+    }
+
+    #[test]
+    fn merge_vec_field_trims_oldest() {
+        let result = merge_vec_field(
+            &["a".into(), "b".into(), "c".into()],
+            &["d".into(), "e".into()],
+            3,
+        );
+        // 5 unique items, max 3 -> keep last 3
+        assert_eq!(result, vec!["c", "d", "e"]);
     }
 
     // ── Transcript path validation ───────────────────────────────────────
@@ -899,10 +1326,7 @@ mod tests {
 
     #[test]
     fn matches_any_returns_false_on_no_match() {
-        assert!(!matches_any(
-            "this is a normal sentence",
-            DECISION_KEYWORDS
-        ));
+        assert!(!matches_any("this is a normal sentence", DECISION_KEYWORDS));
     }
 
     #[test]
@@ -1089,12 +1513,429 @@ mod tests {
             .chain(TASK_KEYWORDS)
             .chain(ISSUE_KEYWORDS)
         {
-            assert_eq!(
-                *kw,
-                kw.to_lowercase(),
-                "Keyword '{}' must be lowercase",
-                kw
-            );
+            assert_eq!(*kw, kw.to_lowercase(), "Keyword '{}' must be lowercase", kw);
         }
+    }
+
+    // ── Reverse iteration (recency bias) ────────────────────────────────
+
+    #[test]
+    fn reverse_iteration_captures_most_recent() {
+        // Create 10 decision messages; only the last 5 should be kept
+        let mut messages = Vec::new();
+        for i in 0..10 {
+            messages.push(TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: format!("We decided to implement feature number {} for testing.", i),
+            });
+        }
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), MAX_ITEMS_PER_CATEGORY);
+        // Should have the LAST 5 (indices 5-9), in chronological order
+        assert!(ctx.decisions[0].contains("5"));
+        assert!(ctx.decisions[4].contains("9"));
+    }
+
+    #[test]
+    fn reverse_iteration_restores_chronological_order() {
+        let messages = vec![
+            TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: "We decided to use pattern A for the first module.".to_string(),
+            },
+            TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: "We decided to use pattern B for the second module.".to_string(),
+            },
+        ];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 2);
+        // After reverse collection + re-reverse, chronological order is preserved
+        assert!(ctx.decisions[0].contains("pattern A"));
+        assert!(ctx.decisions[1].contains("pattern B"));
+    }
+
+    // ── user_intent extraction ──────────────────────────────────────────
+
+    #[test]
+    fn extracts_user_intent_from_first_user_message() {
+        let messages = vec![
+            TranscriptMessage {
+                role: "user".to_string(),
+                text_content: "Fix the authentication bug in the login handler.".to_string(),
+            },
+            TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: "Looking into the auth handler now.".to_string(),
+            },
+        ];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(
+            ctx.user_intent.as_deref(),
+            Some("Fix the authentication bug in the login handler.")
+        );
+    }
+
+    #[test]
+    fn user_intent_takes_first_paragraph_only() {
+        let messages = vec![TranscriptMessage {
+            role: "user".to_string(),
+            text_content: "Refactor the database layer for clarity.\n\nAlso fix the tests."
+                .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(
+            ctx.user_intent.as_deref(),
+            Some("Refactor the database layer for clarity.")
+        );
+    }
+
+    #[test]
+    fn user_intent_skips_too_short_content() {
+        let messages = vec![TranscriptMessage {
+            role: "user".to_string(),
+            text_content: "ok".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.user_intent.is_none());
+    }
+
+    #[test]
+    fn user_intent_truncates_long_content() {
+        let long_intent = "x".repeat(1000);
+        let messages = vec![TranscriptMessage {
+            role: "user".to_string(),
+            text_content: long_intent,
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.user_intent.is_some());
+        assert!(ctx.user_intent.as_ref().unwrap().len() <= MAX_CONTENT_LEN);
+    }
+
+    // ── files_referenced extraction ─────────────────────────────────────
+
+    #[test]
+    fn extracts_file_paths_from_assistant_messages() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "I updated src/hooks/precompact.rs and crates/mira-server/Cargo.toml."
+                .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(
+            ctx.files_referenced
+                .contains(&"src/hooks/precompact.rs".to_string())
+        );
+        assert!(
+            ctx.files_referenced
+                .contains(&"crates/mira-server/Cargo.toml".to_string())
+        );
+    }
+
+    #[test]
+    fn file_paths_are_deduplicated() {
+        let messages = vec![
+            TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: "I read src/main.rs first.".to_string(),
+            },
+            TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: "Then I edited src/main.rs again.".to_string(),
+            },
+        ];
+        let ctx = extract_compaction_context(&messages);
+        let main_count = ctx
+            .files_referenced
+            .iter()
+            .filter(|p| *p == "src/main.rs")
+            .count();
+        assert_eq!(main_count, 1);
+    }
+
+    #[test]
+    fn file_paths_capped_at_max() {
+        // Generate more than MAX_FILE_REFS unique file paths
+        let mut lines = Vec::new();
+        for i in 0..20 {
+            lines.push(format!("src/module_{}.rs", i));
+        }
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: lines.join(" and "),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.files_referenced.len(), MAX_FILE_REFS);
+    }
+
+    #[test]
+    fn file_paths_skip_user_messages() {
+        let messages = vec![TranscriptMessage {
+            role: "user".to_string(),
+            text_content: "Look at src/secret.rs please.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.files_referenced.is_empty());
+    }
+
+    #[test]
+    fn file_paths_skip_short_matches() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "The a.rs file is too short to be a real path reference.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        // "a.rs" is 4 chars, below MIN_FILE_PATH_LEN
+        assert!(ctx.files_referenced.is_empty());
+    }
+
+    #[test]
+    fn file_paths_skip_url_fragments() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "See https://docs.rs/tokio/latest/tokio/index.html for the docs."
+                .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        // The regex matches "//docs.rs/tokio/latest/tokio/index.html" but the
+        // "//" prefix filter should catch it.
+        assert!(
+            ctx.files_referenced.is_empty(),
+            "URL fragment should be filtered: {:?}",
+            ctx.files_referenced
+        );
+    }
+
+    #[test]
+    fn file_paths_match_dotfiles() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Check .github/workflows/ci.yml for the CI config.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(
+            ctx.files_referenced.iter().any(|p| p.contains("ci.yml")),
+            "Should match dotfile paths: {:?}",
+            ctx.files_referenced
+        );
+    }
+
+    #[test]
+    fn file_paths_match_relative_paths() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "The file at ./src/main.rs needs updating.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(!ctx.files_referenced.is_empty());
+    }
+
+    // ── is_continuation_prompt ──────────────────────────────────────────
+
+    #[test]
+    fn continuation_prompt_exact_match() {
+        assert!(is_continuation_prompt("continue"));
+        assert!(is_continuation_prompt("keep going"));
+        assert!(is_continuation_prompt("yes"));
+        assert!(is_continuation_prompt("ok"));
+        assert!(is_continuation_prompt("sounds good"));
+        assert!(is_continuation_prompt("lgtm"));
+    }
+
+    #[test]
+    fn continuation_prompt_with_punctuation() {
+        assert!(is_continuation_prompt("continue."));
+        assert!(is_continuation_prompt("yes!"));
+        assert!(is_continuation_prompt("ok."));
+        assert!(is_continuation_prompt("sure!"));
+    }
+
+    #[test]
+    fn continuation_prompt_case_insensitive() {
+        assert!(is_continuation_prompt("Continue"));
+        assert!(is_continuation_prompt("YES"));
+        assert!(is_continuation_prompt("Keep Going"));
+    }
+
+    #[test]
+    fn continuation_prompt_rejects_real_requests() {
+        assert!(!is_continuation_prompt("fix the auth bug"));
+        assert!(!is_continuation_prompt("continue working on the migration"));
+        assert!(!is_continuation_prompt("yes, also add tests for it"));
+        assert!(!is_continuation_prompt(
+            "ok now let's refactor the database layer"
+        ));
+    }
+
+    #[test]
+    fn user_intent_skips_continuation_and_takes_next() {
+        let messages = vec![
+            TranscriptMessage {
+                role: "user".to_string(),
+                text_content: "continue".to_string(),
+            },
+            TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: "Sure, continuing from where we left off.".to_string(),
+            },
+            TranscriptMessage {
+                role: "user".to_string(),
+                text_content: "Actually, let's fix the auth bug instead.".to_string(),
+            },
+        ];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(
+            ctx.user_intent.as_deref(),
+            Some("Actually, let's fix the auth bug instead.")
+        );
+    }
+
+    // ── Keyword extraction assistant-only ────────────────────────────────
+
+    #[test]
+    fn keywords_only_match_assistant_messages() {
+        let messages = vec![
+            TranscriptMessage {
+                role: "user".to_string(),
+                text_content: "I decided to use the builder pattern for this.".to_string(),
+            },
+            TranscriptMessage {
+                role: "assistant".to_string(),
+                text_content: "I'll look into the implementation details.".to_string(),
+            },
+        ];
+        let ctx = extract_compaction_context(&messages);
+        // User saying "decided to" should NOT be captured as a decision
+        assert!(ctx.decisions.is_empty());
+    }
+
+    // ── matches_issue_keyword (prefix matching) ─────────────────────────
+
+    #[test]
+    fn issue_keyword_in_prefix_matches() {
+        assert!(matches_issue_keyword(
+            "error: something went wrong in the handler"
+        ));
+    }
+
+    #[test]
+    fn issue_keyword_beyond_prefix_does_not_match() {
+        // Place the keyword well past the 80-char prefix
+        let text = format!("{} error: this should not match", "x".repeat(100));
+        assert!(!matches_issue_keyword(&text));
+    }
+
+    #[test]
+    fn issue_prefix_matching_does_not_affect_decision_matching() {
+        // Decisions still use full-text matching via matches_any
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: format!("{} we decided to change the approach.", "x".repeat(100)),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        // Decision keyword is past 80 chars but matches_any searches the whole text
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    // ── Truncate instead of drop ────────────────────────────────────────
+
+    #[test]
+    fn long_decision_paragraph_is_truncated_and_kept() {
+        let long_text = format!("We decided to {}", "refactor ".repeat(200));
+        assert!(long_text.len() > MAX_CONTENT_LEN);
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: long_text,
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+        assert!(ctx.decisions[0].len() <= MAX_CONTENT_LEN);
+    }
+
+    // ── Active work improvements ────────────────────────────────────────
+
+    #[test]
+    fn active_work_takes_two_paragraphs() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content:
+                "Working on the database migration system now.\n\nThe schema changes affect three tables in the database."
+                    .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.active_work.len(), 2);
+    }
+
+    #[test]
+    fn active_work_skips_short_paragraphs() {
+        // First paragraph is > 30 chars, second is <= 30 chars
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Working on the database migration system now.\n\nShort note."
+                .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.active_work.len(), 1);
+        assert!(ctx.active_work[0].contains("database migration"));
+    }
+
+    #[test]
+    fn active_work_skips_user_messages() {
+        // Only user messages, no assistant -- no active work
+        let messages = vec![TranscriptMessage {
+            role: "user".to_string(),
+            text_content: "This is a user message that should be skipped for active work."
+                .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.active_work.is_empty());
+    }
+
+    // ── is_empty with new fields ────────────────────────────────────────
+
+    #[test]
+    fn not_empty_with_user_intent() {
+        let ctx = CompactionContext {
+            user_intent: Some("Fix the bug".into()),
+            ..Default::default()
+        };
+        assert!(!ctx.is_empty());
+        assert_eq!(ctx.total_items(), 1);
+    }
+
+    #[test]
+    fn not_empty_with_files_referenced() {
+        let ctx = CompactionContext {
+            files_referenced: vec!["src/main.rs".into()],
+            ..Default::default()
+        };
+        assert!(!ctx.is_empty());
+        assert_eq!(ctx.total_items(), 1);
+    }
+
+    // ── Backward-compatible deserialization ──────────────────────────────
+
+    #[test]
+    fn deserializes_without_new_fields() {
+        // Old format without user_intent and files_referenced
+        let json = serde_json::json!({
+            "decisions": ["chose builder"],
+            "active_work": [],
+            "issues": [],
+            "pending_tasks": []
+        });
+        let ctx: CompactionContext = serde_json::from_value(json).unwrap();
+        assert_eq!(ctx.decisions.len(), 1);
+        assert!(ctx.user_intent.is_none());
+        assert!(ctx.files_referenced.is_empty());
+    }
+
+    // ── Constants ───────────────────────────────────────────────────────
+
+    #[test]
+    fn new_constants_have_expected_values() {
+        assert_eq!(MAX_TRANSCRIPT_BYTES, 50 * 1024 * 1024);
+        assert_eq!(MAX_FILE_REFS, 10);
+        assert_eq!(MIN_FILE_PATH_LEN, 5);
     }
 }

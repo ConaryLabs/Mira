@@ -549,7 +549,11 @@ pub async fn save_compaction_context(server: &MiraServer, params: Value) -> Resu
                     json!({})
                 };
 
-                snapshot["compaction_context"] = context;
+                snapshot["compaction_context"] = if let Some(existing) = snapshot.get("compaction_context") {
+                    crate::hooks::precompact::merge_compaction_contexts(existing, &context)
+                } else {
+                    context
+                };
 
                 let snapshot_str =
                     serde_json::to_string(&snapshot).map_err(|e| anyhow::anyhow!("{e}"))?;

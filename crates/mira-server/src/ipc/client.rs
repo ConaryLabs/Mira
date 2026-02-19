@@ -845,35 +845,66 @@ impl HookClient {
             let pool = pool.clone();
             let session_id = session_id.to_string();
             pool.try_interact("save_compaction_context", move |conn| {
-                let existing: Option<String> = conn
-                    .query_row(
-                        "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
-                        [&session_id],
-                        |row| row.get::<_, String>(0),
+                // Use BEGIN IMMEDIATE for atomic read-modify-write (matches IPC path in ops.rs)
+                conn.execute_batch("BEGIN IMMEDIATE")
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                let result: Result<(), anyhow::Error> = (|| {
+                    let existing: Option<String> = conn
+                        .query_row(
+                            "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+                            [&session_id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .ok();
+
+                    let mut snapshot = if let Some(ref json_str) = existing {
+                        serde_json::from_str::<serde_json::Value>(json_str)
+                            .unwrap_or_else(|_| json!({}))
+                    } else {
+                        json!({})
+                    };
+
+                    snapshot["compaction_context"] =
+                        if let Some(existing) = snapshot.get("compaction_context") {
+                            crate::hooks::precompact::merge_compaction_contexts(existing, &context)
+                        } else {
+                            context
+                        };
+
+                    let snapshot_str =
+                        serde_json::to_string(&snapshot).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                    conn.execute(
+                        "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+                         VALUES (?1, ?2, datetime('now'))
+                         ON CONFLICT(session_id) DO UPDATE SET snapshot = ?2, created_at = datetime('now')",
+                        rusqlite::params![session_id, snapshot_str],
                     )
-                    .ok();
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                let mut snapshot = if let Some(ref json_str) = existing {
-                    serde_json::from_str::<serde_json::Value>(json_str)
-                        .unwrap_or_else(|_| json!({}))
-                } else {
-                    json!({})
-                };
+                    Ok(())
+                })();
 
-                snapshot["compaction_context"] = context;
-
-                let snapshot_str =
-                    serde_json::to_string(&snapshot).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-                conn.execute(
-                    "INSERT INTO session_snapshots (session_id, snapshot, created_at)
-                     VALUES (?1, ?2, datetime('now'))
-                     ON CONFLICT(session_id) DO UPDATE SET snapshot = ?2, created_at = datetime('now')",
-                    rusqlite::params![session_id, snapshot_str],
-                )
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-                Ok(())
+                match result {
+                    Ok(()) => match conn.execute_batch("COMMIT") {
+                        Ok(()) => Ok(()),
+                        Err(commit_err) => {
+                            // COMMIT failed -- rollback to clean up the open transaction
+                            if let Err(rb_err) = conn.execute_batch("ROLLBACK") {
+                                tracing::warn!(error = %rb_err, "ROLLBACK failed after COMMIT failure");
+                            }
+                            Err(anyhow::anyhow!("COMMIT failed: {commit_err}"))
+                        }
+                    },
+                    Err(e) => {
+                        // Best-effort rollback -- log but don't mask the original error
+                        if let Err(rb_err) = conn.execute_batch("ROLLBACK") {
+                            tracing::warn!(error = %rb_err, "ROLLBACK failed after save_compaction_context error");
+                        }
+                        Err(e)
+                    }
+                }
             })
             .await;
         }
