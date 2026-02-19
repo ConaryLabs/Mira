@@ -68,6 +68,18 @@ pub fn normalize_project_path(path: &str) -> String {
         expanded
     });
 
+    // On Windows, canonicalize() returns extended-length paths (\\?\C:\...)
+    // which are not useful for display or DB storage. Strip the prefix.
+    #[cfg(windows)]
+    let canonical = {
+        let s = canonical.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            PathBuf::from(stripped)
+        } else {
+            canonical
+        }
+    };
+
     // Convert to string with forward slashes, then strip trailing slashes
     let s = path_to_string(&canonical);
     let s = s.trim_end_matches('/').trim_end_matches('\\');
@@ -409,13 +421,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_normalize_project_path_root() {
         assert_eq!(normalize_project_path("/"), "/");
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_normalize_project_path_existing_dir() {
-        // /tmp always exists on Linux
+        // /tmp always exists on Linux/macOS
         let result = normalize_project_path("/tmp");
         assert_eq!(result, "/tmp");
     }
