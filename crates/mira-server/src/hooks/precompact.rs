@@ -15,7 +15,7 @@ const MAX_ITEMS_PER_CATEGORY: usize = 5;
 /// Minimum content length for extracted paragraphs (skip trivial entries)
 const MIN_CONTENT_LEN: usize = 10;
 /// Maximum content length for extracted paragraphs (skip code pastes)
-const MAX_CONTENT_LEN: usize = 500;
+const MAX_CONTENT_LEN: usize = 800;
 
 /// A parsed message from the JSONL transcript
 #[derive(Debug)]
@@ -216,6 +216,78 @@ pub(crate) fn parse_transcript_messages(transcript: &str) -> Vec<TranscriptMessa
     messages
 }
 
+/// Decision keyword patterns (lowercased).
+///
+/// These are multi-word phrases to avoid false positives from single-word
+/// matches like "picked" or "moving to" that appear in non-decision context.
+const DECISION_KEYWORDS: &[&str] = &[
+    "decided to",
+    "we will use",
+    "i chose",
+    "let's go with",
+    "approach:",
+    "we went with",
+    "the approach is",
+    "opted for",
+    "going with",
+    "settled on",
+    "switched to",
+    "using instead",
+    "the plan is",
+    "strategy:",
+    "design decision",
+    "trade-off:",
+    "tradeoff:",
+];
+
+/// Pending task keyword patterns (lowercased).
+///
+/// Patterns are multi-word to avoid false positives. Removed single-word
+/// and conversational patterns ("should also", "after that", "later we",
+/// "needs to be") that match normal prose too easily.
+const TASK_KEYWORDS: &[&str] = &[
+    "todo:",
+    "next step",
+    "remaining:",
+    "still need to",
+    "haven't yet",
+    "not yet implemented",
+    "follow-up:",
+    "followup:",
+    "left to do",
+    "will need to",
+    "then we need",
+    "blocked on",
+    "waiting for",
+    "- [ ]",
+];
+
+/// Issue keyword patterns (lowercased).
+///
+/// All patterns are either colon-suffixed or multi-word phrases to avoid
+/// false positives from single words that appear in normal discussion.
+const ISSUE_KEYWORDS: &[&str] = &[
+    "error:",
+    "failed:",
+    "issue:",
+    "bug:",
+    "broken:",
+    "doesn't work",
+    "does not work",
+    "a regression",
+    "workaround:",
+    "fixme:",
+    "panicked at",
+    "stack trace",
+    "compilation error",
+    "compile error",
+];
+
+/// Check if lowercased text matches any patterns in a keyword list.
+fn matches_any(lower: &str, keywords: &[&str]) -> bool {
+    keywords.iter().any(|kw| lower.contains(kw))
+}
+
 /// Extract structured context from parsed transcript messages.
 ///
 /// Scans paragraphs for decision keywords, pending tasks, and issues.
@@ -232,29 +304,18 @@ pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> Comp
             let lower = trimmed.to_lowercase();
 
             if ctx.decisions.len() < MAX_ITEMS_PER_CATEGORY
-                && (lower.contains("decided to")
-                    || lower.contains("choosing")
-                    || lower.contains("will use")
-                    || lower.contains("approach:"))
+                && matches_any(&lower, DECISION_KEYWORDS)
             {
                 ctx.decisions.push(trimmed.to_string());
             }
 
             if ctx.pending_tasks.len() < MAX_ITEMS_PER_CATEGORY
-                && (lower.contains("todo:")
-                    || lower.contains("next step")
-                    || lower.contains("remaining:")
-                    || lower.contains("still need to"))
+                && matches_any(&lower, TASK_KEYWORDS)
             {
                 ctx.pending_tasks.push(trimmed.to_string());
             }
 
-            if ctx.issues.len() < MAX_ITEMS_PER_CATEGORY
-                && (lower.contains("error:")
-                    || lower.contains("failed:")
-                    || lower.contains("issue:")
-                    || lower.contains("bug:"))
-            {
+            if ctx.issues.len() < MAX_ITEMS_PER_CATEGORY && matches_any(&lower, ISSUE_KEYWORDS) {
                 ctx.issues.push(trimmed.to_string());
             }
         }
@@ -405,17 +466,6 @@ mod tests {
     }
 
     #[test]
-    fn extracts_choosing_keyword() {
-        let messages = vec![TranscriptMessage {
-            role: "assistant".to_string(),
-            text_content: "After review, choosing SQLite over PostgreSQL for simplicity."
-                .to_string(),
-        }];
-        let ctx = extract_compaction_context(&messages);
-        assert_eq!(ctx.decisions.len(), 1);
-    }
-
-    #[test]
     fn extracts_will_use_keyword() {
         let messages = vec![TranscriptMessage {
             role: "assistant".to_string(),
@@ -562,13 +612,26 @@ mod tests {
 
     #[test]
     fn filters_long_paragraphs() {
-        let long_text = format!("error: {}", "x".repeat(500));
+        let long_text = format!("error: {}", "x".repeat(800));
         let messages = vec![TranscriptMessage {
             role: "assistant".to_string(),
             text_content: long_text,
         }];
         let ctx = extract_compaction_context(&messages);
         assert!(ctx.issues.is_empty());
+    }
+
+    #[test]
+    fn accepts_paragraph_at_max_content_len() {
+        // "error: " is 7 chars, so pad to exactly MAX_CONTENT_LEN (800)
+        let text = format!("error: {}", "x".repeat(MAX_CONTENT_LEN - 7));
+        assert_eq!(text.len(), MAX_CONTENT_LEN);
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: text,
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.issues.len(), 1);
     }
 
     #[test]
@@ -685,13 +748,353 @@ mod tests {
         assert!(!path.starts_with("/tmp"));
     }
 
+    // ── New keyword coverage ──────────────────────────────────────────────
+
+    #[test]
+    fn extracts_i_chose_decision() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "I chose thiserror over anyhow for the public API surface.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    #[test]
+    fn extracts_lets_go_with_decision() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Let's go with the builder pattern for config structs.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    #[test]
+    fn extracts_went_with_decision() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "We went with SQLite instead of PostgreSQL for this.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    #[test]
+    fn extracts_opted_for_decision() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "We opted for the async approach to keep things responsive.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    #[test]
+    fn extracts_settled_on_decision() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "After discussion, settled on using thiserror for the crate.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    #[test]
+    fn extracts_going_with_decision() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Going with the builder pattern for configuration structs.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    #[test]
+    fn extracts_switched_to_decision() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Switched to using DatabasePool after the connection leak.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.decisions.len(), 1);
+    }
+
+    #[test]
+    fn extracts_blocked_on_task() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "We're blocked on the upstream API providing auth tokens.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.pending_tasks.len(), 1);
+    }
+
+    #[test]
+    fn extracts_will_need_to_task() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "We will need to update the schema after this migration.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.pending_tasks.len(), 1);
+    }
+
+    #[test]
+    fn extracts_checkbox_task() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "- [ ] Add unit tests for the new handler code.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.pending_tasks.len(), 1);
+    }
+
+    #[test]
+    fn extracts_doesnt_work_issue() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "The hybrid search doesn't work when embeddings are missing.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.issues.len(), 1);
+    }
+
+    #[test]
+    fn extracts_panicked_at_issue() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Thread panicked at 'index out of bounds' in the parser.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.issues.len(), 1);
+    }
+
+    #[test]
+    fn extracts_regression_issue() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "This looks like a regression from the recent refactor work.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.issues.len(), 1);
+    }
+
+    #[test]
+    fn extracts_workaround_issue() {
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "workaround: manually flush the buffer before closing conn.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert_eq!(ctx.issues.len(), 1);
+    }
+
+    // ── matches_any helper ──────────────────────────────────────────────
+
+    #[test]
+    fn matches_any_finds_substring() {
+        assert!(matches_any("we decided to use it", DECISION_KEYWORDS));
+    }
+
+    #[test]
+    fn matches_any_returns_false_on_no_match() {
+        assert!(!matches_any(
+            "this is a normal sentence",
+            DECISION_KEYWORDS
+        ));
+    }
+
+    #[test]
+    fn matches_any_case_sensitive_on_lowered_input() {
+        // matches_any expects pre-lowered input
+        assert!(matches_any("opted for the new way", DECISION_KEYWORDS));
+        assert!(!matches_any("OPTED FOR the new way", DECISION_KEYWORDS));
+    }
+
+    // ── Precision: should NOT match (false-positive guards) ─────────────
+
+    #[test]
+    fn no_false_positive_on_will_use_behavior() {
+        // "will use" was tightened to "we will use" -- bare "will use" matches behavior descriptions
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "This function will use the cached value from the pool.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.decisions.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_choosing() {
+        // "choosing" was removed -- matches non-decision prose
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Choosing a variable name from the suggestions list.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.decisions.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_picked() {
+        // "picked" was removed -- too ambiguous
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "I picked up the variable name from the existing code.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.decisions.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_moving_to() {
+        // "moving to" was removed -- matches navigation prose
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "Moving to the next file in the directory listing.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.decisions.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_should_also() {
+        // "should also" was removed -- matches any suggestion
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "You should also note that this function is pure.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.pending_tasks.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_after_that() {
+        // "after that" was removed -- too conversational
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "After that the function returns the computed result.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.pending_tasks.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_unexpected() {
+        // "unexpected" was removed -- matches discussion prose
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "This unexpected finding is actually quite interesting.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.issues.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_wrong() {
+        // "wrong " was removed -- matches opinions, not errors
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "That's the wrong approach but it still compiles fine.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.issues.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_cannot() {
+        // "cannot " was removed -- too conversational
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "We cannot use that pattern here, but there are alternatives."
+                .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.issues.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_warning_discussion() {
+        // "warning:" was removed -- discussing warnings isn't the same as having issues
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "The warning: unused variable lint can be silenced with underscore."
+                .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.issues.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_regression_tests() {
+        // "regression" alone was removed -- "a regression" requires the article
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "We should add regression tests for this module later.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.issues.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_fixme_without_colon() {
+        // "fixme" alone was tightened to "fixme:" to avoid matching prose
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content: "The fixme comments in the codebase should be reviewed.".to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.issues.is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_normal_prose() {
+        // A completely normal paragraph should not match any category
+        let messages = vec![TranscriptMessage {
+            role: "assistant".to_string(),
+            text_content:
+                "The function takes a reference and returns an owned string from the input."
+                    .to_string(),
+        }];
+        let ctx = extract_compaction_context(&messages);
+        assert!(ctx.decisions.is_empty());
+        assert!(ctx.pending_tasks.is_empty());
+        assert!(ctx.issues.is_empty());
+    }
+
     // ── Constants ────────────────────────────────────────────────────────
 
     #[test]
     fn constants_have_expected_values() {
         assert_eq!(MAX_ITEMS_PER_CATEGORY, 5);
         assert_eq!(MIN_CONTENT_LEN, 10);
-        assert_eq!(MAX_CONTENT_LEN, 500);
+        assert_eq!(MAX_CONTENT_LEN, 800);
         assert!((COMPACTION_CONFIDENCE - 0.3).abs() < f64::EPSILON);
+    }
+
+    // ── Keyword list sanity ─────────────────────────────────────────────
+
+    #[test]
+    fn keyword_lists_are_non_empty() {
+        assert!(!DECISION_KEYWORDS.is_empty());
+        assert!(!TASK_KEYWORDS.is_empty());
+        assert!(!ISSUE_KEYWORDS.is_empty());
+    }
+
+    #[test]
+    fn keyword_lists_are_lowercase() {
+        for kw in DECISION_KEYWORDS
+            .iter()
+            .chain(TASK_KEYWORDS)
+            .chain(ISSUE_KEYWORDS)
+        {
+            assert_eq!(
+                *kw,
+                kw.to_lowercase(),
+                "Keyword '{}' must be lowercase",
+                kw
+            );
+        }
     }
 }

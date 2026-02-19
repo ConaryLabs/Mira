@@ -126,6 +126,17 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 
 **Don't:** Manually inject session info, pending tasks, or file tracking that hooks already provide.
 
+## Compact Instructions
+
+When summarizing this conversation, always preserve:
+- File paths that were **modified** (not just read), with a one-line summary of what changed
+- All decisions made during the session and their reasoning
+- Active Mira goal IDs and milestone progress
+- User preferences or constraints stated during the session
+- The current task's specific requirements, acceptance criteria, and remaining steps
+- Any errors encountered and how they were resolved (or if still unresolved)
+- Memory IDs stored via `memory(action="remember")` during this session
+
 ## What NOT to Do
 
 Beyond the anti-patterns above, avoid:
