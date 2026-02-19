@@ -6,7 +6,7 @@
 
 **The intelligence layer that makes Claude Code dangerous.**
 
-Claude Code is powerful but amnesiac. Every session starts from scratch — your architecture decisions evaporated, your codebase reduced to what it can grep, your last three hours of context gone. You spend the first ten minutes of every conversation re-explaining things it knew yesterday.
+Claude Code is powerful but amnesiac. Every session starts from scratch — your architecture decisions evaporated, your codebase reduced to what it can grep. You spend the first ten minutes of every conversation re-explaining things it knew yesterday.
 
 Mira eliminates that. It's a local Rust MCP server that gives Claude Code persistent memory, deep code understanding, background analysis, and continuous learning — all running on your machine, stored in SQLite, with 13 hooks that make everything automatic.
 
@@ -30,13 +30,13 @@ That's it. Mira auto-configures itself, starts injecting context on every prompt
 - You are the memory. Every conversation requires re-establishing context.
 
 ### With Mira
-- **Sessions have continuity.** Decisions, preferences, and architectural context persist and surface automatically when relevant. No manual `/recall` needed — the `UserPromptSubmit` hook injects context on every prompt.
-- **Search works by meaning.** "Where do we handle auth?" finds the right code even if it's called `verify_credentials` in a file named `middleware.rs`. Hybrid semantic + keyword search with tree-sitter symbol matching and call graph traversal.
-- **The codebase is always understood.** Background workers continuously generate module summaries, track code health, score tech debt, detect documentation gaps, and surface insights — without you asking.
-- **Changes are analyzed, not just diffed.** Mira classifies what changed semantically, traces impact through the call graph, scores risk based on historical patterns, and learns which parts of your codebase are fragile.
-- **Agent teams share a brain.** Automatic team detection, file ownership tracking, cross-teammate conflict detection, and shared memory distillation. Built-in recipes for expert review, full-cycle development, QA hardening, and safe refactoring.
-- **Knowledge compounds.** Memories start as candidates, gain confidence through repeated cross-session use, and get promoted over time. A background distillation system extracts cross-cutting patterns from accumulated knowledge into higher-level insights.
-- **Cross-project knowledge.** Mira can surface relevant solutions from your other projects when applicable.
+- **Sessions have continuity.** Decisions, preferences, and context persist and surface automatically on every prompt.
+- **Search works by meaning.** "Where do we handle auth?" finds `verify_credentials` in `middleware.rs`. Hybrid semantic + keyword search with call graph traversal.
+- **The codebase is always understood.** Background workers track code health, score tech debt, detect doc gaps, and surface insights — without you asking.
+- **Changes are analyzed, not just diffed.** Semantic classification, call graph impact tracing, risk scoring based on historical churn patterns.
+- **Agent teams share a brain.** File ownership tracking, conflict detection, and built-in recipes for expert review, QA hardening, and safe refactoring.
+- **Knowledge compounds.** Memories gain confidence through repeated use and get distilled into higher-level insights over time.
+- **Cross-project knowledge.** Mira surfaces relevant solutions from your other projects when applicable.
 
 ## How It Works
 
@@ -194,17 +194,17 @@ The plugin install auto-configures hooks. For MCP-only installs, add to `~/.clau
 }
 ```
 
-### Add Mira Instructions to Your Project
-
-See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CLAUDE.md` layout that teaches Claude Code how to use Mira's tools effectively. The modular structure uses:
-- `CLAUDE.md` — Core identity, anti-patterns, build commands (always loaded)
-- `.claude/rules/` — Tool selection, memory, tasks (always loaded)
-
 ### Plugin vs MCP Server
 
 The **plugin** (quick install) provides the full experience — hooks and skills are auto-configured, context is injected automatically on every prompt.
 
 The **MCP server** (cargo install / build from source) provides the core tools. Add hooks manually (see above) for proactive features.
+
+### Add Mira Instructions to Your Project
+
+See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CLAUDE.md` layout that teaches Claude Code how to use Mira's tools effectively. The modular structure uses:
+- `CLAUDE.md` — Core identity, anti-patterns, build commands (always loaded)
+- `.claude/rules/` — Tool selection, memory, tasks (always loaded)
 
 ## Slash Commands
 
@@ -262,12 +262,14 @@ Project context is auto-initialized from Claude Code's working directory. Verify
 ```bash
 mira setup                # Interactive configuration wizard
 mira setup --check        # Validate current configuration
+mira index                # Index current project for semantic code search
+mira index --no-embed     # Index without embeddings (faster, keyword-only search)
 mira debug-session        # Debug project(action="start") output
 mira debug-carto          # Debug cartographer module detection
 mira config show          # Display current configuration
 mira config set <k> <v>   # Update a configuration value
 mira statusline           # Formatted status line for Claude Code's status bar (installed automatically)
-mira cleanup              # Data retention dry-run (sessions, analytics, chat, behavior)
+mira cleanup              # Data retention dry-run (sessions, analytics, behavior)
 mira cleanup --execute    # Actually delete accumulated data (add --yes to skip confirmation)
 ```
 
