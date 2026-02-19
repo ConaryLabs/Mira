@@ -1,19 +1,18 @@
 // crates/mira-server/src/hooks/precompact/tests.rs
 // Tests for precompact hook: transcript parsing, context extraction, merging.
 
-use super::*;
 use super::extract::{
-    matches_any, matches_issue_keyword, is_continuation_prompt,
-    DECISION_KEYWORDS, TASK_KEYWORDS, ISSUE_KEYWORDS,
+    DECISION_KEYWORDS, ISSUE_KEYWORDS, TASK_KEYWORDS, is_continuation_prompt, matches_any,
+    matches_issue_keyword,
 };
+use super::*;
 use std::path::PathBuf;
 
 // ── parse_transcript_messages ──────────────────────────────────────────
 
 #[test]
 fn parses_string_content() {
-    let transcript =
-        r#"{"role":"assistant","content":"I decided to use the builder pattern."}"#;
+    let transcript = r#"{"role":"assistant","content":"I decided to use the builder pattern."}"#;
     let messages = parse_transcript_messages(transcript);
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, "assistant");
@@ -831,8 +830,7 @@ fn no_false_positive_on_cannot() {
     // "cannot " was removed -- too conversational
     let messages = vec![TranscriptMessage {
         role: "assistant".to_string(),
-        text_content: "We cannot use that pattern here, but there are alternatives."
-            .to_string(),
+        text_content: "We cannot use that pattern here, but there are alternatives.".to_string(),
     }];
     let ctx = extract_compaction_context(&messages);
     assert!(ctx.issues.is_empty());
@@ -877,9 +875,8 @@ fn no_false_positive_normal_prose() {
     // A completely normal paragraph should not match any category
     let messages = vec![TranscriptMessage {
         role: "assistant".to_string(),
-        text_content:
-            "The function takes a reference and returns an owned string from the input."
-                .to_string(),
+        text_content: "The function takes a reference and returns an owned string from the input."
+            .to_string(),
     }];
     let ctx = extract_compaction_context(&messages);
     assert!(ctx.decisions.is_empty());
@@ -980,8 +977,7 @@ fn extracts_user_intent_from_first_user_message() {
 fn user_intent_takes_first_paragraph_only() {
     let messages = vec![TranscriptMessage {
         role: "user".to_string(),
-        text_content: "Refactor the database layer for clarity.\n\nAlso fix the tests."
-            .to_string(),
+        text_content: "Refactor the database layer for clarity.\n\nAlso fix the tests.".to_string(),
     }];
     let ctx = extract_compaction_context(&messages);
     assert_eq!(
@@ -1093,8 +1089,7 @@ fn file_paths_skip_short_matches() {
 fn file_paths_skip_url_fragments() {
     let messages = vec![TranscriptMessage {
         role: "assistant".to_string(),
-        text_content: "See https://docs.rs/tokio/latest/tokio/index.html for the docs."
-            .to_string(),
+        text_content: "See https://docs.rs/tokio/latest/tokio/index.html for the docs.".to_string(),
     }];
     let ctx = extract_compaction_context(&messages);
     // The regex matches "//docs.rs/tokio/latest/tokio/index.html" but the
@@ -1271,8 +1266,7 @@ fn active_work_skips_short_paragraphs() {
     // First paragraph is > 30 chars, second is <= 30 chars
     let messages = vec![TranscriptMessage {
         role: "assistant".to_string(),
-        text_content: "Working on the database migration system now.\n\nShort note."
-            .to_string(),
+        text_content: "Working on the database migration system now.\n\nShort note.".to_string(),
     }];
     let ctx = extract_compaction_context(&messages);
     assert_eq!(ctx.active_work.len(), 1);
@@ -1284,8 +1278,7 @@ fn active_work_skips_user_messages() {
     // Only user messages, no assistant -- no active work
     let messages = vec![TranscriptMessage {
         role: "user".to_string(),
-        text_content: "This is a user message that should be skipped for active work."
-            .to_string(),
+        text_content: "This is a user message that should be skipped for active work.".to_string(),
     }];
     let ctx = extract_compaction_context(&messages);
     assert!(ctx.active_work.is_empty());

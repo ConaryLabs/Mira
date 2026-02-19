@@ -1,7 +1,10 @@
 // crates/mira-server/src/hooks/precompact/extract.rs
 // Keyword matching and structured context extraction from transcripts.
 
-use super::{CompactionContext, TranscriptMessage, MAX_CONTENT_LEN, MAX_FILE_REFS, MIN_CONTENT_LEN, MIN_FILE_PATH_LEN, MAX_ITEMS_PER_CATEGORY};
+use super::{
+    CompactionContext, MAX_CONTENT_LEN, MAX_FILE_REFS, MAX_ITEMS_PER_CATEGORY, MIN_CONTENT_LEN,
+    MIN_FILE_PATH_LEN, TranscriptMessage,
+};
 use crate::ipc::client::HookClient;
 use crate::utils::truncate_at_boundary;
 use anyhow::Result;

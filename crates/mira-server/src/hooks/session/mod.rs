@@ -5,11 +5,11 @@ mod context;
 mod team;
 
 // Re-export public API
-pub(crate) use context::{build_resume_context, build_startup_context};
 #[cfg(test)]
 pub(crate) use context::{
     build_compaction_summary, build_working_on_summary, get_session_snapshot_sync,
 };
+pub(crate) use context::{build_resume_context, build_startup_context};
 pub use team::{
     TeamDetectionResult, TeamMembership, cleanup_team_file, detect_team_membership,
     read_team_membership, read_team_membership_from_db, team_file_path_for_session,

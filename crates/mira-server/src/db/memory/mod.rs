@@ -11,13 +11,17 @@ use mira_types::MemoryFact;
 pub use query::{
     MemoryScopeInfo, clear_project_persona_sync, count_facts_without_embeddings_sync,
     delete_memory_sync, fetch_ranked_memories_for_export_sync, find_facts_without_embeddings_sync,
-    get_base_persona_sync, get_global_memories_sync, get_health_alerts_sync,
-    get_memory_scope_sync, get_memory_stats_sync, get_preferences_sync,
-    get_project_persona_sync, mark_fact_has_embedding_sync,
+    get_base_persona_sync, get_global_memories_sync, get_health_alerts_sync, get_memory_scope_sync,
+    get_memory_stats_sync, get_preferences_sync, get_project_persona_sync,
+    mark_fact_has_embedding_sync,
 };
 pub use ranking::{RankedMemory, RecallRow};
-pub use recall::{recall_semantic_with_entity_boost_sync, record_memory_access_sync, search_memories_sync};
-pub use store::{StoreMemoryParams, import_confirmed_memory_sync, store_fact_embedding_sync, store_memory_sync};
+pub use recall::{
+    recall_semantic_with_entity_boost_sync, record_memory_access_sync, search_memories_sync,
+};
+pub use store::{
+    StoreMemoryParams, import_confirmed_memory_sync, store_fact_embedding_sync, store_memory_sync,
+};
 
 /// Parse MemoryFact from a rusqlite Row with standard column order:
 /// (id, project_id, key, content, fact_type, category, confidence, created_at,

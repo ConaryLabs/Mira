@@ -4,9 +4,9 @@
 
 mod security;
 
+pub mod crud;
 pub mod recall;
 pub mod remember;
-pub mod crud;
 
 // Re-export public API
 pub use crud::{archive, forget};

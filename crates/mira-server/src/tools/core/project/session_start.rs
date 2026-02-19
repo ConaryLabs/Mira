@@ -15,8 +15,8 @@ use crate::mcp::elicitation;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectOutput, ProjectStartData};
 use crate::proactive::{ProactiveConfig, interventions};
-use crate::tools::core::claude_local;
 use crate::tools::core::ToolContext;
+use crate::tools::core::claude_local;
 
 use super::detection::{detect_project_type, gather_system_context_content};
 use super::formatting::{format_recent_sessions, format_session_insights};
