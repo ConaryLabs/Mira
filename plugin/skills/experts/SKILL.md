@@ -1,6 +1,6 @@
 ---
 name: experts
-description: This skill should be used when the user asks "get expert opinion", "review this", "what would an architect say", "security review", or wants a second opinion from AI experts.
+description: This skill should be used when the user asks to "consult experts", "get expert opinion", "expert review", "code review", "architecture review", "security review", "review this code", "what would an architect say", or wants a multi-perspective analysis from AI specialists.
 argument-hint: "[context or focus area]"
 disable-model-invocation: true
 ---
@@ -32,22 +32,25 @@ Get expert opinions on code, architecture, security, or plans using a team of AI
    TeamCreate(team_name="expert-review-{timestamp}")
    ```
 
-5. **Spawn experts**: For each member in the recipe (or filtered subset), use the `Task` tool:
+5. **Create and assign tasks**: For each recipe task:
+   ```
+   TaskCreate(subject=task.subject, description=task.description)
+   TaskUpdate(taskId=id, owner=task.assignee, status="in_progress")
+   ```
+
+6. **Spawn experts**: For each member in the recipe (or filtered subset), use the `Task` tool:
    ```
    Task(
      subagent_type=member.agent_type,
      name=member.name,
      team_name="expert-review-{timestamp}",
-     prompt=member.prompt + "\n\n## Context\n\n" + user_context
+     prompt=member.prompt + "\n\n## Context\n\n" + user_context,
+     run_in_background=true
    )
    ```
    Spawn all experts in parallel (multiple Task calls in one message).
 
-6. **Create and assign tasks**: For each recipe task:
-   ```
-   TaskCreate(subject=task.subject, description=task.description)
-   TaskUpdate(taskId=id, owner=task.assignee, status="in_progress")
-   ```
+   IMPORTANT: Do NOT use mode="bypassPermissions" -- these are read-only discovery agents.
 
 7. **Wait for findings**: Teammates will send their findings via SendMessage when complete. Wait for all to finish.
 

@@ -1,6 +1,6 @@
 ---
 name: diff
-description: This skill should be used when the user asks "analyze my changes", "what did I change", "review my diff", "impact of changes", or wants semantic analysis of code changes.
+description: This skill should be used when the user asks "analyze my changes", "what did I change", "review my diff", "impact of changes", "show changes", "git analysis", or wants semantic analysis of code changes.
 argument-hint: "[from_ref] [to_ref]"
 ---
 

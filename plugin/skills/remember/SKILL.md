@@ -1,6 +1,6 @@
 ---
 name: remember
-description: This skill should be used when the user asks "remember this", "save this decision", "store this for later", "note that we decided", or wants to persist information across sessions.
+description: This skill should be used when the user asks "remember this", "save this decision", "store this for later", "note that we decided", "save this", "keep this in mind", or wants to persist information across sessions.
 argument-hint: "<content>"
 ---
 

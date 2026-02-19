@@ -1,6 +1,6 @@
 ---
 name: full-cycle
-description: This skill should be used when the user asks for a "full review and fix", "find and fix issues", "review and implement", "end-to-end review", or wants experts to find issues AND have them implemented automatically.
+description: This skill should be used when the user asks for a "full review and fix", "find and fix issues", "review and implement", "end-to-end review", "audit and fix", "comprehensive review", "full-cycle review", or wants experts to find issues AND have them implemented automatically.
 argument-hint: "[focus area or --discovery-only]"
 disable-model-invocation: true
 ---
@@ -20,9 +20,11 @@ End-to-end expert review with automatic implementation and QA verification.
    recipe(action="get", name="full-cycle")
    ```
 
+   **Note:** The coordination instructions returned by the recipe are the authoritative procedure. If any instructions below conflict with the recipe output, follow the recipe.
+
 2. **Parse arguments** (optional):
    - `--discovery-only` -> Only run Phase 1 (same as `/mira:experts`)
-   - `--skip-qa` -> Skip Phase 3 QA verification
+   - `--skip-qa` -> Skip Phase 4 QA verification
    - `--roles architect,security` -> Only spawn these specific discovery experts
    - Any other text -> use as the context/focus for the review
 
@@ -74,26 +76,36 @@ End-to-end expert review with automatic implementation and QA verification.
 
 10. **Create implementation tasks** from the action items. Group tasks by file ownership to prevent merge conflicts between agents.
 
-11. **Spawn implementation agents** dynamically (as many as needed based on groupings):
+11. **Spawn implementation agents** using the recipe's member prompts and coordination rules:
     ```
     Task(
       subagent_type="general-purpose",
       name="fixer-{group-name}",
       team_name="full-cycle-{timestamp}",
-      prompt="You are a teammate on an implementation team...\n\nIMPORTANT:\n- NEVER use cargo build --release or cargo test --release. Always use debug mode.\n- Verify your changes with `cargo clippy --all-targets --all-features -- -D warnings` AND `cargo fmt`, not just `cargo build`.\n- When fixing pattern issues (e.g., inconsistent error messages), search the ENTIRE codebase for all instances, not just the files listed.\n\n" + task_descriptions,
+      prompt=<use implementation prompt from recipe coordination rules> + task_descriptions,
       run_in_background=true,
       mode="bypassPermissions"
     )
     ```
+    Follow the recipe's **Implementation Agent Rules** (max 3 fixes per agent, type/schema changes isolated, verify with `cargo test --no-run`, etc.).
     Spawn all implementation agents in parallel. Monitor build diagnostics and send hints if needed.
 
 12. **Wait for implementation**: All agents report completion via SendMessage. Shut them down.
 
 ---
 
-### Phase 3: QA Verification
+### Phase 3: Dependency Updates
 
-13. **Spawn QA agents** (test-runner, ux-reviewer) with context about what was changed:
+13. **Run `cargo update`** to pick up compatible dependency patches.
+14. **Verify** with `cargo test --no-run` (NEVER --release) to ensure updated deps don't break compilation.
+
+> This runs AFTER code changes to avoid Cargo.lock conflicts with parallel agents.
+
+---
+
+### Phase 4: QA Verification
+
+15. **Spawn QA agents** (test-runner, ux-reviewer) with context about what was changed:
     ```
     Task(
       subagent_type="general-purpose",
@@ -105,18 +117,22 @@ End-to-end expert review with automatic implementation and QA verification.
     )
     ```
 
-14. **Create and assign QA tasks** from the recipe.
+16. **Create and assign QA tasks** from the recipe.
 
-15. **Wait for QA results**: If issues found, either fix directly or spawn additional fixers.
+17. **Wait for QA results**: If issues found, either fix directly or spawn additional fixers.
 
 ---
 
-### Phase 4: Finalize
+### Phase 5: Finalize
 
-16. **Verify** final build (`cargo build`) and tests (`cargo test`).
-17. **Shut down** all remaining agents.
-18. **Report** final summary to user with all changes made.
-19. **Cleanup**: `TeamDelete`
+18. **Verify** final build: `cargo clippy --all-targets --all-features -- -D warnings` + `cargo fmt --all -- --check` + `cargo test` (NEVER --release).
+19. **Shut down** all remaining agents.
+20. **Report** final summary to user with all changes made.
+21. **Cleanup**: `TeamDelete`
+
+### Handling Stalled Agents
+
+If an agent has not responded after an unusually long time, send it a direct message via SendMessage to check status. For discovery agents, shut down if unresponsive and note the gap. For implementation agents, fix directly or reassign. Do not wait indefinitely.
 
 ## Examples
 
@@ -140,4 +156,5 @@ End-to-end expert review with automatic implementation and QA verification.
 |-------|--------|---------|
 | Discovery | architect, code-reviewer, security, scope-analyst, ux-strategist, growth-strategist, project-health | Find issues, propose improvements |
 | Implementation | dynamic (fixer-security, fixer-bugs, etc.) | Implement fixes in parallel |
+| Dependency Updates | team lead (sequential) | Run cargo update, verify compilation |
 | QA | test-runner, ux-reviewer | Verify changes, catch regressions |

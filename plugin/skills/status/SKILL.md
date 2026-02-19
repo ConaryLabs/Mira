@@ -1,6 +1,6 @@
 ---
 name: status
-description: This skill should be used when the user asks "mira status", "show status", "how is mira doing", "system status", or wants a quick overview of Mira's health and configuration.
+description: This skill should be used when the user asks "mira status", "show status", "how is mira doing", "system status", "health check", "is mira working", or wants a quick overview of Mira's health and configuration.
 ---
 
 # Mira Status

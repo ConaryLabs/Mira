@@ -1,6 +1,6 @@
 ---
 name: insights
-description: This skill should be used when the user asks "what did you learn", "show insights", "any patterns noticed", "what should I know", or wants to see Mira's background analysis and predictions.
+description: This skill should be used when the user asks "what did you learn", "show insights", "any patterns noticed", "what should I know", "background analysis", "what patterns", or wants to see Mira's background analysis and predictions.
 ---
 
 # Mira Insights

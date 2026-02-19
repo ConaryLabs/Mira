@@ -1,6 +1,6 @@
 ---
 name: recall
-description: This skill should be used when the user asks "show my memories", "what do I have stored", "recall memories about X", "browse memories", "list memories", "what did we decide about", or wants to search or browse their persistent memory.
+description: This skill should be used when the user asks "show my memories", "what do I have stored", "recall memories about X", "browse memories", "list memories", "what did we decide about", "what did we save", "show stored facts", or wants to search or browse their persistent memory.
 argument-hint: "[query]"
 ---
 

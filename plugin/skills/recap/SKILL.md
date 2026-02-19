@@ -1,6 +1,6 @@
 ---
 name: recap
-description: This skill should be used when the user asks "what were we working on", "session recap", "remind me of context", "catch me up", or starts a new session needing prior context.
+description: This skill should be used when the user asks "what were we working on", "session recap", "remind me of context", "catch me up", "restore context", "previous session", or starts a new session needing prior context.
 ---
 
 # Session Recap

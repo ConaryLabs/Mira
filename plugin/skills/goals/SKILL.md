@@ -1,6 +1,6 @@
 ---
 name: goals
-description: This skill should be used when the user asks "show my goals", "what should I work on", "update goal progress", "create a goal", "add milestone", "complete milestone", or wants to track work across multiple sessions.
+description: This skill should be used when the user asks "show my goals", "what should I work on", "update goal progress", "create a goal", "add milestone", "complete milestone", "track progress", "manage milestones", or wants to track work across multiple sessions.
 argument-hint: "[goal title or action]"
 ---
 

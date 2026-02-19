@@ -1,6 +1,6 @@
 ---
 name: help
-description: This skill should be used when the user asks "help", "what commands", "list commands", "what can mira do", "mira help", "show commands", or wants to see all available Mira skills and tools.
+description: This skill should be used when the user asks "help", "what commands", "list commands", "what can mira do", "mira help", "show commands", "what can you do", "how do I use mira", or wants to see all available Mira skills and tools.
 ---
 
 # Mira Commands
@@ -9,6 +9,7 @@ description: This skill should be used when the user asks "help", "what commands
 
 | Command | Description |
 |---------|-------------|
+| `/mira:help` | Show all available commands and tools |
 | `/mira:status` | Quick health check: index stats, storage, active goals |
 | `/mira:recap` | Get session context, preferences, and active goals |
 | `/mira:remember <content>` | Store a fact or decision for future sessions |
@@ -34,12 +35,17 @@ description: This skill should be used when the user asks "help", "what commands
 
 ## MCP Tools
 
-Beyond slash commands, Mira provides 9 MCP tools that Claude uses automatically:
+Beyond slash commands, Mira provides MCP tools that Claude uses automatically:
 
 `memory`, `code`, `diff`, `project`, `session`, `insights`, `goal`, `index`, `recipe`
 
 These power semantic search, call graph analysis, persistent memory, and more — no slash command needed.
 
+## Instructions
+
+Present the command reference above. If the user seems new to Mira, highlight `/mira:status` and `/mira:recap` as good starting points.
+
 ## Tip
 
-Run `/mira:status` to check that Mira is healthy and see your active goals.
+New session? Run `/mira:recap` to restore context from previous work.
+Quick health check? Run `/mira:status` to see index stats, storage, and active goals.

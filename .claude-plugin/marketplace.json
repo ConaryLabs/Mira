@@ -12,7 +12,7 @@
     {
       "name": "mira",
       "source": "./plugin",
-      "description": "Persistent memory, semantic code intelligence, team recipes, documentation management, and proactive context injection for Claude Code.",
+      "description": "Persistent memory, semantic code intelligence, team recipes, and proactive context injection for Claude Code.",
       "version": "0.8.7",
       "author": {
         "name": "Peter Permenter"
