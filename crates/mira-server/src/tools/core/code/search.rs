@@ -340,6 +340,13 @@ pub fn get_symbols(
             )));
         }
 
+        if path.is_dir() {
+            return Err(MiraError::InvalidInput(format!(
+                "'{}' is a directory, not a file. Provide a path to a specific source file.",
+                file_path
+            )));
+        }
+
         // Guard against reading very large files (e.g. generated code).
         // The indexer skips files > 1MB; apply the same limit at query time.
         const MAX_SYMBOLS_FILE_BYTES: u64 = 1_024 * 1_024;
