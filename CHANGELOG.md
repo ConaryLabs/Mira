@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.8] - 2026-02-19
+
+### Added
+- **Smarter precompact extraction** -- New context categories (decisions, todos, errors, preferences, file modifications) extracted from conversation transcript before summarization, preserving critical context across compactions.
+- **Improved compaction context preservation** -- PreCompact hook now captures richer session state including active goals, modified files, and recent decisions.
+- **Improved memory recall quality** -- Parallel semantic + keyword search with score-based ranking. Hook recall paths (pre-tool, subagent, post-tool-failure) now use the same improved hybrid search.
+
+### Changed
+- **Codebase structural refactoring** -- Split 7 monolith files (11k+ lines) into focused submodules: `db/memory` (5 files), `hooks/precompact` (3 files), `hooks/session` (3 files), `ipc/client` (5 files), `tools/core/memory` (5 files), `tools/core/project` (4 files), `tools/core/session` (4 files). No behavior changes.
+- **Plugin audit fixes** -- Expanded skill trigger phrases across all 13 skills. Fixed `experts` skill (parallel spawning, task ordering, permission guard). Aligned `full-cycle` skill with recipe backend (added Dependency Updates phase, authority declaration, stalled-agent handling). Fleshed out `search` skill with empty-args handling, fallback guidance, and example output. Fixed `help` skill self-reference and hardcoded tool count. Aligned marketplace and plugin.json descriptions. Added LICENSE to plugin directory.
+
+### Fixed
+- **Windows UNC path prefix** -- `canonicalize()` on Windows produces `\\?\` prefixed paths that break SQLite and path comparisons. Now stripped automatically.
+
+---
+
 ## [0.8.7] - 2026-02-18
 
 ### Added
