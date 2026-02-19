@@ -6,11 +6,9 @@
 
 **The intelligence layer that makes Claude Code dangerous.**
 
-Claude Code is powerful but amnesiac. Every session starts from scratch — your architecture decisions evaporated, your codebase reduced to what it can grep. You spend the first ten minutes of every conversation re-explaining things it knew yesterday.
+Claude Code is powerful but amnesiac. Every session starts from scratch — architecture decisions gone, codebase reduced to what it can grep. You spend the first ten minutes re-explaining things it knew yesterday.
 
-Mira eliminates that. It's a local Rust MCP server that gives Claude Code persistent memory, deep code understanding, background analysis, and continuous learning — all running on your machine, stored in SQLite, with 13 hooks that make everything automatic.
-
-The result: Claude Code that remembers what you decided last week, understands your codebase by meaning not just text, notices when your docs are stale, predicts which changes are risky, and gets smarter the longer you use it.
+Mira eliminates that. It's a local Rust MCP server that gives Claude Code persistent memory, deep code understanding, background analysis, and continuous learning. Runs on your machine, stored in SQLite, 13 hooks that make it all automatic.
 
 ## The Short Version
 
@@ -19,7 +17,7 @@ claude plugin install mira
 mira setup  # optional: configure API keys for enhanced features
 ```
 
-That's it. Mira auto-configures itself, starts injecting context on every prompt, and begins indexing your codebase in the background.
+That's it. Mira auto-configures itself, starts injecting context on every prompt, and indexes your codebase in the background.
 
 ## What Changes
 
@@ -47,15 +45,13 @@ Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
     +--MCP Sampling (host LLM)   +--->  DeepSeek / Ollama (background tasks, optional)
 ```
 
-Everything runs locally. Two SQLite databases (`~/.mira/`): one for memories, sessions, and goals; one for the code index. No cloud storage, no external databases, no accounts.
+Everything runs locally. Two SQLite databases in `~/.mira/`: one for memories, sessions, and goals; one for the code index. No cloud, no accounts, no external databases.
 
-**No API keys required.** Core features — memory, code intelligence, goal tracking, documentation detection — work out of the box. Search falls back to keyword/fuzzy matching, analysis uses heuristic parsers. Add OpenAI for semantic search or DeepSeek/Ollama for background intelligence when you're ready.
+**No API keys required.** Memory, code intelligence, goal tracking, and documentation detection all work out of the box — search falls back to keyword/fuzzy matching, analysis uses heuristic parsers. OpenAI for semantic search and DeepSeek/Ollama for background intelligence are there when you want them.
 
 ## Installation
 
 ### Quick Install (Recommended)
-
-Install from the Claude Code plugin marketplace:
 
 ```bash
 claude plugin install mira
@@ -68,7 +64,7 @@ mira setup --yes    # non-interactive (CI/scripted installs)
 mira setup --check  # read-only validation
 ```
 
-Verify installation: Start a new Claude Code session in any project. You should see "Mira: Loading session context..." in the status bar.
+To verify: start a new Claude Code session in any project. You should see "Mira: Loading session context..." in the status bar.
 
 ### Alternative: Script Install
 
@@ -157,7 +153,7 @@ cd Mira
 cargo build --release
 ```
 
-The binary will be at `target/release/mira`. Add to `.mcp.json`:
+Binary lands at `target/release/mira`. Add to `.mcp.json`:
 
 ```json
 {
@@ -172,7 +168,7 @@ The binary will be at `target/release/mira`. Add to `.mcp.json`:
 
 ### Enable Hooks (Manual Installs Only)
 
-The plugin install auto-configures hooks. For MCP-only installs, add to `~/.claude/settings.json`:
+Plugin install handles this automatically. For MCP-only installs, add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -196,13 +192,14 @@ The plugin install auto-configures hooks. For MCP-only installs, add to `~/.clau
 
 ### Plugin vs MCP Server
 
-The **plugin** (quick install) provides the full experience — hooks and skills are auto-configured, context is injected automatically on every prompt.
+The **plugin** (quick install) is the full experience — hooks and skills auto-configured, context injected on every prompt.
 
-The **MCP server** (cargo install / build from source) provides the core tools. Add hooks manually (see above) for proactive features.
+The **MCP server** (cargo install / build from source) gives you the core tools. Add hooks manually for the proactive stuff.
 
 ### Add Mira Instructions to Your Project
 
-See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CLAUDE.md` layout that teaches Claude Code how to use Mira's tools effectively. The modular structure uses:
+See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CLAUDE.md` layout that teaches Claude Code how to use Mira's tools. The structure:
+
 - `CLAUDE.md` — Core identity, anti-patterns, build commands (always loaded)
 - `.claude/rules/` — Tool selection, memory, tasks (always loaded)
 
@@ -245,17 +242,17 @@ OpenAI embeddings use text-embedding-3-small, which typically costs less than $1
 
 ### Semantic search not working
 
-Ensure `OPENAI_API_KEY` is set in `~/.mira/.env`. OpenAI provides the embeddings for semantic search. Without it, search falls back to keyword and fuzzy matching.
+Make sure `OPENAI_API_KEY` is set in `~/.mira/.env`. Without it, search falls back to keyword and fuzzy matching.
 
 ### MCP connection issues
 
 1. Check the binary path in `.mcp.json` is absolute
-2. Ensure `mira serve` runs without errors: `mira serve`
+2. Run `mira serve` directly and confirm it starts without errors
 3. Check Claude Code logs for MCP errors
 
 ### Memory not persisting
 
-Project context is auto-initialized from Claude Code's working directory. Verify Mira is running with `project(action="get")` and that the working directory matches your project root.
+Project context is auto-initialized from Claude Code's working directory. Run `project(action="get")` to verify Mira is running and that the working directory matches your project root.
 
 ### CLI Commands
 
