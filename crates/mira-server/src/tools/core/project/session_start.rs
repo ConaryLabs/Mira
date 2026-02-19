@@ -1,0 +1,470 @@
+// tools/core/project/session_start.rs
+// Session initialization: start, persist, load history, recap data, onboarding
+
+use crate::cartographer;
+use crate::db::documentation::count_doc_tasks_by_status;
+use crate::db::{
+    StoreMemoryParams, StoreObservationParams, get_health_alerts_sync, get_preferences_sync,
+    get_project_briefing_sync, get_recent_sessions_sync, get_session_stats_sync,
+    mark_session_for_briefing_sync, search_memories_text_sync, set_server_state_sync,
+    store_memory_sync, store_observation_sync, upsert_session_with_branch_sync,
+};
+use crate::error::MiraError;
+use crate::git::get_git_branch;
+use crate::mcp::elicitation;
+use crate::mcp::responses::Json;
+use crate::mcp::responses::{ProjectData, ProjectOutput, ProjectStartData};
+use crate::proactive::{ProactiveConfig, interventions};
+use crate::tools::core::claude_local;
+use crate::tools::core::ToolContext;
+
+use super::detection::{detect_project_type, gather_system_context_content};
+use super::formatting::{format_recent_sessions, format_session_insights};
+use super::init_project;
+use super::{RecapData, SessionInfo};
+
+/// Persist session: create session record, store system context, retrieve briefing
+async fn persist_session<C: ToolContext>(
+    ctx: &C,
+    project_id: i64,
+    sid: &str,
+    branch: Option<&str>,
+) -> Result<Option<String>, MiraError> {
+    let system_context = gather_system_context_content();
+    let sid_owned = sid.to_string();
+    let branch_owned = branch.map(|b| b.to_string());
+
+    ctx.pool()
+        .run(move |conn| {
+            upsert_session_with_branch_sync(
+                conn,
+                &sid_owned,
+                Some(project_id),
+                branch_owned.as_deref(),
+            )?;
+
+            set_server_state_sync(conn, "active_session_id", &sid_owned)?;
+
+            if let Some(ref content) = system_context
+                && let Err(e) = store_observation_sync(
+                    conn,
+                    StoreObservationParams {
+                        project_id: None,
+                        key: Some("system_context"),
+                        content,
+                        observation_type: "system",
+                        category: Some("system"),
+                        confidence: 1.0,
+                        source: "project",
+                        session_id: None,
+                        team_id: None,
+                        scope: "project",
+                        expires_at: None,
+                    },
+                )
+            {
+                tracing::warn!("Failed to store system_context memory: {}", e);
+            }
+
+            let briefing = get_project_briefing_sync(conn, project_id)
+                .ok()
+                .flatten()
+                .and_then(|b| b.briefing_text);
+            if let Err(e) = mark_session_for_briefing_sync(conn, project_id) {
+                tracing::warn!("Failed to mark session for briefing: {}", e);
+            }
+
+            Ok::<_, rusqlite::Error>(briefing)
+        })
+        .await
+}
+
+/// Load recent sessions (excluding current), with stats
+async fn load_recent_sessions<C: ToolContext>(
+    ctx: &C,
+    project_id: i64,
+    current_sid: &str,
+) -> Result<Vec<SessionInfo>, MiraError> {
+    let sid_owned = current_sid.to_string();
+    ctx.pool()
+        .run(move |conn| {
+            let sessions = get_recent_sessions_sync(conn, project_id, 4).unwrap_or_default();
+            let mut result = Vec::new();
+            for sess in sessions.into_iter().filter(|s| s.id != sid_owned).take(3) {
+                let (tool_count, tools) =
+                    get_session_stats_sync(conn, &sess.id).unwrap_or((0, vec![]));
+                result.push((sess.id, sess.last_activity, sess.summary, tool_count, tools));
+            }
+            Ok::<_, String>(result)
+        })
+        .await
+}
+
+/// Load recap data: preferences, memories, health alerts, doc counts, interventions
+async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<RecapData, MiraError> {
+    let user_id = ctx.get_user_identity();
+    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
+    ctx.pool()
+        .run(move |conn| {
+            let preferences =
+                get_preferences_sync(conn, Some(project_id), user_id.as_deref(), team_id)
+                    .unwrap_or_default();
+            let memories = search_memories_text_sync(
+                conn,
+                Some(project_id),
+                "",
+                10,
+                user_id.as_deref(),
+                team_id,
+            )
+            .unwrap_or_default();
+            let health_alerts =
+                get_health_alerts_sync(conn, Some(project_id), 5, user_id.as_deref(), team_id)
+                    .unwrap_or_default();
+            let doc_task_counts =
+                count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
+            let config = ProactiveConfig::default();
+            let interventions_list =
+                interventions::get_pending_interventions_sync(conn, project_id, &config)
+                    .unwrap_or_default();
+
+            Ok::<_, String>((
+                preferences,
+                memories,
+                health_alerts,
+                doc_task_counts,
+                interventions_list,
+            ))
+        })
+        .await
+}
+
+/// Initialize session with project
+pub async fn session_start<C: ToolContext>(
+    ctx: &C,
+    project_path: String,
+    name: Option<String>,
+    session_id: Option<String>,
+) -> Result<Json<ProjectOutput>, MiraError> {
+    let (project_id, project_name) = init_project(ctx, &project_path, name.as_deref()).await?;
+    let sid = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let branch = get_git_branch(&project_path);
+
+    // Phase 1: Persist session + retrieve briefing
+    let briefing_text = persist_session(ctx, project_id, &sid, branch.as_deref()).await?;
+    ctx.set_session_id(sid.clone()).await;
+    ctx.set_branch(branch.clone()).await;
+
+    // Phase 2: Import CLAUDE.local.md
+    let imported_count =
+        claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
+            .await
+            .unwrap_or(0);
+
+    // Phase 3: Build response
+    let project_type = detect_project_type(&project_path);
+    let display_name = project_name.as_deref().unwrap_or("unnamed");
+    let mut response = format!("Project: {} ({})\n", display_name, project_type);
+
+    if imported_count > 0 {
+        response.push_str(&format!(
+            "\nImported {} entries from CLAUDE.local.md\n",
+            imported_count
+        ));
+    }
+    if let Some(text) = briefing_text {
+        response.push_str(&format!("\nWhat's new: {}\n", text));
+    }
+
+    // Phase 4: Load session history + recap data
+    let recent_session_data = load_recent_sessions(ctx, project_id, &sid).await?;
+    if !recent_session_data.is_empty() {
+        response.push_str(&format_recent_sessions(&recent_session_data));
+    } else {
+        // First session — try onboarding via elicitation
+        let onboarding_done = run_first_session_onboarding(ctx, project_id, &sid).await;
+        if onboarding_done {
+            response.push_str("\nFirst session — onboarding preferences saved.\n");
+        } else {
+            response.push_str(
+                "\nFirst session for this project. Tip: use session(action=\"recap\") for context, or memory(action=\"remember\", content=\"...\") to store a decision.\n",
+            );
+        }
+    }
+
+    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions) =
+        load_recap_data(ctx, project_id).await?;
+
+    response.push_str(&format_session_insights(
+        &preferences,
+        &memories,
+        &health_alerts,
+        &pending_interventions,
+        &doc_task_counts,
+    ));
+
+    // Record shown interventions
+    if !pending_interventions.is_empty() {
+        let interventions_to_record = pending_interventions.clone();
+        let sid_for_record = sid.clone();
+        if let Err(e) = ctx
+            .pool()
+            .run(move |conn| {
+                for intervention in &interventions_to_record {
+                    if let Err(e) = interventions::record_intervention_sync(
+                        conn,
+                        project_id,
+                        Some(&sid_for_record),
+                        intervention,
+                    ) {
+                        tracing::warn!("Failed to record intervention: {}", e);
+                    }
+                }
+                Ok::<_, String>(())
+            })
+            .await
+        {
+            tracing::warn!("Failed to record shown interventions: {}", e);
+        }
+    }
+
+    // Phase 5: Codebase map
+    if project_type == "rust" {
+        match cartographer::get_or_generate_map_pool(
+            ctx.code_pool().clone(),
+            project_id,
+            project_path.clone(),
+            display_name.to_string(),
+            project_type.to_string(),
+        )
+        .await
+        {
+            Ok(map) => {
+                if !map.modules.is_empty() {
+                    response.push_str(&cartographer::format_compact(&map));
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to generate codebase map: {}", e);
+            }
+        }
+    }
+
+    if let Some(db_path) = ctx.pool().path() {
+        response.push_str(&format!("\nDatabase: {}\n", db_path.display()));
+    }
+
+    // Status line: memory count, symbol count, active goal count
+    let memory_count: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?",
+                rusqlite::params![project_id],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .unwrap_or(0);
+
+    let symbol_count: i64 = ctx
+        .code_pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM code_symbols WHERE project_id = ?",
+                rusqlite::params![project_id],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .unwrap_or(0);
+
+    let goal_count: i64 = ctx
+        .pool()
+        .run(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM goals WHERE project_id = ? AND status NOT IN ('completed', 'abandoned')",
+                rusqlite::params![project_id],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .unwrap_or(0);
+
+    // Capability mode detection
+    let has_embeddings = ctx.embeddings().is_some();
+    let has_llm = ctx.llm_factory().has_providers();
+
+    let (mode, mode_detail) = match (has_embeddings, has_llm) {
+        (true, true) => ("full", None),
+        (true, false) => (
+            "semantic search only",
+            Some("background intelligence disabled — no LLM provider configured"),
+        ),
+        (false, true) => (
+            "background intelligence only",
+            Some("semantic search disabled — no embedding provider configured"),
+        ),
+        (false, false) => (
+            "basic",
+            Some("semantic search and background intelligence disabled — no API keys configured"),
+        ),
+    };
+
+    response.push_str(&format!(
+        "\nMira: {} memories | {} symbols indexed | {} active goals | mode: {}\n",
+        memory_count, symbol_count, goal_count, mode
+    ));
+
+    if let Some(detail) = mode_detail {
+        response.push_str(&format!(
+            "  → {} | run `mira setup` to configure API keys and unlock all features\n",
+            detail
+        ));
+    }
+
+    // Lightweight stale index detection: compare last indexed_at against git HEAD
+    if symbol_count > 0 {
+        let pp = project_path.clone();
+        let stale_check = async {
+            // Get the newest indexed_at timestamp for this project
+            let last_indexed: Option<String> = ctx
+                .code_pool()
+                .run(move |conn| {
+                    conn.query_row(
+                        "SELECT MAX(indexed_at) FROM code_symbols WHERE project_id = ?",
+                        rusqlite::params![project_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| MiraError::Other(e.to_string()))
+                })
+                .await
+                .ok();
+
+            let last_indexed = last_indexed?;
+
+            // Check if git HEAD has changed since the last index
+            // by looking for commits after the indexed_at timestamp
+            let output = std::process::Command::new("git")
+                .args([
+                    "log",
+                    "--oneline",
+                    "-1",
+                    &format!("--after={}", last_indexed),
+                ])
+                .current_dir(&pp)
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.trim().is_empty() {
+                // No commits after indexed_at — index is up to date
+                None
+            } else {
+                Some(())
+            }
+        };
+
+        if stale_check.await.is_some() {
+            if ctx.watcher().is_some() {
+                response.push_str(
+                    "\nNote: Code index may be stale (new commits detected). Background re-index triggered; run index(action='project') to force a full refresh.\n",
+                );
+            } else {
+                response.push_str(
+                    "\nNote: Code index may be stale (new commits detected). Run index(action='project') to refresh.\n",
+                );
+            }
+            // Trigger background re-index if file watcher is available
+            if let Some(watcher) = ctx.watcher() {
+                tracing::info!(
+                    "Stale index detected for project {}, triggering background re-index",
+                    project_id
+                );
+                watcher
+                    .watch(project_id, std::path::PathBuf::from(&project_path))
+                    .await;
+            }
+        }
+    }
+
+    response.push_str("\nReady.");
+    Ok(Json(ProjectOutput {
+        action: "start".into(),
+        message: response,
+        data: Some(ProjectData::Start(ProjectStartData {
+            project_id,
+            project_name,
+            project_path: project_path.clone(),
+            project_type: project_type.to_string(),
+        })),
+    }))
+}
+
+/// Run first-session onboarding via elicitation.
+///
+/// Asks the user a few optional questions and stores non-empty answers as memories.
+/// Returns `true` if at least one answer was stored, `false` otherwise.
+/// Failures are logged and swallowed — onboarding is strictly optional.
+async fn run_first_session_onboarding<C: ToolContext>(
+    ctx: &C,
+    project_id: i64,
+    session_id: &str,
+) -> bool {
+    let client = match ctx.elicitation_client() {
+        Some(c) => c,
+        None => return false,
+    };
+
+    if !client.is_available().await {
+        return false;
+    }
+
+    let answers = elicitation::request_onboarding(&client).await;
+    if answers.is_empty() {
+        return false;
+    }
+
+    let user_id = ctx.get_user_identity();
+    let sid = session_id.to_string();
+    let stored = ctx
+        .pool()
+        .run(move |conn| {
+            let mut count = 0u32;
+            for answer in &answers {
+                let result = store_memory_sync(
+                    conn,
+                    StoreMemoryParams {
+                        project_id: Some(project_id),
+                        key: None,
+                        content: &format!("{}: {}", answer.field, answer.content),
+                        fact_type: "preference",
+                        category: Some("onboarding"),
+                        confidence: 0.9,
+                        session_id: Some(&sid),
+                        user_id: user_id.as_deref(),
+                        scope: "project",
+                        branch: None,
+                        team_id: None,
+                        suspicious: false,
+                    },
+                );
+                match result {
+                    Ok(_) => count += 1,
+                    Err(e) => tracing::warn!("Failed to store onboarding answer: {}", e),
+                }
+            }
+            Ok::<_, rusqlite::Error>(count)
+        })
+        .await
+        .unwrap_or(0);
+
+    tracing::info!(
+        "[onboarding] Stored {} preference(s) for project {}",
+        stored,
+        project_id
+    );
+    stored > 0
+}
