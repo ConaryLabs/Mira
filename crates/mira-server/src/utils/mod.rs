@@ -446,9 +446,13 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_normalize_project_path_existing_dir() {
-        // /tmp always exists on Linux/macOS
+        // /tmp always exists on Linux/macOS, but on macOS it symlinks to /private/tmp.
+        // Compare against the actual canonicalized path so the test passes on both.
+        let expected = std::fs::canonicalize("/tmp")
+            .map(|p| path_to_string(&p))
+            .unwrap_or_else(|_| "/tmp".to_string());
         let result = normalize_project_path("/tmp");
-        assert_eq!(result, "/tmp");
+        assert_eq!(result, expected);
     }
 
     #[test]
