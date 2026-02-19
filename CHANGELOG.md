@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.7] - 2026-02-18
+
+### Added
+- **Seamless multi-project switching** -- Per-session directory isolation (`~/.mira/sessions/{session_id}/`) ensures concurrent Claude Code sessions on different projects no longer cross-contaminate state. Session ID threaded through all hooks (subagent, pre_tool, stop, session-end) for correct project resolution.
+- **45 tests for session MCP tool** -- Full coverage of `session(action="recap/current_session")` with `MockToolContext`, including startup vs resume, project scoping, team detection, and error handling.
+- **58 tests across 6 LLM client modules** -- Coverage for DeepSeek, Ollama, Sampling, provider factory, config, and rate limiting. Includes circuit breaker behavior, retry logic, and error handling.
+
+### Fixed
+- **Code tool oversized response hardening** -- Truncates search results, symbol lists, and call graph output to prevent context window overflow. Silent DB errors now surface as user-visible messages.
+- **`vec_code` dimension mismatch** -- Code index now detects embedding dimension changes and recreates the virtual table instead of silently failing queries.
+- **Per-session cleanup ordering** -- Cleanup only runs on session-end (not per-response), and after project resolution completes, preventing wrong-project attachment in concurrent sessions.
+- **Hook fast-path JSON format** -- `mira-wrapper` first-install hook response now uses correct `hookSpecificOutput` wrapper.
+
+---
+
 ## [0.8.6] - 2026-02-18
 
 ### Added

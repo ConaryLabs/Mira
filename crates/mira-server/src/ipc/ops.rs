@@ -30,7 +30,9 @@ pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value
         let (id, path, _name) = crate::hooks::resolve_project(&server.pool, session_id).await;
         match (id, path) {
             (Some(id), Some(path)) => Ok(json!({"project_id": id, "path": path})),
-            _ => anyhow::bail!("no cwd provided and no active project found (checked per-session file, global file, and database)"),
+            _ => anyhow::bail!(
+                "no cwd provided and no active project found (checked per-session file, global file, and database)"
+            ),
         }
     }
 }

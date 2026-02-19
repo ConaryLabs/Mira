@@ -991,12 +991,11 @@ pub fn cleanup_team_file(session_id: &str) {
 /// Remove the per-session directory and all its contents.
 /// Best-effort: logs a warning on failure but never panics.
 pub(crate) fn cleanup_per_session_dir(session_id: &str) {
-    if let Some(dir) = per_session_dir(session_id) {
-        if dir.exists() {
-            if let Err(e) = fs::remove_dir_all(&dir) {
-                tracing::warn!("Failed to clean up per-session dir: {e}");
-            }
-        }
+    if let Some(dir) = per_session_dir(session_id)
+        && dir.exists()
+        && let Err(e) = fs::remove_dir_all(&dir)
+    {
+        tracing::warn!("Failed to clean up per-session dir: {e}");
     }
 }
 
@@ -1380,7 +1379,10 @@ mod tests {
 
     #[test]
     fn test_per_session_dir_empty_string() {
-        assert!(per_session_dir("").is_none(), "empty string should return None");
+        assert!(
+            per_session_dir("").is_none(),
+            "empty string should return None"
+        );
     }
 
     #[test]
