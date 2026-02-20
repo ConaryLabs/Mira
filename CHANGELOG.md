@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.9] - 2026-02-20
+
+### Fixed
+- **Installer hardening** -- Both install paths (install.sh and plugin marketplace) now produce identical, validated configurations. Default install directory changed from `/usr/local/bin` to `~/.mira/bin` (no sudo needed). Bundled jq with SHA256 verification for reliable JSON operations without system dependencies. Added checksum verification for mira binary in install.sh (aligned with mira-wrapper). Config function failures now degrade gracefully instead of killing the script.
+- **Status line reliability** -- Fixed status line pointing to wrong binary when settings.json was synced between machines. Both install paths now validate the binary exists before yielding to an existing status line config. Plugin wrapper uses POSIX-compatible locking with 60-second stale timeout (replaced non-portable `trap RETURN`).
+- **Symlink-safe config writes** -- Atomic writes now resolve symlinks before writing, preserving link targets on both Linux (`readlink -f`) and macOS/BSD (directory-relative fallback).
+- **Release URL construction** -- install.sh now correctly uses `v`-prefixed tags in GitHub release URLs, matching actual tag format.
+- **POSIX shell compatibility** -- mira-statusline shebang changed to `#!/bin/sh` with `pipefail` removed. mira-wrapper HOME guard added for edge environments.
+
+### Added
+- **MCP server fallback** -- install.sh now configures `~/.claude/mcp.json` when plugin install fails, ensuring mira tools are available without the plugin.
+- **PATH guidance** -- Post-install output suggests adding `~/.mira/bin` to PATH when not already present.
+- **Test coverage** -- New tests for jq bundling, MCP server fallback, and output verification in `test-install.sh`.
+
+---
+
 ## [0.8.8] - 2026-02-19
 
 ### Added
