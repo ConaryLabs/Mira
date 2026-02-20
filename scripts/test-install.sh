@@ -171,6 +171,13 @@ else
     warn "no checksum tool (sha256sum/shasum) — verification was skipped"
 fi
 
+# 1g: jq downloaded alongside mira
+if [ -x "$HOME/.mira/bin/jq" ]; then
+    pass "jq binary downloaded to ~/.mira/bin/jq"
+else
+    warn "jq not downloaded (statusline setup may have been skipped)"
+fi
+
 # ============================================================
 # Test 2: mira-wrapper second run (fast path)
 # ============================================================
@@ -316,18 +323,34 @@ else
     fail "~/.claude/settings.json not created (is jq installed?)"
 fi
 
-# 4i: output mentions mira setup in next steps
+# 4i: MCP server configured in ~/.claude/mcp.json (fallback when plugin unavailable)
+if [ -f "$HOME/.claude/mcp.json" ]; then
+    if command -v jq >/dev/null 2>&1; then
+        MCP_CMD=$(jq -r '.mcpServers.mira.command // ""' "$HOME/.claude/mcp.json" 2>/dev/null || echo "")
+        if [ -n "$MCP_CMD" ]; then
+            pass "MCP server configured in mcp.json ($MCP_CMD)"
+        else
+            fail "mcp.json exists but mira server entry missing"
+        fi
+    else
+        pass "~/.claude/mcp.json created (cannot validate without jq)"
+    fi
+else
+    fail "~/.claude/mcp.json not created (mira tools will be unavailable)"
+fi
+
+# 4j: output mentions mira setup in next steps
 if echo "$INSTALL_OUTPUT" | grep -q "mira setup"; then
     pass "output mentions 'mira setup' in next steps"
 else
     fail "output missing 'mira setup' in next steps"
 fi
 
-# 4j: output indicates hook or plugin configuration
-if echo "$INSTALL_OUTPUT" | grep -qi "hook\|plugin"; then
-    pass "output confirms hook/plugin configuration"
+# 4k: output indicates hook or plugin configuration
+if echo "$INSTALL_OUTPUT" | grep -qi "hook\|plugin\|MCP"; then
+    pass "output confirms hook/plugin/MCP configuration"
 else
-    fail "output missing hook/plugin confirmation"
+    fail "output missing hook/plugin/MCP confirmation"
 fi
 
 # ============================================================

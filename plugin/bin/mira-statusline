@@ -1,9 +1,10 @@
-#!/bin/bash
+#!/bin/sh
+# mira-statusline
 # Mira status line for Claude Code (plugin wrapper)
 # Delegates to `mira statusline` which queries the databases directly.
 # Falls back to the wrapper script if mira binary isn't available yet.
 
-set -euo pipefail
+set -eu
 
 # Find the mira binary
 MIRA_BIN="${HOME}/.mira/bin/mira"

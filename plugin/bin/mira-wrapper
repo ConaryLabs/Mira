@@ -6,6 +6,11 @@
 set -eu
 umask 077
 
+if [ -z "${HOME:-}" ]; then
+    printf '{"error": "HOME not set"}\n'
+    exit 1
+fi
+
 MIRA_VERSION="0.8.8"
 # Allow version pinning via environment variable
 if [ -n "${MIRA_VERSION_PIN:-}" ]; then
@@ -44,10 +49,9 @@ done
 
 if "$is_hook_invocation" && [ ! -x "$MIRA_BIN" ]; then
     printf '{"hookSpecificOutput": {"message": "Mira is installing... features will activate next session."}}\n'
-    # Trigger download in background — re-invoke ourselves with --version so
-    # the slow path downloads the binary. Once downloaded, `mira --version`
-    # prints and exits immediately, so the background process is short-lived.
-    ( "$0" --version >/dev/null 2>&1 || true ) &
+    # Trigger download in background, but only if the MCP serve invocation
+    # hasn't already started downloading (wait 2s to give it a head start).
+    ( sleep 2; [ ! -x "$MIRA_BIN" ] && "$0" --version >/dev/null 2>&1 || true ) &
     exit 0
 fi
 
@@ -257,7 +261,11 @@ if [ "$archive_ext" = "zip" ]; then
     powershell.exe -NoProfile -Command "Expand-Archive -Force -Path '$(cygpath -w "$archive_file")' -DestinationPath '$(cygpath -w "$tmp_dir")'" 2>/dev/null \
         || { log "[mira] ERROR: Failed to extract .zip archive"; exit 1; }
 else
-    tar -xz -C "$tmp_dir" -f "$archive_file"
+    if ! tar -xz -C "$tmp_dir" -f "$archive_file"; then
+        log "[mira] ERROR: Failed to extract archive: ${archive_file}"
+        log "[mira] Try deleting ~/.mira/bin/mira and re-running."
+        exit 1
+    fi
 fi
 
 # Determine extracted binary name
@@ -279,6 +287,55 @@ case "$(uname -s)" in
     Darwin*) xattr -d com.apple.quarantine "$MIRA_BIN" 2>/dev/null || true ;;
 esac
 
+# Download jq if not already available (needed for statusline setup)
+install_jq() {
+    if [ -x "${BIN_DIR}/jq" ] || command -v jq >/dev/null 2>&1; then
+        return 0
+    fi
+    local jq_version="1.7.1" jq_url="" jq_expected_hash="" jq_bin="${BIN_DIR}/jq"
+    # URLs and SHA256 checksums for jq 1.7.1 (from jqlang/jq releases)
+    case "$(uname -s)" in
+        Linux*)
+            case "$(uname -m)" in
+                x86_64|amd64)
+                    jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-linux-amd64"
+                    jq_expected_hash="5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5" ;;
+                aarch64|arm64)
+                    jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-linux-arm64"
+                    jq_expected_hash="4dd2d8a0661df0b22f1bb9a1f9830f06b6f3b8f7d91211a1ef5d7c4f06a8b4a5" ;;
+            esac ;;
+        Darwin*)
+            case "$(uname -m)" in
+                x86_64|amd64)
+                    jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-macos-amd64"
+                    jq_expected_hash="4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443" ;;
+                aarch64|arm64)
+                    jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-macos-arm64"
+                    jq_expected_hash="0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a" ;;
+            esac ;;
+        MINGW*|MSYS*|CYGWIN*)
+            jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-windows-amd64.exe"
+            jq_expected_hash="7451fbbf37feffb9bf262bd97c54f0da558c63f0748e64152dd87b0a07b6d6ab"
+            jq_bin="${BIN_DIR}/jq.exe" ;;
+    esac
+    if [ -z "$jq_url" ]; then return 1; fi
+    if ! fetch "$jq_url" "$jq_bin" 2>/dev/null; then return 1; fi
+    # Verify checksum
+    local jq_actual_hash=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        jq_actual_hash=$(sha256sum "$jq_bin" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1; then
+        jq_actual_hash=$(shasum -a 256 "$jq_bin" | cut -d' ' -f1)
+    fi
+    if [ -n "$jq_actual_hash" ] && [ "$jq_actual_hash" != "$jq_expected_hash" ]; then
+        log "[mira] Warning: jq checksum verification failed -- removing untrusted binary"
+        rm -f "$jq_bin"
+        return 1
+    fi
+    chmod +x "$jq_bin" 2>/dev/null || true
+}
+install_jq 2>/dev/null || true
+
 log "[mira] Installed Mira v${target} to ${MIRA_BIN}"
 if [ -n "$installed" ] && [ "$installed" != "$target" ]; then
     log "[mira] Release notes: https://github.com/${REPO}/releases/tag/v${target}"
@@ -286,4 +343,85 @@ fi
 if [ -z "$installed" ]; then
     log "[mira] To configure providers, run: ${MIRA_BIN} setup"
 fi
+
+# Ensure status line is configured on first install or when binary path changes
+setup_statusline() {
+    local settings_file="${HOME}/.claude/settings.json"
+    local jq_bin=""
+
+    # Find jq: bundled or system
+    if [ -x "${BIN_DIR}/jq" ]; then
+        jq_bin="${BIN_DIR}/jq"
+    elif command -v jq >/dev/null 2>&1; then
+        jq_bin="$(command -v jq)"
+    else
+        return  # No jq -- skip silently
+    fi
+
+    local statusline_cmd="${MIRA_BIN} statusline"
+    mkdir -p "${HOME}/.claude"
+
+    # Resolve symlink to avoid replacing it with a regular file
+    if [ -L "$settings_file" ]; then
+        local link_target
+        link_target=$(readlink -f "$settings_file" 2>/dev/null) || {
+            link_target=$(readlink "$settings_file")
+            case "$link_target" in
+                /*) ;;
+                *)  link_target="$(cd "$(dirname "$settings_file")" && pwd)/${link_target}" ;;
+            esac
+        }
+        settings_file="$link_target"
+    fi
+
+    # Acquire a simple lock to prevent concurrent writes from racing.
+    # Stale lock check: if lock is older than 60s, assume the holder died.
+    local lockdir="${MIRA_HOME}/.settings-lock"
+    if ! mkdir "$lockdir" 2>/dev/null; then
+        local lock_mtime
+        lock_mtime=$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)
+        local lock_age=$(( $(date +%s) - lock_mtime ))
+        if [ "$lock_age" -gt 60 ]; then
+            rmdir "$lockdir" 2>/dev/null || true
+            mkdir "$lockdir" 2>/dev/null || return
+        else
+            return  # Another process is writing -- skip
+        fi
+    fi
+
+    if [ -f "$settings_file" ]; then
+        local current_cmd
+        current_cmd=$("$jq_bin" -r '.statusLine.command // empty' "$settings_file" 2>/dev/null) || { rmdir "$lockdir" 2>/dev/null; return; }
+        if [ -n "$current_cmd" ]; then
+            # Only yield if it's a working mira statusline
+            case "$current_cmd" in
+                *mira*statusline*)
+                    local current_bin="${current_cmd%% *}"
+                    if [ -x "$current_bin" ]; then
+                        rmdir "$lockdir" 2>/dev/null
+                        return  # Already configured and working
+                    fi
+                    ;;
+            esac
+            # Non-mira statusline or broken path -- overwrite
+        fi
+        local updated
+        updated=$("$jq_bin" --arg cmd "$statusline_cmd" \
+            '.statusLine = {"type": "command", "command": $cmd}' "$settings_file") || { rmdir "$lockdir" 2>/dev/null; return; }
+        printf '%s\n' "$updated" > "${settings_file}.tmp"
+        mv -f "${settings_file}.tmp" "$settings_file"
+    else
+        "$jq_bin" -n --arg cmd "$statusline_cmd" \
+            '{statusLine: {type: "command", command: $cmd}}' > "${settings_file}.tmp"
+        mv -f "${settings_file}.tmp" "$settings_file"
+    fi
+    rmdir "$lockdir" 2>/dev/null || true
+    log "[mira] Status line configured"
+}
+setup_statusline 2>/dev/null || true
+
+# Clean up temp dir before exec (EXIT trap may not fire on exec in dash)
+rm -rf "$tmp_dir" 2>/dev/null || true
+trap - EXIT
+
 exec "$MIRA_BIN" "$@"
