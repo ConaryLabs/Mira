@@ -116,7 +116,7 @@ impl Default for ProactiveConfig {
         Self {
             min_confidence: 0.7,
             max_interventions_per_hour: 10,
-            enabled: true,
+            enabled: false,
             cooldown_seconds: 300, // 5 minutes
         }
     }
@@ -124,14 +124,38 @@ impl Default for ProactiveConfig {
 
 /// Get proactive config for a user/project.
 ///
-/// The proactive_preferences table was dropped (unused). This now returns
-/// defaults directly.
+/// Starts from defaults (`enabled: false`) and checks `memory_facts` for a
+/// stored preference to opt in. Matches the exact canonical key
+/// `proactive:enabled` to avoid false positives from negated or ambiguous
+/// phrases. Accepts both `confirmed` and `candidate` status since
+/// `remember()` inserts as `candidate`.
 pub fn get_proactive_config(
-    _conn: &rusqlite::Connection,
+    conn: &rusqlite::Connection,
     _user_id: Option<&str>,
-    _project_id: i64,
+    project_id: i64,
 ) -> ProactiveConfig {
-    ProactiveConfig::default()
+    let mut config = ProactiveConfig::default();
+
+    // Look for the canonical opt-in key. This avoids fuzzy LIKE matching that
+    // can false-positive on negated phrases like "never enable proactive".
+    let enabled: bool = conn
+        .query_row(
+            r#"
+            SELECT 1 FROM memory_facts
+            WHERE (project_id = ?1 OR project_id IS NULL)
+              AND fact_type = 'preference'
+              AND status IN ('confirmed', 'candidate')
+              AND COALESCE(suspicious, 0) = 0
+              AND key = 'proactive:enabled'
+            LIMIT 1
+            "#,
+            [project_id],
+            |_row| Ok(true),
+        )
+        .unwrap_or(false);
+
+    config.enabled = enabled;
+    config
 }
 
 #[cfg(test)]
@@ -331,7 +355,7 @@ mod tests {
         let config = ProactiveConfig::default();
         assert_eq!(config.min_confidence, 0.7);
         assert_eq!(config.max_interventions_per_hour, 10);
-        assert!(config.enabled);
+        assert!(!config.enabled);
         assert_eq!(config.cooldown_seconds, 300);
     }
 

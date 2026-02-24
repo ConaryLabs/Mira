@@ -37,8 +37,6 @@ pub(crate) async fn log_behavior(
 }
 
 /// Get proactive context from pondering-based insights and pre-generated suggestions
-// TODO: Remove allow(dead_code) when proactive context is re-enabled behind user preference
-#[allow(dead_code)]
 pub(crate) async fn get_proactive_context(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -338,15 +336,40 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
         .get_context_for_message(user_message, session_id)
         .await;
 
-    // Proactive suggestions disabled by default -- low priority (0.50) and noisy.
-    // TODO: Re-enable when gated behind an explicit user preference
-    // (e.g. memory(action="remember", content="enable proactive suggestions")).
-    let proactive_context: Option<String> = None;
+    // Proactive suggestions off by default. Opt in by storing a preference:
+    // memory(action="remember", content="enable proactive suggestions", key="proactive:enabled", fact_type="preference")
+    // Quality gates: skip for simple commands and out-of-bounds message length.
+    let is_simple = crate::context::is_simple_command(user_message);
+    let session_id_opt = if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id)
+    };
+    let proactive_context: Option<String> = if let Some(pid) = project_id
+        && !is_simple
+    {
+        let config = manager.config();
+        let msg_len = user_message.trim().len();
+        if msg_len >= config.min_message_len && msg_len <= config.max_message_len {
+            get_proactive_context(&pool, pid, project_path.as_deref(), session_id_opt).await
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    // Cross-project context disabled by default -- low priority (0.55) and noisy.
-    // TODO: Re-enable when gated behind an explicit user preference
-    // (e.g. memory(action="remember", content="enable cross-project context")).
-    let cross_project_context: Option<String> = None;
+    // Cross-project context gated behind ProactiveConfig::enabled (default false).
+    // Opt in via: memory(action="remember", content="enable proactive suggestions", key="proactive:enabled", fact_type="preference")
+    // Also skipped for simple commands.
+    let cross_project_context: Option<String> = if let Some(pid) = project_id
+        && !is_simple
+    {
+        let emb = get_embeddings(Some(pool.clone()));
+        get_cross_project_context(&pool, &emb, pid, user_message).await
+    } else {
+        None
+    };
 
     // Get pending native tasks
     let task_context = get_task_context(project_label);
@@ -614,14 +637,28 @@ pub(crate) async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str)
 /// First tries tight "you solved this" matching (decisions/patterns, distance < 0.25),
 /// then falls back to general cross-project recall (distance < 0.35).
 /// Returns formatted context string or None if no relevant matches.
-// TODO: Remove allow(dead_code) when cross-project context is re-enabled behind user preference
-#[allow(dead_code)]
 pub(crate) async fn get_cross_project_context(
     pool: &Arc<DatabasePool>,
     embeddings: &Option<Arc<EmbeddingClient>>,
     project_id: i64,
     message: &str,
 ) -> Option<String> {
+    // Gated behind ProactiveConfig::enabled (default false). Users opt in by storing:
+    // memory(action="remember", content="enable proactive suggestions", key="proactive:enabled", fact_type="preference")
+    let pool_check = pool.clone();
+    let pid = project_id;
+    let config_enabled = pool_check
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(
+                crate::proactive::get_proactive_config(conn, None, pid).enabled,
+            )
+        })
+        .await
+        .unwrap_or(false);
+    if !config_enabled {
+        return None;
+    }
+
     let embeddings = embeddings.as_ref()?;
     let query_embedding = embeddings.embed(message).await.ok()?;
     let embedding_bytes = crate::search::embedding_to_bytes(&query_embedding);

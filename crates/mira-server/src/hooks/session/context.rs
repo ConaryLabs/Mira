@@ -545,15 +545,18 @@ pub(super) fn infer_activity_from_tools(tools: &[&str]) -> String {
 
 /// Enforce hard output budget on session context.
 /// Truncates at a UTF-8 safe boundary and appends `\n...` if over the limit.
+/// The final output is guaranteed to be <= MAX_SESSION_CONTEXT_CHARS.
 fn truncate_session_context(output: String) -> String {
     if output.len() <= MAX_SESSION_CONTEXT_CHARS {
         return output;
     }
-    let mut truncated = truncate_at_boundary(&output, MAX_SESSION_CONTEXT_CHARS).to_string();
+    const SUFFIX: &str = "\n...";
+    let budget = MAX_SESSION_CONTEXT_CHARS.saturating_sub(SUFFIX.len());
+    let mut truncated = truncate_at_boundary(&output, budget).to_string();
     // Avoid mid-line truncation by finding the last newline
     if let Some(pos) = truncated.rfind('\n') {
         truncated.truncate(pos);
     }
-    truncated.push_str("\n...");
+    truncated.push_str(SUFFIX);
     truncated
 }

@@ -143,7 +143,10 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
             continue;
         }
 
-        let entry_line = format!("- {}\n", content);
+        // Normalize newlines: collapse multiline content into a single line to prevent
+        // a single memory from blowing the line budget.
+        let content_oneline = content.replace('\n', " ");
+        let entry_line = format!("- {}\n", content_oneline);
         let entry_bytes = entry_line.len();
 
         // Find the section bucket
@@ -160,6 +163,7 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
             0
         };
         // Lines added: section header ("## X\n" + blank line) + trailing blank = 3; entry = 1
+        // (entry is always 1 line after newline normalization above)
         let lines_cost = if is_new_section { 3 } else { 0 } + 1;
 
         let total_cost = entry_bytes + header_cost;
