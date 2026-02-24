@@ -165,9 +165,7 @@ pub async fn handle_code<C: ToolContext>(
         CodeAction::DebtDelta => get_debt_delta(ctx).await,
         CodeAction::Bundle => {
             let scope = req.scope.ok_or_else(|| {
-                MiraError::InvalidInput(
-                    "scope is required for code(action=bundle)".to_string(),
-                )
+                MiraError::InvalidInput("scope is required for code(action=bundle)".to_string())
             })?;
             generate_bundle(ctx, scope, req.budget, req.depth).await
         }

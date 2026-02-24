@@ -111,7 +111,15 @@ pub async fn generate_bundle<C: ToolContext>(
         // Try semantic search fallback for query-style scopes
         let fallback = try_semantic_fallback(ctx, project_id, &scope, &depth).await?;
         if let Some((mods, syms, dep_edges, code_chunks)) = fallback {
-            let content = format_bundle(&scope, &mods, &syms, &dep_edges, &code_chunks, budget, &depth);
+            let content = format_bundle(
+                &scope,
+                &mods,
+                &syms,
+                &dep_edges,
+                &code_chunks,
+                budget,
+                &depth,
+            );
             let char_count = content.len();
             return Ok(Json(CodeOutput {
                 action: "bundle".into(),
@@ -175,11 +183,24 @@ async fn collect_bundle_data<C: ToolContext>(
     project_id: i64,
     path_pattern: &str,
     depth: &BundleDepth,
-) -> Result<(Vec<ModuleInfo>, Vec<SymbolEntry>, Vec<DepEdge>, Vec<ChunkEntry>), MiraError> {
+) -> Result<
+    (
+        Vec<ModuleInfo>,
+        Vec<SymbolEntry>,
+        Vec<DepEdge>,
+        Vec<ChunkEntry>,
+    ),
+    MiraError,
+> {
     let pattern = path_pattern.to_string();
     let include_chunks = !matches!(depth, BundleDepth::Overview);
 
-    type BundleTuple = (Vec<ModuleInfo>, Vec<SymbolEntry>, Vec<DepEdge>, Vec<ChunkEntry>);
+    type BundleTuple = (
+        Vec<ModuleInfo>,
+        Vec<SymbolEntry>,
+        Vec<DepEdge>,
+        Vec<ChunkEntry>,
+    );
 
     let result = ctx
         .code_pool()
@@ -219,7 +240,12 @@ async fn try_semantic_fallback<C: ToolContext>(
     query: &str,
     depth: &BundleDepth,
 ) -> Result<
-    Option<(Vec<ModuleInfo>, Vec<SymbolEntry>, Vec<DepEdge>, Vec<ChunkEntry>)>,
+    Option<(
+        Vec<ModuleInfo>,
+        Vec<SymbolEntry>,
+        Vec<DepEdge>,
+        Vec<ChunkEntry>,
+    )>,
     MiraError,
 > {
     // Only try semantic fallback if scope doesn't look like a path
@@ -251,17 +277,24 @@ async fn try_semantic_fallback<C: ToolContext>(
     for p in &dir_prefixes {
         *counts.entry(p.as_str()).or_insert(0) += 1;
     }
-    let top_prefix = counts
+    let Some(top_prefix) = counts
         .into_iter()
         .max_by(|(a_prefix, a_count), (b_prefix, b_count)| {
             a_count.cmp(b_count).then_with(|| b_prefix.cmp(a_prefix))
         })
         .map(|(prefix, _)| prefix.to_string())
-        .unwrap(); // safe: dir_prefixes is non-empty
+    else {
+        return Ok(None);
+    };
     let pattern = resolve_scope_pattern(&top_prefix);
     let include_chunks = !matches!(depth, BundleDepth::Overview);
 
-    type FallbackTuple = (Vec<ModuleInfo>, Vec<SymbolEntry>, Vec<DepEdge>, Vec<ChunkEntry>);
+    type FallbackTuple = (
+        Vec<ModuleInfo>,
+        Vec<SymbolEntry>,
+        Vec<DepEdge>,
+        Vec<ChunkEntry>,
+    );
 
     let result = ctx
         .code_pool()
@@ -362,7 +395,10 @@ fn query_deps(
     }
 
     // Build IN clause — safe since module_ids come from our own DB query
-    let placeholders: Vec<String> = module_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
+    let placeholders: Vec<String> = module_ids
+        .iter()
+        .map(|id| format!("'{}'", id.replace('\'', "''")))
+        .collect();
     let in_clause = placeholders.join(",");
 
     let sql = format!(
@@ -490,16 +526,10 @@ fn format_bundle(
             if let Some(sig) = &s.signature {
                 format!("- `{}` [L{}]\n", truncate_str(sig, 120), s.start_line)
             } else {
-                format!(
-                    "- {} `{}` [L{}]\n",
-                    s.symbol_type, s.name, s.start_line
-                )
+                format!("- {} `{}` [L{}]\n", s.symbol_type, s.name, s.start_line)
             }
         } else {
-            format!(
-                "- {} `{}` [L{}]\n",
-                s.symbol_type, s.name, s.start_line
-            )
+            format!("- {} `{}` [L{}]\n", s.symbol_type, s.name, s.start_line)
         };
 
         if section_len + line.len() > sym_budget {
@@ -593,26 +623,28 @@ fn truncate_str(s: &str, max: usize) -> &str {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
+    /// Helper matching the clamping logic in generate_bundle
+    fn clamp_budget(b: i64) -> usize {
+        (b.max(0) as usize).clamp(MIN_BUDGET, MAX_BUDGET)
+    }
+
     #[test]
     fn budget_clamped_negative() {
-        // Negative budget should clamp to MIN_BUDGET, not overflow
-        let clamped = (-1i64).max(0) as usize;
-        assert_eq!(clamped.clamp(MIN_BUDGET, MAX_BUDGET), MIN_BUDGET);
+        assert_eq!(clamp_budget(-1), MIN_BUDGET);
     }
 
     #[test]
     fn budget_clamped_excessive() {
-        let clamped = (999_999i64).max(0) as usize;
-        assert_eq!(clamped.clamp(MIN_BUDGET, MAX_BUDGET), MAX_BUDGET);
+        assert_eq!(clamp_budget(999_999), MAX_BUDGET);
     }
 
     #[test]
     fn budget_normal_passthrough() {
-        let clamped = (8000i64).max(0) as usize;
-        assert_eq!(clamped.clamp(MIN_BUDGET, MAX_BUDGET), 8000);
+        assert_eq!(clamp_budget(8000), 8000);
     }
 
     #[test]
@@ -643,8 +675,21 @@ mod tests {
         }];
 
         let budget = 800;
-        let result = format_bundle("src/test_mod", &modules, &symbols, &[], &[], budget, &BundleDepth::Standard);
-        assert!(result.len() <= budget, "output {} exceeds budget {}", result.len(), budget);
+        let result = format_bundle(
+            "src/test_mod",
+            &modules,
+            &symbols,
+            &[],
+            &[],
+            budget,
+            &BundleDepth::Standard,
+        );
+        assert!(
+            result.len() <= budget,
+            "output {} exceeds budget {}",
+            result.len(),
+            budget
+        );
     }
 
     #[test]
@@ -655,7 +700,10 @@ mod tests {
                 id: format!("m{}", i),
                 name: format!("module_{}", i),
                 path: format!("src/mod_{}.rs", i),
-                purpose: Some(format!("Module {} does things with long description text", i)),
+                purpose: Some(format!(
+                    "Module {} does things with long description text",
+                    i
+                )),
                 exports: vec![],
                 symbol_count: 10,
                 line_count: Some(200),
@@ -663,7 +711,15 @@ mod tests {
             .collect();
 
         let budget = 500;
-        let result = format_bundle("src/", &modules, &[], &[], &[], budget, &BundleDepth::Overview);
+        let result = format_bundle(
+            "src/",
+            &modules,
+            &[],
+            &[],
+            &[],
+            budget,
+            &BundleDepth::Overview,
+        );
         assert!(
             result.len() <= budget,
             "output len {} exceeds budget {}",
@@ -693,8 +749,7 @@ mod tests {
             "src/tools/".to_string(),
             "src/db/".to_string(),
         ];
-        let mut counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         for p in &prefixes {
             *counts.entry(p.as_str()).or_insert(0) += 1;
         }
@@ -711,12 +766,8 @@ mod tests {
     #[test]
     fn tied_prefixes_resolve_deterministically() {
         // Equal frequency: should pick lexicographically first (shortest/earliest path)
-        let prefixes = vec![
-            "src/db/".to_string(),
-            "src/tools/".to_string(),
-        ];
-        let mut counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
+        let prefixes = vec!["src/db/".to_string(), "src/tools/".to_string()];
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         for p in &prefixes {
             *counts.entry(p.as_str()).or_insert(0) += 1;
         }
