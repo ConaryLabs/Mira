@@ -2,11 +2,13 @@
 // Unified code tools (search, callers, callees, symbols, index, analysis)
 
 mod analysis;
+mod bundle;
 mod index;
 mod search;
 
 // Re-export everything for backward compatibility with `pub use code::*;`
 pub use analysis::*;
+pub use bundle::*;
 pub use index::*;
 pub use search::*;
 
@@ -161,5 +163,13 @@ pub async fn handle_code<C: ToolContext>(
             get_conventions(ctx, file_path).await
         }
         CodeAction::DebtDelta => get_debt_delta(ctx).await,
+        CodeAction::Bundle => {
+            let scope = req.scope.ok_or_else(|| {
+                MiraError::InvalidInput(
+                    "scope is required for code(action=bundle)".to_string(),
+                )
+            })?;
+            generate_bundle(ctx, scope, req.budget, req.depth).await
+        }
     }
 }

@@ -20,6 +20,7 @@ pub enum CodeData {
     DeadCode(DeadCodeData),
     Conventions(ConventionsData),
     DebtDelta(DebtDeltaData),
+    Bundle(BundleData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -178,6 +179,12 @@ pub struct ModuleStanding {
     pub module_path: Option<String>,
     pub score: f64,
     pub tier: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BundleData {
+    /// Pre-formatted markdown context bundle for agent spawn prompts
+    pub content: String,
 }
 
 /// Aggregate delta from health snapshots (accurate project-level trend)

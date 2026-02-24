@@ -180,12 +180,14 @@ pub enum CodeAction {
     Conventions,
     /// Show per-module tech debt changes between health snapshots
     DebtDelta,
+    /// Package module summaries, symbols, deps, and code into a context bundle for agent spawning
+    Bundle,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CodeRequest {
     #[schemars(
-        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff, dead_code, conventions, debt_delta"
+        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff, dead_code, conventions, debt_delta, bundle"
     )]
     pub action: CodeAction,
     #[schemars(description = "Search query (required for search)")]
@@ -208,6 +210,18 @@ pub struct CodeRequest {
         description = "Include impact analysis in diff (find affected callers). Default: true"
     )]
     pub include_impact: Option<bool>,
+    #[schemars(
+        description = "Module path or concept to bundle (required for bundle). E.g. 'src/tools/core/code/', 'authentication'"
+    )]
+    pub scope: Option<String>,
+    #[schemars(
+        description = "Max character budget for bundle output (default: 6000, ~1500 tokens)"
+    )]
+    pub budget: Option<i64>,
+    #[schemars(
+        description = "Bundle detail level: overview (summaries only), standard (default, + signatures + snippets), deep (+ full chunks)"
+    )]
+    pub depth: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -516,6 +530,8 @@ pub enum McpCodeAction {
     Callers,
     /// Find all functions called by a given function
     Callees,
+    /// Package module summaries, symbols, deps, and code into a context bundle for agent spawning
+    Bundle,
 }
 
 impl From<McpCodeAction> for CodeAction {
@@ -525,13 +541,14 @@ impl From<McpCodeAction> for CodeAction {
             McpCodeAction::Symbols => CodeAction::Symbols,
             McpCodeAction::Callers => CodeAction::Callers,
             McpCodeAction::Callees => CodeAction::Callees,
+            McpCodeAction::Bundle => CodeAction::Bundle,
         }
     }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpCodeRequest {
-    #[schemars(description = "Action: search, symbols, callers, callees")]
+    #[schemars(description = "Action: search, symbols, callers, callees, bundle")]
     pub action: McpCodeAction,
     #[schemars(description = "Search query (required for search)")]
     pub query: Option<String>,
@@ -543,6 +560,18 @@ pub struct McpCodeRequest {
     pub symbol_type: Option<String>,
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
+    #[schemars(
+        description = "Module path or concept to bundle (required for bundle). E.g. 'src/tools/core/code/', 'authentication'"
+    )]
+    pub scope: Option<String>,
+    #[schemars(
+        description = "Max character budget for bundle output (default: 6000, ~1500 tokens)"
+    )]
+    pub budget: Option<i64>,
+    #[schemars(
+        description = "Bundle detail level: overview (summaries only), standard (default, + signatures + snippets), deep (+ full chunks)"
+    )]
+    pub depth: Option<String>,
 }
 
 impl From<McpCodeRequest> for CodeRequest {
@@ -557,6 +586,9 @@ impl From<McpCodeRequest> for CodeRequest {
             from_ref: None,
             to_ref: None,
             include_impact: None,
+            scope: r.scope,
+            budget: r.budget,
+            depth: r.depth,
         }
     }
 }
@@ -789,6 +821,12 @@ mod tests {
     fn code_action_search() {
         let a: McpCodeAction = serde_json::from_value(json!("search")).unwrap();
         assert!(matches!(a, McpCodeAction::Search));
+    }
+
+    #[test]
+    fn code_action_bundle() {
+        let a: McpCodeAction = serde_json::from_value(json!("bundle")).unwrap();
+        assert!(matches!(a, McpCodeAction::Bundle));
     }
 
     #[test]
@@ -1106,6 +1144,9 @@ mod tests {
             function_name: Some("login".into()),
             symbol_type: Some("function".into()),
             limit: Some(50),
+            scope: None,
+            budget: None,
+            depth: None,
         };
 
         let full: CodeRequest = mcp.into();
@@ -1120,6 +1161,10 @@ mod tests {
         assert!(full.from_ref.is_none());
         assert!(full.to_ref.is_none());
         assert!(full.include_impact.is_none());
+        // Bundle fields are None when not using bundle action
+        assert!(full.scope.is_none());
+        assert!(full.budget.is_none());
+        assert!(full.depth.is_none());
     }
 
     // ── McpDiffRequest deserialization ──────────────────────────────────
