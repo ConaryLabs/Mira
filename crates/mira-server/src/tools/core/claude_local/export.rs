@@ -175,8 +175,6 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
             // Mark seen ONLY after successful budget add
             seen_prefixes.push(candidate_prefix);
             consecutive_skips = 0;
-        } else if entry_bytes > budget_remaining {
-            consecutive_skips += 1;
         } else {
             consecutive_skips += 1;
         }
