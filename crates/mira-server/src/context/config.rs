@@ -43,7 +43,7 @@ impl Default for InjectionConfig {
         Self {
             enabled: true,
             max_chars: 3000,
-            min_message_len: 30,
+            min_message_len: 50,
             max_message_len: 500,
             sample_rate: 1.0, // Quality gates (is_simple_command, length, is_code_related) prevent over-injection
             enable_semantic: true,

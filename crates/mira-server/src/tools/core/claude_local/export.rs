@@ -1,14 +1,52 @@
-use crate::db::{RankedMemory, fetch_ranked_memories_for_export_sync};
+// crates/mira-server/src/tools/core/claude_local/export.rs
+// CLAUDE.local.md export: budget-aware, deduplicated markdown generation
+
+use crate::db::{fetch_ranked_memories_for_export_sync, RankedMemory};
 use crate::error::MiraError;
 use crate::tools::core::ToolContext;
-use std::collections::HashSet;
 use std::path::Path;
 
 /// Total byte budget for CLAUDE.local.md content (~2K tokens)
 const CLAUDE_LOCAL_BYTE_BUDGET: usize = 8192;
 
-/// Max bytes per individual memory entry (truncate verbose ones)
-const MAX_MEMORY_BYTES: usize = 500;
+/// Hard cap on total output characters (applied after rendering)
+const TOTAL_CHAR_CAP: usize = 4000;
+
+/// Hard cap on total output lines (applied during packing)
+const MAX_OUTPUT_LINES: usize = 150;
+
+/// Per-type truncation limits (bytes)
+const MAX_DECISION_BYTES: usize = 200;
+const MAX_PREFERENCE_BYTES: usize = 150;
+const MAX_GENERAL_BYTES: usize = 150;
+const MAX_PATTERN_BYTES: usize = 150;
+
+/// Get per-section truncation limit
+fn max_bytes_for_section(section: &str) -> usize {
+    match section {
+        "Decisions" => MAX_DECISION_BYTES,
+        "Preferences" => MAX_PREFERENCE_BYTES,
+        "Patterns" => MAX_PATTERN_BYTES,
+        _ => MAX_GENERAL_BYTES,
+    }
+}
+
+/// Compute character-level similarity ratio of first 100 chars of two strings.
+/// Returns a value in [0.0, 1.0] where 1.0 means identical prefixes.
+fn prefix_similarity(a: &str, b: &str) -> f64 {
+    let a_chars: Vec<char> = a.chars().take(100).collect();
+    let b_chars: Vec<char> = b.chars().take(100).collect();
+    let max_len = a_chars.len().max(b_chars.len());
+    if max_len == 0 {
+        return 1.0;
+    }
+    let matching = a_chars
+        .iter()
+        .zip(b_chars.iter())
+        .filter(|(a, b)| a == b)
+        .count();
+    matching as f64 / max_len as f64
+}
 
 /// Export Mira memories to CLAUDE.local.md (MCP tool wrapper)
 pub async fn export_claude_local<C: ToolContext>(ctx: &C) -> Result<String, MiraError> {
@@ -53,7 +91,10 @@ fn export_to_claude_local_md_sync(
 /// Build budget-aware markdown export from ranked memories
 ///
 /// Greedy knapsack by hotness: iterate ranked memories, add to section buckets
-/// until byte budget is exhausted. Memories > MAX_MEMORY_BYTES are truncated.
+/// until byte budget is exhausted. Per-type truncation limits apply.
+/// Cross-section deduplication: memories with >80% prefix similarity (first 100
+/// chars) are deduplicated globally, keeping the higher-hotness entry.
+/// Hard caps: 150 lines max, 4000 chars total after rendering.
 /// Skip-don't-break: a long memory may not fit but a shorter one after it might
 /// (max 10 consecutive skips before giving up).
 pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
@@ -69,32 +110,36 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
         .map(|&name| (name, Vec::new()))
         .collect();
 
-    // Reserve bytes for section headers (## Name\n\n + trailing \n)
-    // We'll account for headers only for sections that end up non-empty,
-    // so track header costs separately
     let mut consecutive_skips = 0;
-    let mut seen_content: HashSet<String> = HashSet::new();
+    // Global dedup: store first-100-char prefixes of accepted entries
+    let mut seen_prefixes: Vec<String> = Vec::new();
+    // Track total line count (header lines + entry lines)
+    let header_line_count = header.lines().count();
+    let mut total_lines = header_line_count;
 
     for mem in memories {
         if consecutive_skips >= 10 {
             break;
         }
 
-        let content = super::truncate_content(&mem.content, MAX_MEMORY_BYTES);
+        // Line cap check
+        if total_lines >= MAX_OUTPUT_LINES {
+            break;
+        }
 
-        // Determine section first so dedup can be scoped per section.
-        // This allows the same content prefix to appear in both Preferences
-        // and Decisions if it genuinely belongs to both.
         let section_name =
             super::classify_by_type_and_category(&mem.fact_type, mem.category.as_deref());
 
-        // Deduplicate per-section: key = "section:prefix100".
-        // Only mark seen after a successful budget fit to avoid a too-large
-        // hotter entry poisoning the key and blocking a smaller entry that
-        // would have fit.
-        let dedup_key: String = content.chars().take(100).collect();
-        let composite_key = format!("{}:{}", section_name, dedup_key);
-        if seen_content.contains(&composite_key) {
+        // Per-type truncation limit
+        let max_bytes = max_bytes_for_section(section_name);
+        let content = super::truncate_content(&mem.content, max_bytes);
+
+        // Cross-section deduplication: reject if >80% similar to any accepted entry
+        let candidate_prefix: String = content.chars().take(100).collect();
+        let is_duplicate = seen_prefixes
+            .iter()
+            .any(|existing| prefix_similarity(existing, &candidate_prefix) > 0.80);
+        if is_duplicate {
             continue;
         }
 
@@ -108,32 +153,60 @@ pub fn build_budgeted_export(memories: &[RankedMemory]) -> String {
         };
 
         // Calculate header cost if this is the first entry in the section
-        let header_cost = if entries.is_empty() {
+        let is_new_section = entries.is_empty();
+        let header_cost = if is_new_section {
             format!("## {}\n\n", section_name).len() + 1 // +1 for trailing \n after section
         } else {
             0
         };
+        // Lines added: section header ("## X\n" + blank line) + trailing blank = 3; entry = 1
+        let lines_cost = if is_new_section { 3 } else { 0 } + 1;
 
         let total_cost = entry_bytes + header_cost;
 
-        if total_cost <= budget_remaining {
+        if total_cost <= budget_remaining && (total_lines + lines_cost) <= MAX_OUTPUT_LINES {
             budget_remaining -= total_cost;
             entries.push(entry_line);
-            // Mark seen ONLY after successful budget add. Inserting before the
-            // budget check would cause a too-large entry to poison the key,
-            // blocking a smaller same-section entry that would have fit.
-            seen_content.insert(composite_key);
+            total_lines += lines_cost;
+            // Mark seen ONLY after successful budget add
+            seen_prefixes.push(candidate_prefix);
             consecutive_skips = 0;
         } else if entry_bytes > budget_remaining {
-            // This entry won't fit even without header cost — skip it
             consecutive_skips += 1;
         } else {
-            // Header + entry doesn't fit, but maybe just entry doesn't fit either
             consecutive_skips += 1;
         }
     }
 
-    super::render_sections(header, &sections)
+    let rendered = super::render_sections(header, &sections);
+
+    // Hard character cap: if output exceeds TOTAL_CHAR_CAP, truncate from bottom
+    enforce_char_cap(&rendered, TOTAL_CHAR_CAP)
+}
+
+/// Enforce a character cap on rendered markdown by removing trailing entries.
+/// Keeps the header and as many complete lines as fit within the cap.
+fn enforce_char_cap(rendered: &str, cap: usize) -> String {
+    if rendered.len() <= cap {
+        return rendered.to_string();
+    }
+
+    // Walk lines, accumulating until we would exceed the cap
+    let mut output = String::with_capacity(cap);
+    for line in rendered.lines() {
+        // +1 for the newline we'll add back
+        if output.len() + line.len() + 1 > cap {
+            break;
+        }
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    // Ensure trailing newline
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
 }
 
 /// Write exported memories to CLAUDE.local.md file (sync version for run_blocking)
@@ -231,12 +304,72 @@ mod tests {
         let result = build_budgeted_export(&memories);
 
         // Each entry line is "- {content}\n", content should be truncated
+        // to MAX_GENERAL_BYTES (150)
         for line in result.lines() {
             if let Some(entry) = line.strip_prefix("- ") {
-                assert!(entry.len() <= MAX_MEMORY_BYTES + 3); // +3 for "..."
+                assert!(entry.len() <= MAX_GENERAL_BYTES + 3); // +3 for "..."
                 assert!(entry.ends_with("..."));
             }
         }
+    }
+
+    #[test]
+    fn test_budgeted_export_per_type_truncation() {
+        // Decision should truncate at 200, preference at 150, general at 150.
+        // Use distinct content per type to avoid cross-section dedup.
+        let pref_content = "P".repeat(300);
+        let dec_content = "D".repeat(300);
+        let gen_content = "G".repeat(300);
+        let memories = vec![
+            make_memory(&pref_content, "preference", Some("preference"), 10.0),
+            make_memory(&dec_content, "decision", Some("decision"), 8.0),
+            make_memory(&gen_content, "general", Some("general"), 6.0),
+        ];
+        let result = build_budgeted_export(&memories);
+
+        let mut pref_len = 0;
+        let mut dec_len = 0;
+        let mut gen_len = 0;
+        let mut in_section = "";
+        for line in result.lines() {
+            if line.starts_with("## Preferences") {
+                in_section = "pref";
+            } else if line.starts_with("## Decisions") {
+                in_section = "dec";
+            } else if line.starts_with("## General") {
+                in_section = "gen";
+            } else if let Some(entry) = line.strip_prefix("- ") {
+                match in_section {
+                    "pref" => pref_len = entry.len(),
+                    "dec" => dec_len = entry.len(),
+                    "gen" => gen_len = entry.len(),
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(
+            pref_len <= MAX_PREFERENCE_BYTES + 3,
+            "Preference entry too long: {}",
+            pref_len
+        );
+        assert!(
+            dec_len <= MAX_DECISION_BYTES + 3,
+            "Decision entry too long: {}",
+            dec_len
+        );
+        assert!(
+            gen_len <= MAX_GENERAL_BYTES + 3,
+            "General entry too long: {}",
+            gen_len
+        );
+        // Decision limit (200) is higher than preference limit (150)
+        assert!(
+            dec_len > pref_len,
+            "Decision ({}) should be longer than preference ({})",
+            dec_len,
+            pref_len
+        );
     }
 
     #[test]
@@ -245,10 +378,7 @@ mod tests {
         let memories: Vec<RankedMemory> = (0..300)
             .map(|i| {
                 make_memory(
-                    &format!(
-                        "Memory number {} with some padding text to take up space",
-                        i
-                    ),
+                    &format!("Memory number {} with some padding text to take up space", i),
                     "general",
                     None,
                     300.0 - i as f64,
@@ -257,7 +387,13 @@ mod tests {
             .collect();
 
         let result = build_budgeted_export(&memories);
-        assert!(result.len() <= CLAUDE_LOCAL_BYTE_BUDGET + 200); // small tolerance for final section newline
+        // Total char cap is 4000
+        assert!(
+            result.len() <= TOTAL_CHAR_CAP,
+            "Output {} exceeds char cap {}",
+            result.len(),
+            TOTAL_CHAR_CAP
+        );
         // Should have some entries but not all 300
         let entry_count = result.lines().filter(|l| l.starts_with("- ")).count();
         assert!(entry_count > 0);
@@ -271,15 +407,14 @@ mod tests {
         let memories = vec![make_memory(&huge, "general", None, 100.0)];
         let result = build_budgeted_export(&memories);
 
-        // Should still produce output — the memory gets truncated to MAX_MEMORY_BYTES
+        // Should still produce output -- the memory gets truncated per-type
         assert!(result.contains("## General"));
         assert!(result.contains("..."));
     }
 
     #[test]
     fn test_budgeted_export_skip_dont_break() {
-        // First memory is moderately large, second is small — both should fit
-        // even if we need to skip some in between
+        // First memory is moderately large (gets truncated to 150), second is small
         let memories = vec![
             make_memory(&"a".repeat(400), "preference", Some("preference"), 10.0),
             make_memory("small", "general", None, 5.0),
@@ -293,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_budgeted_export_category_fallback_classification() {
-        // fact_type is "general" but category is "decision" — should go to Decisions
+        // fact_type is "general" but category is "decision" -- should go to Decisions
         let memories = vec![make_memory(
             "Chose REST over GraphQL",
             "general",
@@ -321,8 +456,8 @@ mod tests {
 
     #[test]
     fn test_budgeted_export_deduplicates_truncated_variants() {
-        // Two memories with same prefix but different suffixes beyond 500 bytes
-        // After truncation to MAX_MEMORY_BYTES, they share the same first 100 chars
+        // Two memories with same prefix but different suffixes beyond truncation limit
+        // After truncation, they share the same first 100 chars
         let base = "A".repeat(100);
         let mem1 = format!("{}BBB", base);
         let mem2 = format!("{}CCC", base);
@@ -337,27 +472,24 @@ mod tests {
     }
 
     #[test]
-    fn test_budgeted_export_dedup_is_per_section() {
-        // Two memories with identical first 100 chars but different sections
-        // should both appear (Codex finding L1 / QA-hardening M1).
+    fn test_budgeted_export_dedup_is_cross_section() {
+        // Two memories with identical first 100 chars in different sections
+        // should be deduplicated globally -- only the higher-hotness one survives
         let content = "A".repeat(100);
         let memories = vec![
             make_memory(&content, "preference", Some("preference"), 10.0),
             make_memory(&content, "decision", Some("decision"), 8.0),
         ];
         let result = build_budgeted_export(&memories);
-        assert!(
-            result.contains("## Preferences"),
-            "Preference entry should be present"
-        );
-        assert!(
-            result.contains("## Decisions"),
-            "Decision entry should be present"
-        );
+        // Only the preference entry (higher hotness) should appear
         let entry_count = result.lines().filter(|l| l.starts_with("- ")).count();
         assert_eq!(
-            entry_count, 2,
-            "Same content in different sections should not be deduped"
+            entry_count, 1,
+            "Cross-section duplicates should be deduplicated"
+        );
+        assert!(
+            result.contains("## Preferences"),
+            "Higher-hotness entry should be kept"
         );
     }
 
@@ -371,5 +503,96 @@ mod tests {
         )];
         let result = build_budgeted_export(&memories);
         assert!(result.contains("## Patterns"));
+    }
+
+    #[test]
+    fn test_line_cap_enforced() {
+        // Create enough memories to exceed 150 lines
+        let memories: Vec<RankedMemory> = (0..200)
+            .map(|i| make_memory(&format!("Unique memory {}", i), "general", None, 200.0 - i as f64))
+            .collect();
+
+        let result = build_budgeted_export(&memories);
+        let line_count = result.lines().count();
+        assert!(
+            line_count <= MAX_OUTPUT_LINES,
+            "Output has {} lines, exceeds cap {}",
+            line_count,
+            MAX_OUTPUT_LINES
+        );
+    }
+
+    #[test]
+    fn test_char_cap_enforced() {
+        // Create enough content to exceed 4000 chars
+        let memories: Vec<RankedMemory> = (0..100)
+            .map(|i| {
+                make_memory(
+                    &format!("Memory {} with enough text to consume chars quickly", i),
+                    "general",
+                    None,
+                    100.0 - i as f64,
+                )
+            })
+            .collect();
+
+        let result = build_budgeted_export(&memories);
+        assert!(
+            result.len() <= TOTAL_CHAR_CAP,
+            "Output {} chars exceeds cap {}",
+            result.len(),
+            TOTAL_CHAR_CAP
+        );
+    }
+
+    #[test]
+    fn test_prefix_similarity_identical() {
+        assert!((prefix_similarity("hello world", "hello world") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_prefix_similarity_completely_different() {
+        assert!(prefix_similarity("aaaa", "bbbb") < 0.01);
+    }
+
+    #[test]
+    fn test_prefix_similarity_partial_match() {
+        // 8 out of 10 chars match
+        let sim = prefix_similarity("abcdefghXX", "abcdefghYY");
+        assert!(sim > 0.79 && sim < 0.81, "Expected ~0.8, got {}", sim);
+    }
+
+    #[test]
+    fn test_prefix_similarity_empty() {
+        assert!((prefix_similarity("", "") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_enforce_char_cap_short_input() {
+        let input = "short\n";
+        assert_eq!(enforce_char_cap(input, 4000), input);
+    }
+
+    #[test]
+    fn test_enforce_char_cap_truncates() {
+        let input = "line1\nline2\nline3\nline4\n";
+        let result = enforce_char_cap(input, 12);
+        // Should fit "line1\nline2\n" = 12 chars
+        assert!(result.len() <= 12);
+        assert!(result.contains("line1"));
+    }
+
+    #[test]
+    fn test_dedup_allows_sufficiently_different_content() {
+        // Two memories that share <80% of first 100 chars should both appear
+        let mem1 = format!("AAA{}", "X".repeat(97));
+        let mem2 = format!("BBB{}", "Y".repeat(97));
+        let memories = vec![
+            make_memory(&mem1, "general", None, 10.0),
+            make_memory(&mem2, "general", None, 8.0),
+        ];
+        let result = build_budgeted_export(&memories);
+        let entry_count = result.lines().filter(|l| l.starts_with("- ")).count();
+        assert_eq!(entry_count, 2, "Different content should not be deduped");
     }
 }

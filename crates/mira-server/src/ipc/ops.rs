@@ -959,49 +959,16 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
 
     let config = manager.config().clone();
 
-    // Gate proactive + cross-project: skip for simple commands or out-of-bounds length
-    let is_simple = crate::context::is_simple_command(message);
-    let msg_len = message.trim().len();
-    let in_bounds = msg_len >= config.min_message_len && msg_len <= config.max_message_len;
-    let session_opt = if session_id.is_empty() {
-        None
-    } else {
-        Some(session_id)
-    };
-
-    // Run context gathering concurrently
+    // Proactive suggestions and cross-project context disabled by default --
+    // low priority (0.50/0.55) and noisy. Skipped to reduce token overhead.
+    // TODO: Re-enable when gated behind an explicit user preference.
+    // When re-enabling, restore the is_simple / in_bounds / session_opt gates
+    // that were here before (see git history).
     let (reactive, proactive, team, cross_project) = tokio::join!(
         manager.get_context_for_message(message, session_id),
-        async {
-            if let Some(pid) = project_id
-                && !is_simple
-                && in_bounds
-            {
-                return crate::hooks::user_prompt::get_proactive_context(
-                    &server.pool,
-                    pid,
-                    project_path.as_deref(),
-                    session_opt,
-                )
-                .await;
-            }
-            None
-        },
+        async { None::<String> },
         crate::hooks::user_prompt::get_team_context(&server.pool, session_id),
-        async {
-            if let Some(pid) = project_id
-                && !is_simple
-            {
-                return crate::hooks::user_prompt::get_cross_project_context(
-                    &server.pool,
-                    &server.embeddings,
-                    pid,
-                    message,
-                )
-                .await;
-            }
-            None
-        },
+        async { None::<String> },
     );
 
     let sources: Vec<&str> = reactive.sources.iter().map(|s| s.name()).collect();

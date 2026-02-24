@@ -37,6 +37,8 @@ pub(crate) async fn log_behavior(
 }
 
 /// Get proactive context from pondering-based insights and pre-generated suggestions
+// TODO: Remove allow(dead_code) when proactive context is re-enabled behind user preference
+#[allow(dead_code)]
 pub(crate) async fn get_proactive_context(
     pool: &Arc<DatabasePool>,
     project_id: i64,
@@ -251,7 +253,7 @@ fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) ->
         budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
     }
 
-    let hook_budget = BudgetManager::with_limit(ctx.config_max_chars.saturating_mul(2).max(3000));
+    let hook_budget = BudgetManager::with_limit(ctx.config_max_chars.max(3000));
     let budget_result = hook_budget.apply_budget_prioritized(budget_entries);
     let final_context = budget_result.content;
 
@@ -296,7 +298,6 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     };
     let env_config = EnvConfig::load();
     let embeddings = get_embeddings(Some(pool.clone()));
-    let embeddings_for_cross_project = embeddings.clone();
     let fuzzy = if env_config.fuzzy_search {
         Some(Arc::new(FuzzyCache::new()))
     } else {
@@ -337,52 +338,15 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
         .get_context_for_message(user_message, session_id)
         .await;
 
-    // Get proactive predictions if enabled.
-    let session_id_for_proactive = if session_id.is_empty() {
-        None
-    } else {
-        Some(session_id)
-    };
-    let proactive_context: Option<String> = if let Some(project_id) = project_id {
-        if crate::context::is_simple_command(user_message) {
-            tracing::debug!("[mira] Proactive context skipped: simple command");
-            None
-        } else {
-            let config = manager.config();
-            let msg_len = user_message.trim().len();
-            if msg_len < config.min_message_len || msg_len > config.max_message_len {
-                tracing::debug!("[mira] Proactive context skipped: message length out of bounds");
-                None
-            } else {
-                get_proactive_context(
-                    &pool,
-                    project_id,
-                    project_path.as_deref(),
-                    session_id_for_proactive,
-                )
-                .await
-            }
-        }
-    } else {
-        None
-    };
+    // Proactive suggestions disabled by default -- low priority (0.50) and noisy.
+    // TODO: Re-enable when gated behind an explicit user preference
+    // (e.g. memory(action="remember", content="enable proactive suggestions")).
+    let proactive_context: Option<String> = None;
 
-    // Cross-project knowledge: search memories from other projects
-    let cross_project_context: Option<String> = if let Some(project_id) = project_id {
-        if crate::context::is_simple_command(user_message) {
-            None
-        } else {
-            get_cross_project_context(
-                &pool,
-                &embeddings_for_cross_project,
-                project_id,
-                user_message,
-            )
-            .await
-        }
-    } else {
-        None
-    };
+    // Cross-project context disabled by default -- low priority (0.55) and noisy.
+    // TODO: Re-enable when gated behind an explicit user preference
+    // (e.g. memory(action="remember", content="enable cross-project context")).
+    let cross_project_context: Option<String> = None;
 
     // Get pending native tasks
     let task_context = get_task_context(project_label);
@@ -439,7 +403,7 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     }
 
     let hook_budget = crate::context::BudgetManager::with_limit(
-        manager.config().max_chars.saturating_mul(2).max(3000),
+        manager.config().max_chars.max(3000),
     );
     let budget_result = hook_budget.apply_budget_prioritized(budget_entries);
     let final_context = budget_result.content;
@@ -650,6 +614,8 @@ pub(crate) async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str)
 /// First tries tight "you solved this" matching (decisions/patterns, distance < 0.25),
 /// then falls back to general cross-project recall (distance < 0.35).
 /// Returns formatted context string or None if no relevant matches.
+// TODO: Remove allow(dead_code) when cross-project context is re-enabled behind user preference
+#[allow(dead_code)]
 pub(crate) async fn get_cross_project_context(
     pool: &Arc<DatabasePool>,
     embeddings: &Option<Arc<EmbeddingClient>>,
@@ -778,7 +744,7 @@ mod tests {
             let len = msg.trim().len();
             len >= config.min_message_len && len <= config.max_message_len
         };
-        // Too short (< 30 chars)
+        // Too short (< 50 chars)
         assert!(!check("short"));
         // Too long (> 500 chars)
         assert!(!check(&"x".repeat(501)));

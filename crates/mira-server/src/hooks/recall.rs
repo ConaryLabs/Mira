@@ -6,11 +6,11 @@ use crate::utils::{prepare_recall_query, truncate_at_boundary};
 use std::sync::Arc;
 
 /// Strong threshold for hook recall -- only high-confidence matches.
-const STRONG_THRESHOLD: f32 = 0.7;
+const STRONG_THRESHOLD: f32 = 0.85;
 
 /// Weak threshold for hook recall -- stricter than MCP tool (0.85)
 /// because hooks auto-inject context and need higher precision.
-const WEAK_THRESHOLD: f32 = 0.80;
+const WEAK_THRESHOLD: f32 = 0.90;
 
 /// Maximum number of memories to return from recall
 const MAX_RECALL_RESULTS: usize = 3;

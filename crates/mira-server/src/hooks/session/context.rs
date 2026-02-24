@@ -2,7 +2,13 @@
 //! Session context builders: startup and resume context injection.
 
 use crate::db::pool::DatabasePool;
+use crate::utils::truncate_at_boundary;
 use std::sync::Arc;
+
+/// Hard cap on SessionStart output to prevent bloated context injection.
+/// A loaded resume with compaction context + goals + incomplete tasks can
+/// exceed 3000 chars without this limit.
+const MAX_SESSION_CONTEXT_CHARS: usize = 2500;
 
 /// Build lightweight context for a fresh startup session.
 /// Includes active goals and a brief note about the last session.
@@ -136,7 +142,8 @@ pub(crate) async fn build_startup_context(
         return None;
     }
 
-    Some(context_parts.join("\n\n"))
+    let output = context_parts.join("\n\n");
+    Some(truncate_session_context(output))
 }
 
 /// Build context for a resumed session
@@ -386,10 +393,11 @@ pub(crate) async fn build_resume_context(
         return None;
     }
 
-    Some(format!(
+    let output = format!(
         "**Resuming session** - Here's context from your previous work:\n\n{}",
         context_parts.join("\n\n")
-    ))
+    );
+    Some(truncate_session_context(output))
 }
 
 // get_session_modified_files_sync is now in hooks/mod.rs
@@ -533,4 +541,19 @@ pub(super) fn infer_activity_from_tools(tools: &[&str]) -> String {
     } else {
         String::new()
     }
+}
+
+/// Enforce hard output budget on session context.
+/// Truncates at a UTF-8 safe boundary and appends `\n...` if over the limit.
+fn truncate_session_context(output: String) -> String {
+    if output.len() <= MAX_SESSION_CONTEXT_CHARS {
+        return output;
+    }
+    let mut truncated = truncate_at_boundary(&output, MAX_SESSION_CONTEXT_CHARS).to_string();
+    // Avoid mid-line truncation by finding the last newline
+    if let Some(pos) = truncated.rfind('\n') {
+        truncated.truncate(pos);
+    }
+    truncated.push_str("\n...");
+    truncated
 }
