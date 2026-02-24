@@ -43,6 +43,7 @@ Get expert opinions on code, architecture, security, or plans using a team of AI
    Task(
      subagent_type=member.agent_type,
      name=member.name,
+     model=member.model,  // "sonnet" for read-only agents, omit if null
      team_name="expert-review-{timestamp}",
      prompt=member.prompt + "\n\n## Context\n\n" + user_context,
      run_in_background=true
@@ -51,6 +52,7 @@ Get expert opinions on code, architecture, security, or plans using a team of AI
    Spawn all experts in parallel (multiple Task calls in one message).
 
    IMPORTANT: Do NOT use mode="bypassPermissions" -- these are read-only discovery agents.
+   IMPORTANT: Always pass the member's `model` field to the Task tool. This ensures read-only agents use a cost-efficient model while implementation agents inherit the parent model.
 
 7. **Wait for findings**: Teammates will send their findings via SendMessage when complete. Wait for all to finish.
 

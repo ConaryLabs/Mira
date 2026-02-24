@@ -31,6 +31,9 @@ struct RecipeMember {
     name: &'static str,
     agent_type: &'static str,
     prompt: &'static str,
+    /// Suggested model for this member. None = inherit parent model.
+    /// "sonnet" for read-only analysis agents, None for implementation agents.
+    model: Option<&'static str>,
 }
 
 struct RecipeTask {
@@ -109,6 +112,7 @@ fn action_get(name: Option<String>) -> Result<Json<RecipeOutput>, MiraError> {
             name: m.name.to_string(),
             agent_type: m.agent_type.to_string(),
             prompt: m.prompt.to_string(),
+            model: m.model.map(|s| s.to_string()),
         })
         .collect();
 

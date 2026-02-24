@@ -39,6 +39,7 @@ Production readiness review with 5 specialists: test runner, error auditor, secu
    Task(
      subagent_type=member.agent_type,
      name=member.name,
+     model=member.model,  // "sonnet" for read-only agents, omit if null
      team_name="qa-hardening-{timestamp}",
      prompt=member.prompt + "\n\n## Context\n\n" + user_context,
      run_in_background=true
@@ -46,6 +47,7 @@ Production readiness review with 5 specialists: test runner, error auditor, secu
    ```
    Spawn all agents in parallel (multiple Task calls in one message).
    IMPORTANT: Do NOT use `mode="bypassPermissions"` — these are read-only discovery agents.
+   IMPORTANT: Always pass the member's `model` field to the Task tool. This ensures read-only agents use a cost-efficient model while implementation agents inherit the parent model.
 
 7. **Assign tasks**: Use `TaskUpdate` to assign each task to its corresponding agent.
 

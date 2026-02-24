@@ -44,6 +44,7 @@ End-to-end expert review with automatic implementation and QA verification.
    Task(
      subagent_type=member.agent_type,
      name=member.name,
+     model=member.model,  // "sonnet" for read-only agents, omit if null
      team_name="full-cycle-{timestamp}",
      prompt=member.prompt + "\n\n## Context\n\n" + user_context,
      run_in_background=true
@@ -51,6 +52,7 @@ End-to-end expert review with automatic implementation and QA verification.
    ```
    Spawn all discovery experts in parallel (multiple Task calls in one message).
    IMPORTANT: Do NOT use `mode="bypassPermissions"` for discovery agents — they are read-only explorers.
+   IMPORTANT: Always pass the member's `model` field to the Task tool. This ensures read-only agents use a cost-efficient model while implementation agents inherit the parent model.
 
 6. **Create and assign discovery tasks**: For each discovery task in the recipe:
    ```
@@ -110,6 +112,7 @@ End-to-end expert review with automatic implementation and QA verification.
     Task(
       subagent_type="general-purpose",
       name=member.name,
+      model=member.model,  // "sonnet" for QA agents, omit if null
       team_name="full-cycle-{timestamp}",
       prompt=member.prompt + "\n\n## Changes Made\n\n" + summary_of_changes,
       run_in_background=true,

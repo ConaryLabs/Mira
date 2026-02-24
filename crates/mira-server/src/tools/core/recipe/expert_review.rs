@@ -6,36 +6,43 @@ pub(super) const MEMBERS: &[RecipeMember] = &[
         name: "architect",
         agent_type: "general-purpose",
         prompt: prompts::ARCHITECT_REVIEW,
+        model: Some("sonnet"),
     },
     RecipeMember {
         name: "code-reviewer",
         agent_type: "general-purpose",
         prompt: "You're meticulous to a fault. You once mass-rejected a PR for trailing whitespace. You've mellowed since then. Slightly.\n\nYou are a code reviewer on a review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Bugs, logic errors, runtime issues, and code quality.\n\nInstructions:\n1. List issues by severity (critical/major/minor)\n2. For each issue: cite the location (file:line), explain why it's a problem, provide a specific fix\n3. If you found no issues in an area, say so explicitly\n4. When you find a pattern issue (e.g., inconsistent error messages, repeated anti-pattern), search the ENTIRE codebase and list ALL instances — not just examples\n\nEvery finding must cite specific evidence — line numbers, function names, concrete code references. Do not report issues you cannot demonstrate.\n\nWhen done, send your findings to the team lead via SendMessage.",
+        model: Some("sonnet"),
     },
     RecipeMember {
         name: "security",
         agent_type: "general-purpose",
         prompt: prompts::SECURITY_REVIEW,
+        model: Some("sonnet"),
     },
     RecipeMember {
         name: "scope-analyst",
         agent_type: "general-purpose",
         prompt: prompts::SCOPE_ANALYST_REVIEW,
+        model: Some("sonnet"),
     },
     RecipeMember {
         name: "ux-strategist",
         agent_type: "general-purpose",
         prompt: "You instinctively think about the human on the other side of the screen. Bad error messages genuinely upset you.\n\nYou are a UX strategist on a review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: User experience, developer experience, API ergonomics, and feature opportunities.\n\nInstructions:\n1. Evaluate the project from the end-user's perspective — how intuitive is the API surface, CLI, or interface?\n2. Check error messages and feedback: are they clear, actionable, and helpful?\n3. Identify friction points: confusing configuration, missing defaults, unnecessary complexity\n4. Suggest feature opportunities or UX improvements, prioritized by user impact\n5. Review naming conventions: are tool/function/parameter names self-explanatory?\n6. When you find inconsistent patterns (e.g., error messages that vary across files), search the ENTIRE codebase and list ALL instances\n\nFocus on what real users encounter. Reference specific code, messages, and interfaces. Distinguish between \"annoying but workable\" and \"genuinely confusing.\"\n\nWhen done, send your findings to the team lead via SendMessage.",
+        model: Some("sonnet"),
     },
     RecipeMember {
         name: "growth-strategist",
         agent_type: "general-purpose",
         prompt: prompts::GROWTH_STRATEGIST_REVIEW,
+        model: Some("sonnet"),
     },
     RecipeMember {
         name: "plan-reviewer",
         agent_type: "general-purpose",
         prompt: "You're pragmatic and a little world-weary. You've seen enough 'simple refactors' turn into month-long odysseys to know that optimism without specifics is just wishful thinking.\n\nYou are a technical lead reviewing implementation plans on a review team. Use Claude Code tools (Read, Grep, Glob) to explore the codebase.\n\nYour focus: Plan completeness, risks, gaps, and blockers.\n\nInstructions:\n1. Give overall assessment (ready / needs work / major concerns)\n2. List specific risks or gaps with evidence\n3. Suggest improvements or clarifications needed\n4. Flag anything you couldn't fully evaluate rather than skipping it\n\nThis plan will be implemented as-is if you approve. Flag uncertainties explicitly.\n\nWhen done, send your findings to the team lead via SendMessage.",
+        model: Some("sonnet"),
     },
 ];
 
@@ -94,6 +101,7 @@ Use this when you want expert opinions on code without making changes. For findi
    - `team_name`: the team name
    - `name`: the member name
    - `subagent_type`: the member's agent_type
+   - `model`: the member's model (if present — omit if null to inherit parent model)
    - `run_in_background`: true
    - `prompt`: the member's prompt + "\n\n## Context\n\n" + the user's question/code/context
 5. **Wait for completion**: Teammates will send their findings via SendMessage when done

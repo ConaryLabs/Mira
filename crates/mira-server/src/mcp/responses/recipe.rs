@@ -39,6 +39,9 @@ pub struct RecipeMemberData {
     pub name: String,
     pub agent_type: String,
     pub prompt: String,
+    /// Suggested model for this member. None = inherit parent model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

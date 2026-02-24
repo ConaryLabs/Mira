@@ -39,12 +39,14 @@ Architect-planned, reviewer-validated code restructuring with per-step compilati
    Task(
      subagent_type="general-purpose",
      name="architect",
+     model=member.model,  // "sonnet" for read-only agents, omit if null
      team_name="refactor-{timestamp}",
      prompt=architect_prompt + "\n\n## Refactoring Goal\n\n" + user_context,
      run_in_background=true
    )
    ```
    IMPORTANT: Do NOT use `mode="bypassPermissions"` — the architect is read-only.
+   IMPORTANT: Always pass the member's `model` field to the Task tool.
 
 6. **Create and assign** the analysis task using `TaskCreate` + `TaskUpdate`.
 
