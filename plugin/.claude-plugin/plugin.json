@@ -1,7 +1,7 @@
 {
   "name": "mira",
   "description": "Persistent memory, semantic code intelligence, team recipes, and proactive context injection for Claude Code.",
-  "version": "0.8.10",
+  "version": "0.8.11",
   "author": {
     "name": "Peter Permenter"
   },
