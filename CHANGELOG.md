@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.12] - 2026-02-24
+
+### Fixed
+- **Token overhead reduction** -- Cut UserPromptSubmit budget multiplier, raised PreToolUse semantic thresholds, added 2500-char SessionStart cap, and tightened CLAUDE.local.md export (per-type truncation, dedup, line/char caps, newline normalization).
+- **Proactive/cross-project context gates** -- Restored quality gates (simple command skip, message length bounds). Both features now default to off and require explicit opt-in via stored preference (`key=proactive:enabled`). Cross-project recall requires a resolved project ID to prevent leaking unrelated memories.
+
+---
+
 ## [0.8.11] - 2026-02-24
 
 ### Added
