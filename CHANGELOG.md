@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.11] - 2026-02-24
+
+### Added
+- **Context bundling for agent teams** -- New `code(action="bundle")` packages module summaries, symbols, dependencies, and code snippets into a budget-constrained markdown digest for agent spawn prompts. Reduces redundant file re-reading when launching agentic teams. Supports scope (path or concept), configurable budget (default 6000 chars), and three depth levels (overview, standard, deep). Includes semantic search fallback for concept-based scopes.
+
+---
+
 ## [0.8.10] - 2026-02-24
 
 ### Changed
