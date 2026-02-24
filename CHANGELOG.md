@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.10] - 2026-02-24
+
+### Changed
+- **Cost-efficient agent routing** -- Recipe members now include a `model` field. Read-only discovery and analysis agents use Sonnet instead of inheriting the parent Opus model, significantly reducing cost and latency for agentic team workflows. Implementation agents that write code still inherit the parent model.
+
+---
+
 ## [0.8.9] - 2026-02-20
 
 ### Fixed
