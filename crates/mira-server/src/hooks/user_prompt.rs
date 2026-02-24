@@ -425,9 +425,8 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
         budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
     }
 
-    let hook_budget = crate::context::BudgetManager::with_limit(
-        manager.config().max_chars.max(3000),
-    );
+    let hook_budget =
+        crate::context::BudgetManager::with_limit(manager.config().max_chars.max(3000));
     let budget_result = hook_budget.apply_budget_prioritized(budget_entries);
     let final_context = budget_result.content;
 
@@ -649,9 +648,7 @@ pub(crate) async fn get_cross_project_context(
     let pid = project_id;
     let config_enabled = pool_check
         .interact(move |conn| {
-            Ok::<_, anyhow::Error>(
-                crate::proactive::get_proactive_config(conn, None, pid).enabled,
-            )
+            Ok::<_, anyhow::Error>(crate::proactive::get_proactive_config(conn, None, pid).enabled)
         })
         .await
         .unwrap_or(false);

@@ -1,7 +1,7 @@
 // crates/mira-server/src/tools/core/claude_local/export.rs
 // CLAUDE.local.md export: budget-aware, deduplicated markdown generation
 
-use crate::db::{fetch_ranked_memories_for_export_sync, RankedMemory};
+use crate::db::{RankedMemory, fetch_ranked_memories_for_export_sync};
 use crate::error::MiraError;
 use crate::tools::core::ToolContext;
 use std::path::Path;
@@ -382,7 +382,10 @@ mod tests {
         let memories: Vec<RankedMemory> = (0..300)
             .map(|i| {
                 make_memory(
-                    &format!("Memory number {} with some padding text to take up space", i),
+                    &format!(
+                        "Memory number {} with some padding text to take up space",
+                        i
+                    ),
                     "general",
                     None,
                     300.0 - i as f64,
@@ -513,7 +516,14 @@ mod tests {
     fn test_line_cap_enforced() {
         // Create enough memories to exceed 150 lines
         let memories: Vec<RankedMemory> = (0..200)
-            .map(|i| make_memory(&format!("Unique memory {}", i), "general", None, 200.0 - i as f64))
+            .map(|i| {
+                make_memory(
+                    &format!("Unique memory {}", i),
+                    "general",
+                    None,
+                    200.0 - i as f64,
+                )
+            })
             .collect();
 
         let result = build_budgeted_export(&memories);
