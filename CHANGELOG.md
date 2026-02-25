@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.13] - 2026-02-24
+
+### Added
+- **Token efficiency improvements** -- PreToolUse file-read cache with reread advisory for unchanged files, symbol hints for large files (>200 lines) from code index, batch-aware cooldown with injection summary replay, cross-prompt injection dedup via content hashing, post-compaction context recovery from session snapshots.
+- **Type-aware subagent budgets** -- Narrow agents (Explore, code-reviewer) get 800-char context cap vs 2000 for full agents. Goals skipped for narrow subagents.
+- **Tighter keyword recall** -- Minimum 2 keywords with AND-join to reduce false memory injections.
+- **`/mira:efficiency` skill** -- Dashboard showing active token-saving mechanisms.
+- **Injection telemetry** -- Stop hook logs 24h hit/miss rate for injection feedback tracking.
+
+### Fixed
+- **Post-compaction recovery** -- Fixed query to extract compaction_context from snapshot JSON blob instead of nonexistent column. Flag consumed only after successful extraction.
+- **Symbol hints path matching** -- Reverse LIKE for absolute-to-relative path matching, removed over-broad basename fallback.
+- **Session ID sanitization** -- All temp file paths now filter session_id to alphanumeric + hyphens, preventing path traversal.
+- **Atomic state writes** -- Read cache and injection dedup state files use temp+rename pattern with 0o600 permissions.
+- **Stable content hashing** -- Replaced DefaultHasher with FNV-1a for cross-compilation stability in injection dedup.
+- **UTF-8 safe truncation** -- Injection summary and session ID slicing use char-boundary-safe operations.
+- **Cooldown arithmetic** -- Use saturating_sub to prevent underflow on clock skew.
+
+---
+
 ## [0.8.12] - 2026-02-24
 
 ### Fixed
