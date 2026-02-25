@@ -320,16 +320,8 @@ impl super::HookClient {
                 .get("reactive_skip_reason")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            proactive_context: v
-                .get("proactive_context")
-                .and_then(|v| v.as_str())
-                .map(String::from),
             team_context: v
                 .get("team_context")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            cross_project_context: v
-                .get("cross_project_context")
                 .and_then(|v| v.as_str())
                 .map(String::from),
             config_max_chars: v

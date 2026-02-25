@@ -1,12 +1,12 @@
 // crates/mira-server/src/tools/core/session/analytics.rs
 //! Analytics queries: error patterns, health trends, session lineage, capabilities.
 
-use crate::db::{get_error_patterns_sync, get_health_history_sync, get_session_lineage_sync};
+use crate::db::{get_error_patterns_sync, get_session_lineage_sync};
 use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    CapabilitiesData, CapabilityStatus, ErrorPatternItem, ErrorPatternsData, HealthSnapshotItem,
-    HealthTrendsData, LineageSession, SessionData, SessionLineageData, SessionOutput,
+    CapabilitiesData, CapabilityStatus, ErrorPatternItem, ErrorPatternsData, HealthTrendsData,
+    LineageSession, SessionData, SessionLineageData, SessionOutput,
 };
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::truncate_at_boundary;
@@ -73,126 +73,18 @@ pub(super) async fn get_error_patterns<C: ToolContext>(
     }))
 }
 
-/// Query health snapshot trends for the active project.
+/// Health trends have been removed (health snapshots table dropped).
+/// Returns a message explaining the removal.
 pub(super) async fn get_health_trends<C: ToolContext>(
-    ctx: &C,
-    limit: Option<i64>,
+    _ctx: &C,
+    _limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, MiraError> {
-    let project = ctx.get_project().await;
-    let project_id = project
-        .as_ref()
-        .map(|p| p.id)
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
-
-    let limit = limit.unwrap_or(10).clamp(1, 50) as usize;
-
-    let snapshots = ctx
-        .pool()
-        .run(move |conn| get_health_history_sync(conn, project_id, limit))
-        .await?;
-
-    if snapshots.is_empty() {
-        return Ok(Json(SessionOutput {
-            action: "health_trends".into(),
-            message: "No health snapshots found.\n\nRun a health scan first: `mira tool index '{\"action\":\"health\"}'`".to_string(),
-            data: Some(SessionData::HealthTrends(HealthTrendsData {
-                snapshots: vec![],
-                trend: None,
-            })),
-        }));
-    }
-
-    // Snapshots are newest-first from DB; reverse for chronological display
-    let chronological: Vec<_> = snapshots.iter().rev().collect();
-
-    // Calculate trend by comparing first and last snapshot avg_debt_score
-    let trend = if chronological.len() >= 2 {
-        let Some(first_snap) = chronological.first() else {
-            unreachable!()
-        };
-        let Some(last_snap) = chronological.last() else {
-            unreachable!()
-        };
-        let first = first_snap.avg_debt_score;
-        let last = last_snap.avg_debt_score;
-        if first == 0.0 {
-            Some("stable".to_string())
-        } else {
-            let delta_pct = ((last - first) / first) * 100.0;
-            if delta_pct < -5.0 {
-                Some("improving".to_string())
-            } else if delta_pct > 5.0 {
-                Some("degrading".to_string())
-            } else {
-                Some("stable".to_string())
-            }
-        }
-    } else {
-        None
-    };
-
-    // Build human-readable message
-    let mut output = format!("## Health Trends ({} snapshots)\n\n", chronological.len());
-
-    if let Some(ref t) = trend {
-        output.push_str(&format!("Overall trend: **{}**\n\n", t));
-    }
-
-    output.push_str("| Date | Modules | Avg Debt | Max Debt | Warnings | TODOs | Findings |\n");
-    output.push_str("|------|---------|----------|----------|----------|-------|----------|\n");
-
-    for snap in &chronological {
-        output.push_str(&format!(
-            "| {} | {} | {:.1} | {:.1} | {} | {} | {} |\n",
-            snap.snapshot_at,
-            snap.module_count,
-            snap.avg_debt_score,
-            snap.max_debt_score,
-            snap.warning_count,
-            snap.todo_count,
-            snap.total_finding_count,
-        ));
-    }
-
-    // Show delta summary if we have multiple snapshots
-    if chronological.len() >= 2 {
-        let Some(first) = chronological.first() else {
-            unreachable!()
-        };
-        let Some(last) = chronological.last() else {
-            unreachable!()
-        };
-        output.push_str(&format!(
-            "\nDelta: avg debt {:.1} \u{2192} {:.1}, modules {} \u{2192} {}, findings {} \u{2192} {}\n",
-            first.avg_debt_score,
-            last.avg_debt_score,
-            first.module_count,
-            last.module_count,
-            first.total_finding_count,
-            last.total_finding_count,
-        ));
-    }
-
-    let items: Vec<HealthSnapshotItem> = chronological
-        .iter()
-        .map(|snap| HealthSnapshotItem {
-            snapshot_at: snap.snapshot_at.clone(),
-            module_count: snap.module_count,
-            avg_debt_score: snap.avg_debt_score,
-            max_debt_score: snap.max_debt_score,
-            tier_distribution: snap.tier_distribution.clone(),
-            warning_count: snap.warning_count,
-            todo_count: snap.todo_count,
-            total_finding_count: snap.total_finding_count,
-        })
-        .collect();
-
     Ok(Json(SessionOutput {
         action: "health_trends".into(),
-        message: output,
+        message: "Health trends have been removed. Health snapshots were based on heuristic scoring that has been replaced by concrete signals (cargo check warnings and unused function detection via call graph).".to_string(),
         data: Some(SessionData::HealthTrends(HealthTrendsData {
-            snapshots: items,
-            trend,
+            snapshots: vec![],
+            trend: None,
         })),
     }))
 }

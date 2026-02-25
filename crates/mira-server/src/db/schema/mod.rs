@@ -149,12 +149,12 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 25,
             name: "tech_debt_scores",
-            func: migrate_tech_debt_scores,
+            func: |_| Ok(()), // Table dropped in migration v50
         },
         Migration {
             version: 26,
             name: "module_conventions",
-            func: migrate_module_conventions,
+            func: |_| Ok(()), // Table dropped in migration v50
         },
         Migration {
             version: 27,
@@ -204,7 +204,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 36,
             name: "injection_feedback",
-            func: migrate_injection_feedback,
+            func: |_| Ok(()), // Table dropped in migration v48
         },
         Migration {
             version: 37,
@@ -229,7 +229,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 41,
             name: "health_snapshots_table",
-            func: migrate_health_snapshots_table,
+            func: |_| Ok(()), // Table dropped in migration v50
         },
         Migration {
             version: 42,
@@ -260,6 +260,21 @@ fn migration_registry() -> Vec<Migration> {
             version: 47,
             name: "drop_memory_tables",
             func: drop_memory_tables,
+        },
+        Migration {
+            version: 48,
+            name: "drop_injection_feedback",
+            func: drop_injection_feedback,
+        },
+        Migration {
+            version: 49,
+            name: "drop_proactive_tables",
+            func: drop_proactive_tables,
+        },
+        Migration {
+            version: 50,
+            name: "drop_heuristic_health_tables",
+            func: drop_heuristic_health_tables,
         },
     ]
 }
@@ -350,86 +365,11 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Add tech_debt_scores table for per-module composite debt scoring
-fn migrate_tech_debt_scores(conn: &Connection) -> Result<()> {
-    use crate::db::migration_helpers::create_table_if_missing;
-    create_table_if_missing(
-        conn,
-        "tech_debt_scores",
-        r#"
-        CREATE TABLE IF NOT EXISTS tech_debt_scores (
-            id INTEGER PRIMARY KEY,
-            project_id INTEGER NOT NULL,
-            module_id TEXT NOT NULL,
-            module_path TEXT NOT NULL,
-            overall_score REAL NOT NULL,
-            tier TEXT NOT NULL,
-            factor_scores TEXT NOT NULL,
-            line_count INTEGER,
-            finding_count INTEGER,
-            computed_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(project_id, module_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tech_debt_project ON tech_debt_scores(project_id);
-        CREATE INDEX IF NOT EXISTS idx_tech_debt_tier ON tech_debt_scores(project_id, tier);
-    "#,
-    )
-}
 
-/// Add module_conventions table for convention-aware context injection
-fn migrate_module_conventions(conn: &Connection) -> Result<()> {
-    use crate::db::migration_helpers::create_table_if_missing;
-    create_table_if_missing(
-        conn,
-        "module_conventions",
-        r#"
-        CREATE TABLE IF NOT EXISTS module_conventions (
-            id INTEGER PRIMARY KEY,
-            project_id INTEGER REFERENCES projects(id),
-            module_id TEXT NOT NULL,
-            module_path TEXT NOT NULL,
-            error_handling TEXT,
-            test_pattern TEXT,
-            key_imports TEXT,
-            naming TEXT,
-            detected_patterns TEXT,
-            confidence REAL DEFAULT 0.7,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(project_id, module_path)
-        );
-        CREATE INDEX IF NOT EXISTS idx_module_conventions_project ON module_conventions(project_id);
-    "#,
-    )
-}
-
-/// Add injection_feedback table for tracking whether injected context was used
-fn migrate_injection_feedback(conn: &Connection) -> Result<()> {
-    use crate::db::migration_helpers::create_table_if_missing;
-    create_table_if_missing(
-        conn,
-        "injection_feedback",
-        r#"
-        CREATE TABLE IF NOT EXISTS injection_feedback (
-            id INTEGER PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            project_id INTEGER REFERENCES projects(id),
-            sources TEXT NOT NULL,          -- JSON array of source names
-            key_terms TEXT NOT NULL,        -- JSON array of extracted key terms
-            context_len INTEGER NOT NULL,
-            was_referenced INTEGER,         -- NULL=pending, 0=not referenced, 1=referenced
-            matched_terms INTEGER,          -- count of key terms found in response
-            overlap_ratio REAL,             -- matched_terms / total key_terms
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            checked_at TEXT                 -- when feedback was evaluated
-        );
-        CREATE INDEX IF NOT EXISTS idx_injection_feedback_session
-            ON injection_feedback(session_id, created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_injection_feedback_pending
-            ON injection_feedback(was_referenced) WHERE was_referenced IS NULL;
-        CREATE INDEX IF NOT EXISTS idx_injection_feedback_project
-            ON injection_feedback(project_id, created_at DESC);
-    "#,
-    )
+/// Drop the injection_feedback table (dead code removed)
+fn drop_injection_feedback(conn: &Connection) -> Result<()> {
+    conn.execute_batch("DROP TABLE IF EXISTS injection_feedback;")?;
+    Ok(())
 }
 
 /// Deduplicate documentation_tasks and replace the partial unique index with an
@@ -506,31 +446,6 @@ fn drop_dead_tables_v3(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Add health_snapshots table for codebase evolution tracking
-fn migrate_health_snapshots_table(conn: &Connection) -> Result<()> {
-    use crate::db::migration_helpers::create_table_if_missing;
-    create_table_if_missing(
-        conn,
-        "health_snapshots",
-        r#"
-        CREATE TABLE IF NOT EXISTS health_snapshots (
-            id INTEGER PRIMARY KEY,
-            project_id INTEGER NOT NULL,
-            snapshot_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            module_count INTEGER NOT NULL,
-            avg_debt_score REAL NOT NULL,
-            max_debt_score REAL NOT NULL,
-            tier_distribution TEXT NOT NULL,
-            warning_count INTEGER DEFAULT 0,
-            todo_count INTEGER DEFAULT 0,
-            unwrap_count INTEGER DEFAULT 0,
-            error_handling_count INTEGER DEFAULT 0,
-            total_finding_count INTEGER DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_health_snap_project_time ON health_snapshots(project_id, snapshot_at);
-    "#,
-    )
-}
 
 /// Add updated_at column to goals table for accurate stale-goal detection
 fn migrate_goals_updated_at(conn: &Connection) -> Result<()> {
@@ -568,6 +483,29 @@ fn drop_memory_tables(conn: &Connection) -> Result<()> {
          DROP TABLE IF EXISTS memory_entities;
          DROP TABLE IF EXISTS vec_memory;
          DROP TABLE IF EXISTS memory_facts;",
+    )?;
+    Ok(())
+}
+
+/// Drop proactive prediction tables that are no longer used.
+/// Keeps behavior_patterns (used by insights/pondering) and session_behavior_log
+/// (used by working context, error tracking, session summaries).
+fn drop_proactive_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS proactive_interventions;
+         DROP TABLE IF EXISTS proactive_suggestions;",
+    )?;
+    Ok(())
+}
+
+/// Drop heuristic health tables no longer used: tech_debt_scores,
+/// module_conventions, health_snapshots. These were part of the heuristic
+/// code health scoring system that has been removed.
+fn drop_heuristic_health_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS tech_debt_scores;
+         DROP TABLE IF EXISTS module_conventions;
+         DROP TABLE IF EXISTS health_snapshots;",
     )?;
     Ok(())
 }

@@ -3,8 +3,7 @@
 
 use super::types::{HistoricalRisk, ImpactAnalysis, MatchedPattern};
 use crate::db::map_files_to_symbols_sync;
-use crate::proactive::PatternType;
-use crate::proactive::patterns::{PatternData, get_patterns_by_type};
+use crate::db::patterns::{PatternData, PatternType, get_patterns_by_type};
 use crate::search::find_callers;
 use std::collections::HashSet;
 

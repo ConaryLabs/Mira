@@ -575,100 +575,20 @@ mod tests {
     }
 
     // ========================================================================
-    // HealthTrends
+    // HealthTrends (stub — returns "removed" message)
     // ========================================================================
 
     #[tokio::test]
-    async fn test_health_trends_no_project() {
-        let ctx = MockToolContext::new().await;
-        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends)).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_health_trends_empty() {
+    async fn test_health_trends_returns_removed_message() {
         let ctx = MockToolContext::with_project().await;
         let result = handle_session(&ctx, make_request(SessionAction::HealthTrends))
             .await
             .unwrap();
         assert_eq!(result.0.action, "health_trends");
-        assert!(result.0.message.contains("No health snapshots"));
+        assert!(result.0.message.contains("removed"));
         match result.0.data {
             Some(SessionData::HealthTrends(data)) => {
                 assert!(data.snapshots.is_empty());
-                assert!(data.trend.is_none());
-            }
-            other => panic!("Expected SessionData::HealthTrends, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_health_trends_with_snapshots() {
-        let ctx = MockToolContext::with_project().await;
-        let pid = ctx.project_id().await.unwrap();
-
-        // Insert health snapshots
-        ctx.pool
-            .run(move |conn| {
-                conn.execute(
-                    "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score,
-                     tier_distribution, module_count, snapshot_at, warning_count, todo_count,
-                     unwrap_count, error_handling_count, total_finding_count)
-                     VALUES (?1, 3.5, 8.0, '{\"A\":5}', 10, datetime('now', '-1 day'), 2, 3, 1, 1, 7)",
-                    rusqlite::params![pid],
-                )?;
-                conn.execute(
-                    "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score,
-                     tier_distribution, module_count, snapshot_at, warning_count, todo_count,
-                     unwrap_count, error_handling_count, total_finding_count)
-                     VALUES (?1, 1.0, 3.0, '{\"A\":10}', 10, datetime('now'), 0, 1, 0, 0, 1)",
-                    rusqlite::params![pid],
-                )?;
-                Ok::<_, rusqlite::Error>(())
-            })
-            .await
-            .unwrap();
-
-        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends))
-            .await
-            .unwrap();
-        match result.0.data {
-            Some(SessionData::HealthTrends(data)) => {
-                assert_eq!(data.snapshots.len(), 2);
-                assert!(data.trend.is_some());
-                let trend = data.trend.unwrap();
-                // Debt went from 3.5 to 1.0 — should be "improving"
-                assert_eq!(trend, "improving");
-            }
-            other => panic!("Expected SessionData::HealthTrends, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_health_trends_single_snapshot_no_trend() {
-        let ctx = MockToolContext::with_project().await;
-        let pid = ctx.project_id().await.unwrap();
-
-        ctx.pool
-            .run(move |conn| {
-                conn.execute(
-                    "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score,
-                     tier_distribution, module_count, snapshot_at, warning_count, todo_count,
-                     unwrap_count, error_handling_count, total_finding_count)
-                     VALUES (?1, 2.0, 5.0, '{\"A\":8}', 8, datetime('now'), 1, 2, 0, 0, 3)",
-                    rusqlite::params![pid],
-                )?;
-                Ok::<_, rusqlite::Error>(())
-            })
-            .await
-            .unwrap();
-
-        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends))
-            .await
-            .unwrap();
-        match result.0.data {
-            Some(SessionData::HealthTrends(data)) => {
-                assert_eq!(data.snapshots.len(), 1);
                 assert!(data.trend.is_none());
             }
             other => panic!("Expected SessionData::HealthTrends, got {:?}", other),

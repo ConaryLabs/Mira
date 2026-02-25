@@ -48,17 +48,6 @@ impl PostToolInput {
 /// This hook fires after any tool that provides a file_path. We:
 /// 1. Track file access for the session (behavior logging for all tools)
 /// 2. Detect team file conflicts when write tools (Write/Edit) modify shared files
-///
-/// TODO(injection_feedback): Wire `ContextManager::record_response_feedback()` here
-/// to close the injection feedback learning loop. Challenges:
-/// - This hook runs as a separate CLI process communicating via IPC, so there is
-///   no access to `ContextInjectionManager` or `InjectionAnalytics`.
-/// - The hook input does not include response/output text to compare against.
-///
-/// To implement: add a new IPC command (e.g. `RecordResponseFeedback`) that
-/// forwards the call to `InjectionAnalytics::record_response_feedback()` on the
-/// server side, and extend the hook input to include `tool_output` or
-/// `response_text` from Claude Code's PostToolUse payload.
 pub async fn run() -> Result<()> {
     let _timer = HookTimer::start("PostToolUse");
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;

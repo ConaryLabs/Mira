@@ -19,7 +19,6 @@ pub(super) enum AllowedTable {
     BehaviorPatterns,
     Goals,
     SystemObservations,
-    HealthSnapshots,
 }
 
 impl AllowedTable {
@@ -32,7 +31,6 @@ impl AllowedTable {
             AllowedTable::BehaviorPatterns => "behavior_patterns",
             AllowedTable::Goals => "goals",
             AllowedTable::SystemObservations => "system_observations",
-            AllowedTable::HealthSnapshots => "health_snapshots",
         }
     }
 }

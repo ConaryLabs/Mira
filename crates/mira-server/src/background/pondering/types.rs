@@ -27,7 +27,6 @@ pub(crate) struct ProjectInsightData {
     pub fragile_modules: Vec<FragileModule>,
     pub revert_clusters: Vec<RevertCluster>,
     pub recurring_errors: Vec<RecurringError>,
-    pub health_trend: Option<HealthTrend>,
 }
 
 impl ProjectInsightData {
@@ -37,7 +36,6 @@ impl ProjectInsightData {
             || !self.fragile_modules.is_empty()
             || !self.revert_clusters.is_empty()
             || !self.recurring_errors.is_empty()
-            || self.health_trend.is_some()
     }
 }
 
@@ -84,21 +82,3 @@ pub(crate) struct RecurringError {
     pub last_seen_session_id: Option<String>,
 }
 
-/// Direction of health trend change
-#[derive(Debug)]
-pub(crate) enum TrendDirection {
-    Improving,
-    Stable,
-    Degrading,
-}
-
-/// Health trend data from comparing recent snapshots
-#[derive(Debug)]
-pub(crate) struct HealthTrend {
-    pub current_score: f64,
-    pub previous_score: Option<f64>,
-    pub week_avg_score: Option<f64>,
-    pub current_tier_dist: String, // JSON
-    pub snapshot_count: i64,
-    pub direction: TrendDirection,
-}

@@ -134,8 +134,6 @@ pub enum ConfigAction {
 
 #[derive(Subcommand)]
 pub enum HookAction {
-    /// Handle PermissionRequest hooks
-    Permission,
     /// Handle SessionStart hooks - captures Claude's session_id
     SessionStart,
     /// Handle PreCompact hooks - preserve context before summarization

@@ -6,8 +6,7 @@
 // 2. File co-change gaps — files that cause issues when changed without their usual companions
 // 3. Change size risk — correlate diff size with outcome rates
 
-use crate::proactive::PatternType;
-use crate::proactive::patterns::{BehaviorPattern, OutcomeStats, PatternData};
+use crate::db::patterns::{BehaviorPattern, OutcomeStats, PatternData, PatternType};
 use anyhow::Result;
 use rusqlite::Connection;
 
@@ -157,7 +156,7 @@ fn mine_module_hotspots(conn: &Connection, project_id: i64) -> Result<usize> {
             occurrence_count: total,
         };
 
-        crate::proactive::patterns::upsert_pattern(conn, &pattern)?;
+        crate::db::patterns::upsert_pattern(conn, &pattern)?;
         stored += 1;
     }
 
@@ -271,7 +270,7 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
                     occurrence_count,
                 };
 
-                crate::proactive::patterns::upsert_pattern(conn, &pattern)?;
+                crate::db::patterns::upsert_pattern(conn, &pattern)?;
                 stored += 1;
 
                 if stored >= MAX_PATTERNS_PER_STRATEGY {
@@ -309,7 +308,7 @@ fn mine_co_change_gaps(conn: &Connection, project_id: i64) -> Result<usize> {
                     occurrence_count,
                 };
 
-                crate::proactive::patterns::upsert_pattern(conn, &pattern)?;
+                crate::db::patterns::upsert_pattern(conn, &pattern)?;
                 stored += 1;
 
                 if stored >= MAX_PATTERNS_PER_STRATEGY {
@@ -443,7 +442,7 @@ fn mine_size_risk(conn: &Connection, project_id: i64) -> Result<usize> {
             occurrence_count: total,
         };
 
-        crate::proactive::patterns::upsert_pattern(conn, &pattern)?;
+        crate::db::patterns::upsert_pattern(conn, &pattern)?;
         stored += 1;
     }
 

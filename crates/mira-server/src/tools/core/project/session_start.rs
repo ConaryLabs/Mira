@@ -12,7 +12,6 @@ use crate::error::MiraError;
 use crate::git::get_git_branch;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectOutput, ProjectStartData};
-use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
 
 use super::detection::{detect_project_type, gather_system_context_content};
@@ -97,18 +96,13 @@ async fn load_recent_sessions<C: ToolContext>(
         .await
 }
 
-/// Load recap data: doc counts, interventions
+/// Load recap data: doc counts
 async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<RecapData, MiraError> {
     ctx.pool()
         .run(move |conn| {
             let doc_task_counts =
                 count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
-            let config = ProactiveConfig::default();
-            let interventions_list =
-                interventions::get_pending_interventions_sync(conn, project_id, &config)
-                    .unwrap_or_default();
-
-            Ok::<_, String>((doc_task_counts, interventions_list))
+            Ok::<_, String>(doc_task_counts)
         })
         .await
 }
@@ -153,38 +147,9 @@ pub async fn session_start<C: ToolContext>(
         }
     }
 
-    let (doc_task_counts, pending_interventions) =
-        load_recap_data(ctx, project_id).await?;
+    let doc_task_counts = load_recap_data(ctx, project_id).await?;
 
-    response.push_str(&format_session_insights(
-        &pending_interventions,
-        &doc_task_counts,
-    ));
-
-    // Record shown interventions
-    if !pending_interventions.is_empty() {
-        let interventions_to_record = pending_interventions.clone();
-        let sid_for_record = sid.clone();
-        if let Err(e) = ctx
-            .pool()
-            .run(move |conn| {
-                for intervention in &interventions_to_record {
-                    if let Err(e) = interventions::record_intervention_sync(
-                        conn,
-                        project_id,
-                        Some(&sid_for_record),
-                        intervention,
-                    ) {
-                        tracing::warn!("Failed to record intervention: {}", e);
-                    }
-                }
-                Ok::<_, String>(())
-            })
-            .await
-        {
-            tracing::warn!("Failed to record shown interventions: {}", e);
-        }
-    }
+    response.push_str(&format_session_insights(&doc_task_counts));
 
     // Phase 5: Codebase map
     if project_type == "rust" {

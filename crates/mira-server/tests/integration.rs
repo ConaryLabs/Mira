@@ -1012,7 +1012,6 @@ async fn test_context_injection_analytics() {
             sources: vec![InjectionSource::Semantic],
             context_len: 100,
             message_preview: "test message 1".to_string(),
-            key_terms: vec![],
         })
         .await;
 
@@ -1023,7 +1022,6 @@ async fn test_context_injection_analytics() {
             sources: vec![InjectionSource::Semantic, InjectionSource::TaskAware],
             context_len: 200,
             message_preview: "test message 2".to_string(),
-            key_terms: vec![],
         })
         .await;
 
@@ -3144,58 +3142,7 @@ async fn test_insights_empty_no_data_shows_setup_instructions() {
     );
 }
 
-#[tokio::test]
-async fn test_insights_empty_with_snapshot_shows_healthy() {
-    use mira::mcp::requests::{SessionAction, SessionRequest};
-    let ctx = TestContext::new().await;
-
-    session_start(
-        &ctx,
-        "/tmp/test_insights_healthy".into(),
-        Some("Insights Healthy".into()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-    let project = ctx.get_project().await.expect("project should be set");
-
-    // Insert a health snapshot but no insights → genuinely healthy
-    ctx.pool()
-        .run(move |conn| {
-            conn.execute(
-                "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score, tier_distribution, module_count, snapshot_at)
-                 VALUES (?1, 15.0, 30.0, '{\"A\":5}', 5, datetime('now'))",
-                rusqlite::params![project.id],
-            )
-            .map_err(|e| e.to_string())?;
-            Ok::<(), String>(())
-        })
-        .await
-        .expect("insert snapshot");
-
-    // No filters → should say "healthy"
-    let req = SessionRequest {
-        action: SessionAction::Insights,
-        session_id: None,
-
-        limit: None,
-        group_by: None,
-        since_days: None,
-        insight_source: None,
-        min_confidence: None,
-        insight_id: None,
-        dry_run: None,
-        category: None,
-    };
-    let result = handle_session(&ctx, req).await;
-    assert!(result.is_ok());
-    let output = result.unwrap();
-    assert!(
-        msg!(output).contains("healthy"),
-        "Unfiltered empty state with snapshot should say healthy, got: {}",
-        msg!(output)
-    );
-}
+// Health snapshot "healthy" test removed — health_snapshots table dropped in v50.
 
 #[tokio::test]
 async fn test_insights_empty_with_filters_shows_filter_message() {
@@ -3210,23 +3157,8 @@ async fn test_insights_empty_with_filters_shows_filter_message() {
     )
     .await
     .expect("session_start failed");
-    let project = ctx.get_project().await.expect("project should be set");
 
-    // Insert a health snapshot so the "no data" branch isn't hit
-    ctx.pool()
-        .run(move |conn| {
-            conn.execute(
-                "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score, tier_distribution, module_count, snapshot_at)
-                 VALUES (?1, 15.0, 30.0, '{\"A\":5}', 5, datetime('now'))",
-                rusqlite::params![project.id],
-            )
-            .map_err(|e| e.to_string())?;
-            Ok::<(), String>(())
-        })
-        .await
-        .expect("insert snapshot");
-
-    // With insight_source filter → should NOT say "healthy"
+    // With insight_source filter and no insights → should mention filters
     let req = SessionRequest {
         action: SessionAction::Insights,
         session_id: None,

@@ -25,18 +25,6 @@
         ]
       }
     ],
-    "PermissionRequest": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook permission",
-            "timeout": 3,
-            "statusMessage": "Mira: Checking permissions..."
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Grep|Glob|Read",

@@ -2,8 +2,7 @@
 // Database queries for pondering data gathering
 
 use super::types::{
-    FragileModule, HealthTrend, ProjectInsightData, RecurringError, RevertCluster, StaleGoal,
-    ToolUsageEntry, TrendDirection,
+    FragileModule, ProjectInsightData, RecurringError, RevertCluster, StaleGoal, ToolUsageEntry,
 };
 use crate::db::pool::DatabasePool;
 use crate::utils::truncate;
@@ -356,108 +355,24 @@ pub(super) async fn get_recurring_errors(
     .map_err(Into::into)
 }
 
-/// Get health trend from recent snapshots for a project.
-pub(super) async fn get_health_trend(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Result<Option<HealthTrend>, String> {
-    pool.run(move |conn| {
-        // Get 2 most recent snapshots
-        let mut stmt = conn
-            .prepare(
-                "SELECT avg_debt_score, tier_distribution
-                 FROM health_snapshots
-                 WHERE project_id = ?1
-                 ORDER BY snapshot_at DESC
-                 LIMIT 2",
-            )
-            .map_err(|e| anyhow::anyhow!("prepare health trend: {}", e))?;
-
-        let snapshots: Vec<(f64, String)> = stmt
-            .query_map(params![project_id], |row| {
-                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| anyhow::anyhow!("query health trend: {}", e))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        if snapshots.is_empty() {
-            return Ok::<_, anyhow::Error>(None);
-        }
-
-        let current_score = snapshots[0].0;
-        let current_tier_dist = snapshots[0].1.clone();
-        let previous_score = snapshots.get(1).map(|s| s.0);
-
-        // 7-day average
-        let week_avg: Option<f64> = conn
-            .query_row(
-                "SELECT AVG(avg_debt_score) FROM health_snapshots
-                 WHERE project_id = ?1
-                   AND snapshot_at > datetime('now', '-7 days')",
-                params![project_id],
-                |row| row.get(0),
-            )
-            .ok();
-
-        // Snapshot count
-        let snapshot_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM health_snapshots WHERE project_id = ?1",
-                params![project_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        // Determine direction: >10% change threshold
-        let direction = match previous_score {
-            Some(prev) if prev > 0.0 => {
-                let delta_pct = ((current_score - prev) / prev) * 100.0;
-                if delta_pct > 10.0 {
-                    TrendDirection::Degrading // higher score = worse
-                } else if delta_pct < -10.0 {
-                    TrendDirection::Improving // lower score = better
-                } else {
-                    TrendDirection::Stable
-                }
-            }
-            _ => TrendDirection::Stable,
-        };
-
-        Ok(Some(HealthTrend {
-            current_score,
-            previous_score,
-            week_avg_score: week_avg,
-            current_tier_dist,
-            snapshot_count,
-            direction,
-        }))
-    })
-    .await
-    .map_err(Into::into)
-}
-
 /// Gather all project insight data in one call.
 pub(super) async fn get_project_insight_data(
     pool: &Arc<DatabasePool>,
     project_id: i64,
 ) -> Result<ProjectInsightData, String> {
     // Run all queries concurrently
-    let (stale_goals, fragile_modules, revert_clusters, recurring_errors, health_trend) =
-        tokio::join!(
-            get_stale_goals(pool, project_id),
-            get_fragile_modules(pool, project_id),
-            get_recent_revert_clusters(pool, project_id),
-            get_recurring_errors(pool, project_id),
-            get_health_trend(pool, project_id),
-        );
+    let (stale_goals, fragile_modules, revert_clusters, recurring_errors) = tokio::join!(
+        get_stale_goals(pool, project_id),
+        get_fragile_modules(pool, project_id),
+        get_recent_revert_clusters(pool, project_id),
+        get_recurring_errors(pool, project_id),
+    );
 
     Ok(ProjectInsightData {
         stale_goals: stale_goals.unwrap_or_default(),
         fragile_modules: fragile_modules.unwrap_or_default(),
         revert_clusters: revert_clusters.unwrap_or_default(),
         recurring_errors: recurring_errors.unwrap_or_default(),
-        health_trend: health_trend.unwrap_or(None),
     })
 }
 
@@ -627,16 +542,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_health_trend_empty_tables() {
-        use crate::db::test_support::setup_test_pool_with_project;
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        let result = get_health_trend(&pool, project_id).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[tokio::test]
     async fn test_get_project_insight_data_empty_tables() {
         use crate::db::test_support::setup_test_pool_with_project;
         let (pool, project_id) = setup_test_pool_with_project().await;
@@ -716,36 +621,4 @@ mod tests {
         assert!(result.unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn test_get_health_trend_single_snapshot() {
-        use crate::db::test_support::setup_test_pool_with_project;
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        // Insert a single health snapshot (all NOT NULL columns required by schema)
-        pool.run(move |conn| {
-            conn.execute(
-                "INSERT INTO health_snapshots
-                 (project_id, avg_debt_score, max_debt_score, tier_distribution, module_count, snapshot_at)
-                 VALUES (?, 42.0, 55.0, '{\"A\":5,\"B\":3}', 8, datetime('now'))",
-                rusqlite::params![project_id],
-            )?;
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .unwrap();
-
-        let result = get_health_trend(&pool, project_id).await;
-        assert!(result.is_ok());
-        let trend = result.unwrap();
-        assert!(trend.is_some());
-        let trend = trend.unwrap();
-        assert!((trend.current_score - 42.0).abs() < 0.01);
-        assert!(trend.previous_score.is_none());
-        assert_eq!(trend.snapshot_count, 1);
-        // No previous score -> direction is Stable
-        assert!(matches!(
-            trend.direction,
-            super::super::types::TrendDirection::Stable
-        ));
-    }
 }

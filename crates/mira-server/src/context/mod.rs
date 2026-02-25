@@ -1,5 +1,5 @@
 // crates/mira-server/src/context/mod.rs
-// Proactive context injection for Mira
+// Context injection for Mira
 
 use crate::db::pool::DatabasePool;
 use crate::db::{get_or_create_project_sync, get_server_state_sync};
@@ -18,10 +18,10 @@ mod goal_aware;
 mod semantic;
 mod working_context;
 
-pub use analytics::{InjectionAnalytics, InjectionEvent, extract_key_terms};
+pub use analytics::{InjectionAnalytics, InjectionEvent};
 pub use budget::{
-    BudgetEntry, BudgetManager, BudgetResult, PRIORITY_CONVENTION, PRIORITY_CROSS_PROJECT,
-    PRIORITY_FILE_AWARE, PRIORITY_GOALS, PRIORITY_MEMORY, PRIORITY_PROACTIVE, PRIORITY_REACTIVE,
+    BudgetEntry, BudgetManager, BudgetResult, PRIORITY_CONVENTION,
+    PRIORITY_FILE_AWARE, PRIORITY_GOALS, PRIORITY_MEMORY, PRIORITY_REACTIVE,
     PRIORITY_SEMANTIC, PRIORITY_TASKS, PRIORITY_TEAM,
 };
 pub use cache::InjectionCache;
@@ -485,7 +485,6 @@ impl ContextInjectionManager {
                     sources: sources.clone(),
                     context_len: final_context.len(),
                     message_preview: user_message.chars().take(50).collect(),
-                    key_terms: analytics::extract_key_terms(&final_context),
                 })
                 .await;
         }
@@ -503,16 +502,6 @@ impl ContextInjectionManager {
         self.analytics.summary(project_id).await
     }
 
-    /// Record feedback on whether injected context was referenced in a response.
-    ///
-    /// Call this from a PostToolUse or Stop hook with the assistant's response
-    /// text. It checks pending injection_feedback rows for the session and
-    /// marks them as referenced or not based on keyword overlap.
-    pub async fn record_response_feedback(&self, session_id: &str, response_text: &str) {
-        self.analytics
-            .record_response_feedback(session_id, response_text)
-            .await;
-    }
 }
 
 #[cfg(test)]

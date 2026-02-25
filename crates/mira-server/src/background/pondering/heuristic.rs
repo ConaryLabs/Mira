@@ -1,7 +1,7 @@
 // background/pondering/heuristic.rs
 // Data-driven heuristic insight generation (no LLM needed)
 
-use super::types::{PonderingInsight, ProjectInsightData, TrendDirection};
+use super::types::{PonderingInsight, ProjectInsightData};
 
 /// Maximum insights to generate per category. Prevents insight floods when
 /// a project has many files/modules matching a heuristic (e.g. untested hotspots).
@@ -113,32 +113,6 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
             ],
         });
         error_count += 1;
-    }
-
-    // 5. Health degradation — codebase health getting worse
-    if let Some(ref trend) = data.health_trend
-        && let TrendDirection::Degrading = trend.direction
-        && let Some(prev) = trend.previous_score
-    {
-        let delta_pct = ((trend.current_score - prev) / prev) * 100.0;
-        let confidence = if delta_pct > 25.0 { 0.85 } else { 0.7 };
-        insights.push(PonderingInsight {
-            pattern_type: "insight_health_degrading".to_string(),
-            description: format!(
-                "Codebase health degraded: avg debt score {:.1} \u{2192} {:.1} ({:+.0}% change, {} modules)",
-                prev,
-                trend.current_score,
-                delta_pct,
-                trend.current_tier_dist,
-            ),
-            confidence,
-            evidence: vec![
-                format!("previous_score: {:.1}", prev),
-                format!("current_score: {:.1}", trend.current_score),
-                format!("week_avg: {:.1}", trend.week_avg_score.unwrap_or(0.0)),
-                format!("snapshots: {}", trend.snapshot_count),
-            ],
-        });
     }
 
     insights
@@ -422,67 +396,9 @@ mod tests {
                 first_seen_session_id: None,
                 last_seen_session_id: None,
             }],
-            health_trend: None,
         };
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights.len(), 3); // stale goal + fragile module + recurring error
     }
 
-    #[test]
-    fn test_health_degrading() {
-        use super::super::types::{HealthTrend, TrendDirection};
-        let data = ProjectInsightData {
-            health_trend: Some(HealthTrend {
-                current_score: 55.0,
-                previous_score: Some(42.0),
-                week_avg_score: Some(48.0),
-                current_tier_dist: "{\"C\":5,\"B\":3}".to_string(),
-                snapshot_count: 4,
-                direction: TrendDirection::Degrading,
-            }),
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights.len(), 1);
-        assert_eq!(insights[0].pattern_type, "insight_health_degrading");
-        assert_eq!(insights[0].confidence, 0.85); // >25% change
-        assert!(insights[0].description.contains("42.0"));
-        assert!(insights[0].description.contains("55.0"));
-    }
-
-    #[test]
-    fn test_health_stable_no_insight() {
-        use super::super::types::{HealthTrend, TrendDirection};
-        let data = ProjectInsightData {
-            health_trend: Some(HealthTrend {
-                current_score: 43.0,
-                previous_score: Some(42.0),
-                week_avg_score: Some(42.5),
-                current_tier_dist: "{\"B\":8}".to_string(),
-                snapshot_count: 3,
-                direction: TrendDirection::Stable,
-            }),
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert!(insights.is_empty());
-    }
-
-    #[test]
-    fn test_health_improving_no_insight() {
-        use super::super::types::{HealthTrend, TrendDirection};
-        let data = ProjectInsightData {
-            health_trend: Some(HealthTrend {
-                current_score: 30.0,
-                previous_score: Some(42.0),
-                week_avg_score: Some(35.0),
-                current_tier_dist: "{\"A\":5,\"B\":3}".to_string(),
-                snapshot_count: 5,
-                direction: TrendDirection::Improving,
-            }),
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert!(insights.is_empty());
-    }
 }

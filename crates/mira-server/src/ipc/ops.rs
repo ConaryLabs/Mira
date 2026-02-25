@@ -64,17 +64,24 @@ pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
     server
         .pool
         .interact(move |conn| {
-            let mut tracker = crate::proactive::behavior::BehaviorTracker::for_session(
-                conn, session_id, project_id,
-            );
-            let et = match event_type.as_str() {
-                "tool_failure" => crate::proactive::EventType::ToolFailure,
-                "goal_update" => crate::proactive::EventType::GoalUpdate,
-                _ => crate::proactive::EventType::ToolUse,
-            };
-            tracker
-                .log_event(conn, et, event_data)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let event_data_str =
+                serde_json::to_string(&event_data).unwrap_or_else(|_| "{}".to_string());
+
+            // Get next sequence position for this session
+            let seq: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(sequence_position), 0) + 1 FROM session_behavior_log WHERE session_id = ?",
+                    rusqlite::params![&session_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(1);
+
+            conn.execute(
+                "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![&session_id, project_id, &event_type, &event_data_str, seq],
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             Ok::<_, anyhow::Error>(())
         })
         .await?;
@@ -837,11 +844,6 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
         crate::hooks::resolve_project(&server.pool, Some(session_id).filter(|s| !s.is_empty()))
             .await;
 
-    // Log behavior (fire-and-forget, non-blocking)
-    if let Some(pid) = project_id {
-        crate::hooks::user_prompt::log_behavior(&server.pool, pid, session_id, message).await;
-    }
-
     // Create ContextInjectionManager from server's shared resources
     let fuzzy = if server.fuzzy_enabled {
         Some(server.fuzzy_cache.clone())
@@ -858,48 +860,9 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
 
     let config = manager.config().clone();
 
-    // Quality gates: skip proactive/cross-project for simple commands or out-of-bounds length.
-    let is_simple = crate::context::is_simple_command(message);
-    let msg_len = message.trim().len();
-    let in_bounds = msg_len >= config.min_message_len && msg_len <= config.max_message_len;
-    let session_opt = if session_id.is_empty() {
-        None
-    } else {
-        Some(session_id)
-    };
-
-    let (reactive, proactive, team, cross_project) = tokio::join!(
+    let (reactive, team) = tokio::join!(
         manager.get_context_for_message(message, session_id),
-        async {
-            if let Some(pid) = project_id
-                && !is_simple
-                && in_bounds
-            {
-                return crate::hooks::user_prompt::get_proactive_context(
-                    &server.pool,
-                    pid,
-                    project_path.as_deref(),
-                    session_opt,
-                )
-                .await;
-            }
-            None
-        },
         crate::hooks::user_prompt::get_team_context(&server.pool, session_id),
-        async {
-            if let Some(pid) = project_id
-                && !is_simple
-            {
-                return crate::hooks::user_prompt::get_cross_project_context(
-                    &server.pool,
-                    &server.embeddings,
-                    pid,
-                    message,
-                )
-                .await;
-            }
-            None
-        },
     );
 
     let sources: Vec<&str> = reactive.sources.iter().map(|s| s.name()).collect();
@@ -912,9 +875,7 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
         "reactive_from_cache": reactive.from_cache,
         "reactive_summary": reactive.summary(),
         "reactive_skip_reason": reactive.skip_reason,
-        "proactive_context": proactive,
         "team_context": team,
-        "cross_project_context": cross_project,
         "config_min_message_len": config.min_message_len,
         "config_max_message_len": config.max_message_len,
         "config_max_chars": config.max_chars,

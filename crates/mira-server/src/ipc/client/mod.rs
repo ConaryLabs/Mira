@@ -290,9 +290,7 @@ pub struct UserPromptContextResult {
     pub reactive_from_cache: bool,
     pub reactive_summary: String,
     pub reactive_skip_reason: Option<String>,
-    pub proactive_context: Option<String>,
     pub team_context: Option<String>,
-    pub cross_project_context: Option<String>,
     pub config_max_chars: usize,
 }
 

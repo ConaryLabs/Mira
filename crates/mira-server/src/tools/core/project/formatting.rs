@@ -1,8 +1,6 @@
 // tools/core/project/formatting.rs
 // Display formatting for session history and insights
 
-use crate::proactive::interventions;
-
 use super::SessionInfo;
 
 /// Format recent sessions for display
@@ -28,19 +26,9 @@ pub(super) fn format_recent_sessions(sessions: &[SessionInfo]) -> String {
     out
 }
 
-/// Format interventions and doc tasks for display.
-pub(super) fn format_session_insights(
-    pending_interventions: &[interventions::PendingIntervention],
-    doc_task_counts: &[(String, i64)],
-) -> String {
+/// Format doc tasks for display.
+pub(super) fn format_session_insights(doc_task_counts: &[(String, i64)]) -> String {
     let mut out = String::new();
-
-    if !pending_interventions.is_empty() {
-        out.push_str("\nInsights (from background analysis):\n");
-        for intervention in pending_interventions {
-            out.push_str(&format!("  {}\n", intervention.format()));
-        }
-    }
 
     let pending_doc_count = doc_task_counts
         .iter()

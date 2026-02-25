@@ -432,11 +432,11 @@ async fn handle_edit_write_patterns(
 
             let mut warnings = Vec::new();
             for (pattern_data_str, occurrence_count) in rows {
-                if let Some(crate::proactive::patterns::PatternData::ChangePattern {
+                if let Some(crate::db::patterns::PatternData::ChangePattern {
                     pattern_subtype,
                     outcome_stats,
                     ..
-                }) = crate::proactive::patterns::PatternData::from_json(&pattern_data_str)
+                }) = crate::db::patterns::PatternData::from_json(&pattern_data_str)
                 {
                     let warning = match pattern_subtype.as_str() {
                         "module_hotspot" => format!(

@@ -64,7 +64,6 @@ enum BackgroundTask {
     Summaries,
     Briefings,
     HealthFastScans,
-    HealthModuleAnalysis,
     TeamMonitor,
     DocumentationTasks,
     PonderingInsights,
@@ -80,7 +79,6 @@ impl std::fmt::Display for BackgroundTask {
             Self::Summaries => write!(f, "summaries"),
             Self::Briefings => write!(f, "briefings"),
             Self::HealthFastScans => write!(f, "health: fast scans"),
-            Self::HealthModuleAnalysis => write!(f, "health: module analysis"),
             Self::TeamMonitor => write!(f, "team monitor"),
             Self::DocumentationTasks => write!(f, "documentation tasks"),
             Self::PonderingInsights => write!(f, "pondering insights"),
@@ -132,11 +130,6 @@ fn task_schedule() -> Vec<ScheduledTask> {
         },
         ScheduledTask {
             task: BackgroundTask::HealthFastScans,
-            priority: TaskPriority::Normal,
-            cycle_interval: None,
-        },
-        ScheduledTask {
-            task: BackgroundTask::HealthModuleAnalysis,
             priority: TaskPriority::Normal,
             cycle_interval: None,
         },
@@ -347,13 +340,6 @@ impl SlowLaneWorker {
                 self.run_task(
                     &name,
                     code_health::process_health_fast_scans(&pool, &code_pool),
-                )
-                .await
-            }
-            BackgroundTask::HealthModuleAnalysis => {
-                self.run_task(
-                    &name,
-                    code_health::process_health_module_analysis(&pool, &code_pool),
                 )
                 .await
             }
@@ -599,7 +585,6 @@ mod tests {
         assert!(names.contains(&"summaries".to_string()));
         assert!(names.contains(&"briefings".to_string()));
         assert!(names.contains(&"health: fast scans".to_string()));
-        assert!(names.contains(&"health: module analysis".to_string()));
         assert!(names.contains(&"team monitor".to_string()));
         assert!(names.contains(&"documentation tasks".to_string()));
         assert!(names.contains(&"pondering insights".to_string()));

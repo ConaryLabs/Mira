@@ -7,21 +7,6 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{InsightItem, InsightsData, SessionData, SessionOutput};
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 
-/// Map a tech-debt score to a letter-grade tier label.
-pub(crate) fn score_to_tier_label(score: f64) -> &'static str {
-    if score <= 20.0 {
-        "A (Healthy)"
-    } else if score <= 40.0 {
-        "B (Moderate)"
-    } else if score <= 60.0 {
-        "C (Needs Work)"
-    } else if score <= 80.0 {
-        "D (Poor)"
-    } else {
-        "F (Critical)"
-    }
-}
-
 /// Category display order and human-readable labels.
 pub(crate) const CATEGORY_ORDER: &[(&str, &str)] = &[
     ("attention", "Attention Required"),
@@ -54,8 +39,6 @@ pub async fn query_insights<C: ToolContext>(
     let days_back = since_days.unwrap_or(30) as i64;
     let lim = limit.unwrap_or(20).max(0) as usize;
 
-    let project_id_for_snapshot = project_id;
-
     let insights = ctx
         .pool()
         .run(move |conn| {
@@ -70,23 +53,6 @@ pub async fn query_insights<C: ToolContext>(
         })
         .await?;
 
-    // Fetch latest health snapshot for the dashboard header
-    let snapshot_summary = ctx
-        .pool()
-        .run(move |conn| {
-            let result: Option<(f64, i64, String)> = conn
-                .query_row(
-                    "SELECT avg_debt_score, module_count, tier_distribution
-                     FROM health_snapshots WHERE project_id = ?1
-                     ORDER BY snapshot_at DESC LIMIT 1",
-                    rusqlite::params![project_id_for_snapshot],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .ok();
-            Ok::<_, String>(result)
-        })
-        .await?;
-
     // Handle empty state
     if insights.is_empty() {
         let has_filters = insight_source.is_some()
@@ -95,8 +61,6 @@ pub async fn query_insights<C: ToolContext>(
             || limit.is_some();
         let empty_msg = if has_filters {
             "No insights match the current filters.".to_string()
-        } else if snapshot_summary.is_some() {
-            "No active insights. Codebase is looking healthy.".to_string()
         } else {
             "No insights found.\n\nTo generate insights:\n  \
              1. Index your project: index(action=\"project\")\n  \
@@ -142,24 +106,6 @@ pub async fn query_insights<C: ToolContext>(
 
     // ── Dashboard header ──
     let mut output = String::from("## Project Health Dashboard\n\n");
-    if let Some((avg_score, module_count, ref tier_dist)) = snapshot_summary {
-        let tier = score_to_tier_label(avg_score);
-        output.push_str(&format!(
-            "### Overall: {} | Score: {:.1} | {} modules\n",
-            tier, avg_score, module_count
-        ));
-        // Parse tier distribution for summary
-        if let Ok(tiers) = serde_json::from_str::<serde_json::Value>(tier_dist)
-            && let Some(obj) = tiers.as_object()
-        {
-            let tier_summary: Vec<String> =
-                obj.iter().map(|(k, v)| format!("{}:{}", k, v)).collect();
-            if !tier_summary.is_empty() {
-                output.push_str(&format!("    tiers: {{{}}}\n", tier_summary.join(",")));
-            }
-        }
-        output.push_str("\n---\n\n");
-    }
 
     // ── Category sections (skip empty) ──
     for &(cat_key, cat_label) in CATEGORY_ORDER {

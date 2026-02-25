@@ -1,5 +1,5 @@
 // crates/mira-server/src/hooks/user_prompt.rs
-// UserPromptSubmit hook handler for proactive context injection
+// UserPromptSubmit hook handler for context injection
 
 use crate::config::EnvConfig;
 use crate::db::pool::DatabasePool;
@@ -8,7 +8,6 @@ use crate::fuzzy::FuzzyCache;
 use crate::hooks::{
     get_code_db_path, get_db_path, read_hook_input, resolve_project, write_hook_output,
 };
-use crate::proactive::behavior::BehaviorTracker;
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -21,100 +20,6 @@ const MAX_INJECTION_HISTORY: usize = 5;
 /// Get embeddings client if available (with pool for usage tracking)
 fn get_embeddings(pool: Option<Arc<DatabasePool>>) -> Option<Arc<EmbeddingClient>> {
     EmbeddingClient::from_env(pool).map(Arc::new)
-}
-
-/// Log user query for behavior tracking
-pub(crate) async fn log_behavior(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    session_id: &str,
-    message: &str,
-) {
-    let session_id_clone = session_id.to_string();
-    let message_clone = message.to_string();
-    pool.try_interact("behavior logging", move |conn| {
-        let mut tracker = BehaviorTracker::for_session(conn, session_id_clone, project_id);
-        if let Err(e) = tracker.log_query(conn, &message_clone, "user_prompt") {
-            tracing::debug!("query log failed: {e}");
-        }
-        Ok(())
-    })
-    .await;
-}
-
-/// Get proactive context from pondering-based insights and pre-generated suggestions
-pub(crate) async fn get_proactive_context(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-    _project_path: Option<&str>,
-    session_id: Option<&str>,
-) -> Option<String> {
-    let session_id_owned = session_id.map(|s| s.to_string());
-    pool.interact(move |conn| {
-        let config = crate::proactive::get_proactive_config(conn, None, project_id);
-
-        if !config.enabled {
-            return Ok::<Option<String>, anyhow::Error>(None);
-        }
-
-        // Pondering-based insights (behavior_patterns + documentation interventions)
-        let pending = crate::proactive::interventions::get_pending_interventions_sync(
-            conn, project_id, &config,
-        )
-        .unwrap_or_default();
-
-        let mut context_lines: Vec<String> = Vec::new();
-        for intervention in pending.iter().take(2) {
-            context_lines.push(format!("[Mira/insight] {}", intervention.format()));
-
-            // Record that we showed this intervention (for cooldown/dedup/feedback)
-            if let Err(e) = crate::proactive::interventions::record_intervention_sync(
-                conn,
-                project_id,
-                session_id_owned.as_deref(),
-                intervention,
-            ) {
-                tracing::debug!("intervention record failed: {e}");
-            }
-        }
-
-        // Pre-generated proactive suggestions (from background pattern mining / LLM)
-        // Budget: surface up to 2 suggestions if we have room (max 4 total proactive lines)
-        let suggestion_budget = 4_usize.saturating_sub(context_lines.len()).min(2);
-        if suggestion_budget > 0 {
-            // Fetch top suggestions by confidence regardless of trigger key;
-            // suggestions are stored with file/tool trigger keys by producers so
-            // an empty-key lookup would always return nothing.
-            if let Ok(suggestions) =
-                crate::proactive::background::get_top_pre_generated_suggestions(
-                    conn,
-                    project_id,
-                    suggestion_budget,
-                )
-            {
-                for (id, text, confidence) in &suggestions {
-                    context_lines.push(format!(
-                        "[Mira/suggestion] ({:.0}%) {}",
-                        confidence * 100.0,
-                        text
-                    ));
-                    if let Err(e) = crate::proactive::background::mark_suggestion_shown(
-                        conn, project_id, *id,
-                    ) {
-                        tracing::debug!("mark suggestion shown failed: {e}");
-                    }
-                }
-            }
-        }
-
-        if context_lines.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(context_lines.join("\n")))
-        }
-    })
-    .await
-    .unwrap_or_default()
 }
 
 /// Get pending native tasks as context string
@@ -159,7 +64,7 @@ fn get_task_context(project_label: &str) -> Option<String> {
     }
 }
 
-// ── Cross-prompt injection dedup ─────────────────────────────────────────
+// -- Cross-prompt injection dedup ------------------------------------------------
 // Tracks content hashes of recently injected context per session to avoid
 // re-injecting identical context on consecutive prompts.
 
@@ -282,8 +187,6 @@ async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
 
     tracing::debug!("[mira] Post-compaction recovery: loading saved context");
 
-    // Query the latest session snapshot for this session's compaction_context.
-    // compaction_context lives inside the snapshot JSON blob, not as a column.
     let db_path = crate::hooks::get_db_path();
     let pool = Arc::new(
         crate::db::pool::DatabasePool::open_hook(&db_path)
@@ -308,7 +211,6 @@ async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
                 return Ok::<Option<String>, anyhow::Error>(None);
             };
 
-            // Parse snapshot JSON and extract the compaction_context field
             let snapshot: serde_json::Value = match serde_json::from_str(&snapshot_json) {
                 Ok(v) => v,
                 Err(_) => return Ok(None),
@@ -327,7 +229,6 @@ async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
                 return Ok(None);
             }
 
-            // Format as a concise recovery summary
             let mut lines = Vec::new();
             lines.push(
                 "[Mira/recovery] Context was just compacted. Key points from before:".to_string(),
@@ -361,8 +262,7 @@ async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
         .ok()
         .flatten();
 
-    // Always consume the flag after attempting recovery — prevents stale
-    // flag files from persisting when the DB lookup fails or returns nothing.
+    // Always consume the flag after attempting recovery
     crate::hooks::precompact::consume_post_compaction_flag(session_id);
 
     result
@@ -395,7 +295,7 @@ pub async fn run() -> Result<()> {
     // Check for post-compaction recovery (lightweight flag check)
     let recovery_context = get_post_compaction_recovery(session_id).await;
 
-    // Try IPC first — single composite call runs everything server-side
+    // Try IPC first -- single composite call runs everything server-side
     let mut client = crate::ipc::client::HookClient::connect().await;
 
     if let Some(ctx) = client
@@ -415,10 +315,7 @@ fn assemble_output_from_ipc(
     session_id: &str,
     recovery_context: Option<&str>,
 ) -> Result<()> {
-    use crate::context::{
-        BudgetEntry, BudgetManager, PRIORITY_CROSS_PROJECT, PRIORITY_PROACTIVE, PRIORITY_REACTIVE,
-        PRIORITY_TASKS, PRIORITY_TEAM,
-    };
+    use crate::context::{BudgetEntry, BudgetManager, PRIORITY_REACTIVE, PRIORITY_TASKS, PRIORITY_TEAM};
 
     // Derive project label from path for context tags
     let project_label = ctx
@@ -457,28 +354,6 @@ fn assemble_output_from_ipc(
         tracing::debug!("[mira] Added team context");
     }
 
-    let has_proactive = match ctx.proactive_context {
-        Some(ref pc) if !pc.is_empty() => {
-            budget_entries.push(BudgetEntry::new(
-                PRIORITY_PROACTIVE,
-                pc.clone(),
-                "proactive",
-            ));
-            tracing::debug!("[mira] Added proactive context suggestions");
-            true
-        }
-        _ => false,
-    };
-
-    if let Some(ref cpc) = ctx.cross_project_context {
-        budget_entries.push(BudgetEntry::new(
-            PRIORITY_CROSS_PROJECT,
-            cpc.clone(),
-            "cross-project",
-        ));
-        tracing::debug!("[mira] Added cross-project context");
-    }
-
     if let Some(ref tc) = task_context {
         budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
     }
@@ -499,7 +374,6 @@ fn assemble_output_from_ipc(
         output["metadata"] = serde_json::json!({
             "sources": ctx.reactive_sources,
             "from_cache": ctx.reactive_from_cache,
-            "has_proactive": has_proactive
         });
         output["hookSpecificOutput"] = serde_json::json!({
             "hookEventName": "UserPromptSubmit",
@@ -552,28 +426,23 @@ async fn run_direct(
         crate::context::ContextInjectionManager::new(pool.clone(), code_pool, embeddings, fuzzy)
             .await;
 
-    // Resolve project once (eliminates duplicate get_last_active_project_sync calls)
+    // Resolve project once
     let sid = if session_id.is_empty() {
         None
     } else {
         Some(session_id)
     };
-    let (project_id, project_path, project_name) = resolve_project(&pool, sid).await;
+    let (_project_id, _project_path, project_name) = resolve_project(&pool, sid).await;
 
     // Derive project label for context tags
     let project_label = project_name
         .as_deref()
         .or_else(|| {
-            project_path
+            _project_path
                 .as_deref()
                 .and_then(|p| std::path::Path::new(p).file_name()?.to_str())
         })
         .unwrap_or("");
-
-    // Log query event for behavior tracking
-    if let Some(project_id) = project_id {
-        log_behavior(&pool, project_id, session_id, user_message).await;
-    }
 
     // Team intelligence: lazy detection + heartbeat + discoveries
     let team_context: Option<String> = get_team_context(&pool, session_id).await;
@@ -583,41 +452,6 @@ async fn run_direct(
         .get_context_for_message(user_message, session_id)
         .await;
 
-    // Proactive suggestions off by default. Opt in by storing a preference:
-    // memory(action="remember", content="enable proactive suggestions", key="proactive:enabled", fact_type="preference")
-    // Quality gates: skip for simple commands and out-of-bounds message length.
-    let is_simple = crate::context::is_simple_command(user_message);
-    let session_id_opt = if session_id.is_empty() {
-        None
-    } else {
-        Some(session_id)
-    };
-    let proactive_context: Option<String> = if let Some(pid) = project_id
-        && !is_simple
-    {
-        let config = manager.config();
-        let msg_len = user_message.trim().len();
-        if msg_len >= config.min_message_len && msg_len <= config.max_message_len {
-            get_proactive_context(&pool, pid, project_path.as_deref(), session_id_opt).await
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // Cross-project context gated behind ProactiveConfig::enabled (default false).
-    // Opt in via: memory(action="remember", content="enable proactive suggestions", key="proactive:enabled", fact_type="preference")
-    // Also skipped for simple commands.
-    let cross_project_context: Option<String> = if let Some(pid) = project_id
-        && !is_simple
-    {
-        let emb = get_embeddings(Some(pool.clone()));
-        get_cross_project_context(&pool, &emb, pid, user_message).await
-    } else {
-        None
-    };
-
     // Get pending native tasks
     let task_context = get_task_context(project_label);
     if task_context.is_some() {
@@ -625,10 +459,7 @@ async fn run_direct(
     }
 
     // Route ALL context through a unified budget with priority scoring.
-    use crate::context::{
-        BudgetEntry, PRIORITY_CROSS_PROJECT, PRIORITY_PROACTIVE, PRIORITY_REACTIVE, PRIORITY_TASKS,
-        PRIORITY_TEAM,
-    };
+    use crate::context::{BudgetEntry, PRIORITY_REACTIVE, PRIORITY_TASKS, PRIORITY_TEAM};
 
     let mut budget_entries: Vec<BudgetEntry> = Vec::new();
 
@@ -652,28 +483,6 @@ async fn run_direct(
         tracing::debug!("[mira] Added team context");
     }
 
-    let has_proactive = match proactive_context {
-        Some(ref pc) if !pc.is_empty() => {
-            budget_entries.push(BudgetEntry::new(
-                PRIORITY_PROACTIVE,
-                pc.clone(),
-                "proactive",
-            ));
-            tracing::debug!("[mira] Added proactive context suggestions");
-            true
-        }
-        _ => false,
-    };
-
-    if let Some(ref cpc) = cross_project_context {
-        budget_entries.push(BudgetEntry::new(
-            PRIORITY_CROSS_PROJECT,
-            cpc.clone(),
-            "cross-project",
-        ));
-        tracing::debug!("[mira] Added cross-project context");
-    }
-
     if let Some(ref tc) = task_context {
         budget_entries.push(BudgetEntry::new(PRIORITY_TASKS, tc.clone(), "tasks"));
     }
@@ -695,7 +504,6 @@ async fn run_direct(
         output["metadata"] = serde_json::json!({
             "sources": result.sources,
             "from_cache": result.from_cache,
-            "has_proactive": has_proactive
         });
         output["hookSpecificOutput"] = serde_json::json!({
             "hookEventName": "UserPromptSubmit",
@@ -733,7 +541,6 @@ pub(crate) async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str)
             )?;
 
             // Validate that the detected config file actually exists and is recent
-            // to avoid registering phantom membership from leftover .agent-team.json files
             let config_path = Path::new(&det.config_path);
             if !config_path.is_file() {
                 tracing::debug!(
@@ -893,65 +700,13 @@ pub(crate) async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str)
     }
 }
 
-/// Get cross-project knowledge.
-///
-/// Memory recall removed (Phase 1 memory system removal). Returns None.
-pub(crate) async fn get_cross_project_context(
-    _pool: &Arc<DatabasePool>,
-    _embeddings: &Option<Arc<EmbeddingClient>>,
-    _project_id: i64,
-    _message: &str,
-) -> Option<String> {
-    None
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
+// ===============================================================================
 // Tests
-// ═══════════════════════════════════════════════════════════════════════════════
+// ===============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_support::*;
-
-    #[tokio::test]
-    async fn log_behavior_inserts_event() {
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        // Seed a session so behavior tracker can reference it
-        pool.interact(move |conn| {
-            seed_session(conn, "sess-behav", project_id, "active");
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .unwrap();
-
-        // Log a user query via log_behavior
-        log_behavior(&pool, project_id, "sess-behav", "how do I add auth?").await;
-
-        // Verify session_behavior_log table has an entry
-        let count: i64 = pool
-            .interact(move |conn| {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM session_behavior_log WHERE session_id = 'sess-behav'",
-                    [],
-                    |row| row.get(0),
-                )
-                .map_err(Into::into)
-            })
-            .await
-            .unwrap();
-
-        assert!(count > 0, "expected at least one behavior log entry");
-    }
-
-    #[tokio::test]
-    async fn log_behavior_no_session_does_not_panic() {
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        // Log behavior without seeding a session — should not panic
-        log_behavior(&pool, project_id, "nonexistent-sess", "test query").await;
-    }
 
     #[test]
     fn simple_command_detects_cli_commands() {
@@ -995,7 +750,7 @@ mod tests {
         ));
     }
 
-    // ── Cross-prompt injection dedup ────────────────────────────────────────
+    // -- Cross-prompt injection dedup ------------------------------------------------
 
     #[test]
     fn injection_dedup_first_time_not_duplicate() {

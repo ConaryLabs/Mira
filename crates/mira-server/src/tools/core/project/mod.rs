@@ -12,7 +12,6 @@ use crate::error::MiraError;
 use crate::mcp::requests::ProjectAction;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectGetData, ProjectOutput, ProjectSetData};
-use crate::proactive::interventions;
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 
 pub use detection::detect_project_type;
@@ -21,11 +20,8 @@ pub use session_start::session_start;
 /// Session info tuple: (session_id, last_activity, summary, tool_count, tool_names)
 type SessionInfo = (String, String, Option<String>, usize, Vec<String>);
 
-/// Recap data: (doc_task_counts, pending_interventions)
-type RecapData = (
-    Vec<(String, i64)>,
-    Vec<interventions::PendingIntervention>,
-);
+/// Recap data: doc_task_counts
+type RecapData = Vec<(String, i64)>;
 
 /// Shared project initialization logic
 async fn init_project<C: ToolContext>(
@@ -393,20 +389,20 @@ mod tests {
     #[test]
     fn test_format_insights_doc_tasks() {
         let doc_counts = vec![("pending".to_string(), 5)];
-        let result = format_session_insights(&[], &doc_counts);
+        let result = format_session_insights(&doc_counts);
         assert!(result.contains("5 items need docs"));
     }
 
     #[test]
     fn test_format_insights_no_pending_docs() {
         let doc_counts = vec![("completed".to_string(), 3)];
-        let result = format_session_insights(&[], &doc_counts);
+        let result = format_session_insights(&doc_counts);
         assert!(!result.contains("items need docs"));
     }
 
     #[test]
     fn test_format_insights_all_empty() {
-        let result = format_session_insights(&[], &[]);
+        let result = format_session_insights(&[]);
         assert!(result.is_empty());
     }
 }

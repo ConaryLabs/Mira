@@ -121,22 +121,6 @@ pub struct UnifiedInsight {
     pub category: Option<String>,
 }
 
-/// A point-in-time snapshot of codebase health metrics
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct HealthSnapshot {
-    pub id: i64,
-    pub avg_debt_score: f64,
-    pub max_debt_score: f64,
-    pub tier_distribution: String,
-    pub module_count: i64,
-    pub snapshot_at: String,
-    pub warning_count: i64,
-    pub todo_count: i64,
-    pub unwrap_count: i64,
-    pub error_handling_count: i64,
-    pub total_finding_count: i64,
-}
-
 /// Project briefing (What's New since last session)
 #[derive(Debug, Clone)]
 pub struct ProjectBriefing {

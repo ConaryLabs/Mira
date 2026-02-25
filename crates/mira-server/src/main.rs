@@ -100,7 +100,6 @@ async fn main() -> Result<()> {
             use std::io::Write;
             let result = tokio::task::spawn(async move {
                 match action {
-                    HookAction::Permission => mira::hooks::permission::run().await,
                     HookAction::SessionStart => mira::hooks::session::run().await,
                     HookAction::PreCompact => mira::hooks::precompact::run().await,
                     HookAction::PreTool => mira::hooks::pre_tool::run().await,

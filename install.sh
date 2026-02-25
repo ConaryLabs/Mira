@@ -365,7 +365,6 @@ MANUAL
     hooks_json=$("$JQ" -n --arg bin "$mira_bin" '{
   SessionStart: [{hooks: [{type: "command", command: ($bin + " hook session-start"), timeout: 10, statusMessage: "Mira: Loading session context..."}]}],
   UserPromptSubmit: [{hooks: [{type: "command", command: ($bin + " hook user-prompt"), timeout: 8, statusMessage: "Mira: Searching memories..."}]}],
-  PermissionRequest: [{hooks: [{type: "command", command: ($bin + " hook permission"), timeout: 3, statusMessage: "Mira: Checking permissions..."}]}],
   PreToolUse: [{matcher: "Grep|Glob|Read", hooks: [{type: "command", command: ($bin + " hook pre-tool"), timeout: 3, statusMessage: "Mira: Checking relevant context..."}]}],
   PostToolUse: [{matcher: "Write|Edit|NotebookEdit|Bash", hooks: [{type: "command", command: ($bin + " hook post-tool"), timeout: 5, statusMessage: "Mira: Tracking changes..."}]}],
   PostToolUseFailure: [{hooks: [{type: "command", command: ($bin + " hook post-tool-failure"), timeout: 5, async: true, statusMessage: "Mira: Analyzing failure..."}]}],

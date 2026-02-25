@@ -14,6 +14,7 @@ mod index;
 mod insights;
 mod migration_helpers;
 mod milestones;
+pub mod patterns;
 pub mod observations;
 pub mod pool;
 mod project;
@@ -42,7 +43,6 @@ mod session_goals_tests;
 mod session_tests;
 #[cfg(test)]
 mod tasks_tests;
-pub mod tech_debt;
 mod types;
 mod usage;
 
@@ -51,9 +51,6 @@ pub use background::{
     clear_old_health_issues_sync,
     delete_pending_embedding_sync,
     get_documented_by_category_sync,
-    get_error_heavy_functions_sync,
-    // Code health analysis
-    get_large_functions_sync,
     get_lib_symbols_sync,
     get_modules_for_doc_gaps_sync,
     // Summaries processor
@@ -106,7 +103,7 @@ pub use index::{
     queue_pending_embedding_sync,
 };
 pub(crate) use insights::compute_age_days;
-pub use insights::{dismiss_insight_sync, get_health_history_sync, get_unified_insights_sync};
+pub use insights::{dismiss_insight_sync, get_unified_insights_sync};
 pub use milestones::{
     calculate_goal_progress_sync, complete_milestone_sync, create_milestone_sync,
     delete_milestone_sync, get_milestone_by_id_sync, get_milestones_for_goal_sync,

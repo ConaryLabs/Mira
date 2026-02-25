@@ -32,17 +32,20 @@ impl super::HookClient {
             let session_id = session_id.to_string();
             let event_type = event_type.to_string();
             pool.try_interact("log_behavior", move |conn| {
-                let mut tracker = crate::proactive::behavior::BehaviorTracker::for_session(
-                    conn, session_id, project_id,
-                );
-                let et = match event_type.as_str() {
-                    "tool_failure" => crate::proactive::EventType::ToolFailure,
-                    "goal_update" => crate::proactive::EventType::GoalUpdate,
-                    _ => crate::proactive::EventType::ToolUse,
-                };
-                if let Err(e) = tracker.log_event(conn, et, event_data) {
-                    tracing::debug!("Failed to log behavior: {e}");
-                }
+                let event_data_str =
+                    serde_json::to_string(&event_data).unwrap_or_else(|_| "{}".to_string());
+                let seq: i64 = conn
+                    .query_row(
+                        "SELECT COALESCE(MAX(sequence_position), 0) + 1 FROM session_behavior_log WHERE session_id = ?",
+                        rusqlite::params![&session_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(1);
+                conn.execute(
+                    "INSERT INTO session_behavior_log (session_id, project_id, event_type, event_data, sequence_position)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![&session_id, project_id, &event_type, &event_data_str, seq],
+                ).ok();
                 Ok(())
             })
             .await;

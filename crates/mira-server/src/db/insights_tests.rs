@@ -1,5 +1,5 @@
 // crates/mira-server/src/db/insights_tests.rs
-// Tests for unified insights digest — pondering, doc gaps, and health trends
+// Tests for unified insights digest — pondering and doc gaps
 
 use super::insights::*;
 use super::test_support::setup_test_connection;
@@ -37,30 +37,6 @@ mod tests {
                 pattern_data,
                 confidence,
                 triggered_at
-            ],
-        )
-        .unwrap();
-        conn.last_insert_rowid()
-    }
-
-    fn insert_health_snapshot(
-        conn: &rusqlite::Connection,
-        project_id: i64,
-        avg_score: f64,
-        max_score: f64,
-        module_count: i64,
-        snapshot_at: &str,
-    ) -> i64 {
-        conn.execute(
-            "INSERT INTO health_snapshots (project_id, avg_debt_score, max_debt_score, tier_distribution, module_count, snapshot_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                project_id,
-                avg_score,
-                max_score,
-                r#"{"A":5,"B":3}"#,
-                module_count,
-                snapshot_at
             ],
         )
         .unwrap();
@@ -409,10 +385,6 @@ mod tests {
         // Insert doc gap
         insert_doc_task(&conn, project_id, "api", "endpoint", "/docs/api.md", "high");
 
-        // Insert health snapshots (need 2 for trend, with >10% delta)
-        insert_health_snapshot(&conn, project_id, 50.0, 80.0, 10, &days_ago(7));
-        insert_health_snapshot(&conn, project_id, 60.0, 90.0, 10, &now);
-
         let results = get_unified_insights_sync(&conn, project_id, None, 0.0, 30, 100).unwrap();
 
         let sources: Vec<&str> = results.iter().map(|r| r.source.as_str()).collect();
@@ -424,11 +396,6 @@ mod tests {
         assert!(
             sources.contains(&"doc_gap"),
             "Missing doc_gap source, got: {:?}",
-            sources
-        );
-        assert!(
-            sources.contains(&"health_trend"),
-            "Missing health_trend source, got: {:?}",
             sources
         );
     }
@@ -622,35 +589,6 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_source_health_trend_only() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        insert_behavior_pattern(
-            &conn,
-            project_id,
-            "insight_session",
-            r#"{"description":"pondering"}"#,
-            0.9,
-            &now,
-        );
-        // Two snapshots with >10% delta for health trend
-        insert_health_snapshot(&conn, project_id, 40.0, 60.0, 5, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 50.0, 70.0, 5, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert!(
-            results.iter().all(|r| r.source == "health_trend"),
-            "filter_source='health_trend' should exclude pondering"
-        );
-        assert!(!results.is_empty(), "Should have health_trend results");
-    }
-
-    #[test]
     fn test_empty_insights() {
         let conn = setup_test_connection();
         let project_id = create_test_project(&conn);
@@ -760,228 +698,6 @@ mod tests {
         assert_eq!(
             results[0].evidence,
             Some("file1.rs; file2.rs; file3.rs".to_string())
-        );
-    }
-
-    // ═══════════════════════════════════════
-    // fetch_health_trend_insights Tests
-    // (Private fn — tested via get_unified_insights_sync)
-    // ═══════════════════════════════════════
-
-    #[test]
-    fn test_health_trend_less_than_2_snapshots() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-
-        // Only 1 snapshot
-        insert_health_snapshot(&conn, project_id, 50.0, 80.0, 10, &days_ago(1));
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert!(
-            results.is_empty(),
-            "Less than 2 snapshots should return no health trend"
-        );
-    }
-
-    #[test]
-    fn test_health_trend_small_delta_no_insight() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-
-        // Two snapshots with < 10% delta
-        insert_health_snapshot(&conn, project_id, 50.0, 80.0, 10, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 52.0, 82.0, 10, &days_ago(0));
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert!(
-            results.is_empty(),
-            "Delta < 10% should not produce a health trend insight"
-        );
-    }
-
-    #[test]
-    fn test_health_trend_degraded() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        // prev_avg=40.0, current_avg=50.0 → delta = +25% → degraded
-        insert_health_snapshot(&conn, project_id, 40.0, 60.0, 8, &days_ago(5));
-        insert_health_snapshot(&conn, project_id, 50.0, 70.0, 8, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].trend, Some("degraded".to_string()));
-        assert!(results[0].description.contains("degraded"));
-        assert_eq!(results[0].source, "health_trend");
-        assert_eq!(results[0].source_type, "Health Trend");
-    }
-
-    #[test]
-    fn test_health_trend_improved() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        // prev_avg=60.0, current_avg=40.0 → delta = -33% → improved
-        insert_health_snapshot(&conn, project_id, 60.0, 80.0, 12, &days_ago(5));
-        insert_health_snapshot(&conn, project_id, 40.0, 60.0, 12, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].trend, Some("improved".to_string()));
-        assert!(results[0].description.contains("improved"));
-    }
-
-    #[test]
-    fn test_health_trend_prev_avg_zero_with_current() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        // prev_avg=0.0 with current_avg>0 → returns a "baseline" trend
-        insert_health_snapshot(&conn, project_id, 0.0, 0.0, 5, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 50.0, 70.0, 5, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(
-            results.len(),
-            1,
-            "prev_avg=0 with current>0 should return baseline insight"
-        );
-        assert_eq!(results[0].trend, Some("baseline".to_string()));
-        assert!(results[0].description.contains("baseline"));
-    }
-
-    #[test]
-    fn test_health_trend_prev_avg_zero_both_zero() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        // prev_avg=0.0 and current_avg=0.0 → empty (nothing to report)
-        insert_health_snapshot(&conn, project_id, 0.0, 0.0, 5, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 0.0, 0.0, 5, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert!(
-            results.is_empty(),
-            "Both prev_avg and current_avg=0 should return empty"
-        );
-    }
-
-    #[test]
-    fn test_health_trend_7day_average_evidence() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        // Insert multiple snapshots within 7 days for averaging
-        insert_health_snapshot(&conn, project_id, 40.0, 60.0, 10, &days_ago(6));
-        insert_health_snapshot(&conn, project_id, 42.0, 62.0, 10, &days_ago(4));
-        insert_health_snapshot(&conn, project_id, 55.0, 75.0, 10, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(results.len(), 1);
-        // Evidence should contain 7-day average info
-        assert!(
-            results[0].evidence.is_some(),
-            "Should have 7-day average evidence"
-        );
-        let evidence = results[0].evidence.as_ref().unwrap();
-        assert!(
-            evidence.contains("7-day avg"),
-            "Evidence should mention 7-day avg: {}",
-            evidence
-        );
-    }
-
-    #[test]
-    fn test_health_trend_confidence_large_delta() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        // delta > 25% → confidence = 0.85
-        insert_health_snapshot(&conn, project_id, 30.0, 50.0, 5, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 50.0, 70.0, 5, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert!(
-            (results[0].confidence - 0.85).abs() < 0.01,
-            "Large delta should have confidence=0.85, got {}",
-            results[0].confidence
-        );
-    }
-
-    #[test]
-    fn test_health_trend_confidence_moderate_delta() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        // 10% < delta < 25% → confidence = 0.7
-        // prev=50.0, current=56.0 → delta = 12%
-        insert_health_snapshot(&conn, project_id, 50.0, 70.0, 5, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 56.0, 76.0, 5, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert!(
-            (results[0].confidence - 0.7).abs() < 0.01,
-            "Moderate delta should have confidence=0.7, got {}",
-            results[0].confidence
-        );
-    }
-
-    #[test]
-    fn test_health_trend_change_summary() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        insert_health_snapshot(&conn, project_id, 40.0, 60.0, 5, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 55.0, 75.0, 5, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert!(results[0].change_summary.is_some());
-        let summary = results[0].change_summary.as_ref().unwrap();
-        assert!(
-            summary.contains("40.0") && summary.contains("55.0"),
-            "Change summary should show prev→current: {}",
-            summary
         );
     }
 
@@ -1567,23 +1283,6 @@ mod tests {
             results[0].row_id.is_some(),
             "Doc gap insights should have a row_id for dismissal"
         );
-    }
-
-    #[test]
-    fn test_health_trend_insight_has_no_row_id() {
-        let conn = setup_test_connection();
-        let project_id = create_test_project(&conn);
-        let now = days_ago(0);
-
-        insert_health_snapshot(&conn, project_id, 40.0, 60.0, 5, &days_ago(3));
-        insert_health_snapshot(&conn, project_id, 55.0, 75.0, 5, &now);
-
-        let results =
-            get_unified_insights_sync(&conn, project_id, Some("health_trend"), 0.0, 30, 100)
-                .unwrap();
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].row_id, None);
     }
 
     // ═══════════════════════════════════════

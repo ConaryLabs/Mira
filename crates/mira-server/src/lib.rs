@@ -22,7 +22,6 @@ pub mod indexer;
 pub mod ipc;
 pub mod llm;
 pub mod mcp;
-pub mod proactive;
 pub mod project_files;
 pub mod search;
 pub mod tasks;

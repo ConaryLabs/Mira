@@ -2,7 +2,7 @@
 //!
 //! Retention policy (configurable via `[retention]` in config.toml):
 //! - tool_history_days (default 30): tool_history,
-//!   session_behavior_log, proactive_interventions, injection_feedback, proactive_suggestions
+//!   session_behavior_log
 //! - sessions_days (default 90): sessions (completed only), session_snapshots, session_tasks,
 //!   session_goals
 //! - analytics_days (default 180): llm_usage, embeddings_usage
@@ -72,24 +72,6 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             days: config.tool_history_days,
             extra_filter: "",
         },
-        RetentionRule {
-            table: "proactive_interventions",
-            time_column: "created_at",
-            days: config.tool_history_days,
-            extra_filter: "",
-        },
-        RetentionRule {
-            table: "injection_feedback",
-            time_column: "created_at",
-            days: config.tool_history_days,
-            extra_filter: "",
-        },
-        RetentionRule {
-            table: "proactive_suggestions",
-            time_column: "created_at",
-            days: config.tool_history_days,
-            extra_filter: "",
-        },
         // ── Analytics ──
         RetentionRule {
             table: "llm_usage",
@@ -128,13 +110,6 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
         RetentionRule {
             table: "system_observations",
             time_column: "created_at",
-            days: config.observations_days,
-            extra_filter: "",
-        },
-        // ── Health snapshots (same cadence as observations) ──
-        RetentionRule {
-            table: "health_snapshots",
-            time_column: "snapshot_at",
             days: config.observations_days,
             extra_filter: "",
         },
