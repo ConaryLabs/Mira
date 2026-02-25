@@ -5,26 +5,20 @@ description: This skill should be used when the user asks "token efficiency", "h
 
 # Mira Efficiency Report
 
-## Injection Stats
+## Storage Stats
 
 !`mira tool session '{"action":"storage_status"}'`
-
-## Injection Feedback
-
-!`mira tool insights '{"action":"insights","insight_source":"injection_feedback"}'`
 
 ## Instructions
 
 Present a concise efficiency dashboard from the data above:
 
-### Injection Overview
-- **Total injections**: from `injection_total_count` in server_state
-- **Total chars injected**: from `injection_total_chars` in server_state
-- **Avg chars/injection**: computed from above
+### Storage Overview
+- **Database sizes**: from storage_status
+- **Memory count**: total stored memories
+- **Session count**: total recorded sessions
 
-### Feedback Quality
-- From injection_feedback data: how many injections were referenced vs not
-- **Hit rate**: % of injections where the context was actually used by Claude
+Note: Detailed injection stats (total injections, chars injected, hit rate) will be available in a future release.
 
 ### Active Efficiency Features
 List the active token-saving mechanisms:

@@ -627,4 +627,29 @@ mod tests {
         assert!(!summary.contains("Files:"));
         assert!(summary.contains("Identifiers:"));
     }
+
+    #[test]
+    fn test_narrow_subagent_types() {
+        assert!(is_narrow_subagent("explore"));
+        assert!(is_narrow_subagent("code-reviewer"));
+        assert!(is_narrow_subagent("code-simplifier"));
+        assert!(is_narrow_subagent("haiku"));
+    }
+
+    #[test]
+    fn test_full_subagent_types() {
+        assert!(!is_narrow_subagent("plan"));
+        assert!(!is_narrow_subagent("general-purpose"));
+        assert!(!is_narrow_subagent("Bash"));
+        assert!(!is_narrow_subagent(""));
+    }
+
+    #[test]
+    fn test_narrow_subagent_case_insensitive() {
+        // is_narrow_subagent calls .to_lowercase() so it is case-insensitive.
+        assert!(is_narrow_subagent("Explore"));
+        assert!(is_narrow_subagent("EXPLORE"));
+        assert!(is_narrow_subagent("Code-Reviewer"));
+        assert!(is_narrow_subagent("HAIKU"));
+    }
 }

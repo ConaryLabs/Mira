@@ -12,7 +12,6 @@ use crate::proactive::behavior::BehaviorTracker;
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -169,10 +168,14 @@ fn injection_dedup_path(session_id: &str) -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".mira")
         .join("tmp");
-    let sid = if session_id.len() > 16 {
-        &session_id[..16]
+    let sanitized: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    let sid = if sanitized.len() > 16 {
+        sanitized[..16].to_string()
     } else {
-        session_id
+        sanitized
     };
     mira_dir.join(format!("inj_dedup_{}.json", sid))
 }
@@ -195,16 +198,45 @@ fn save_injection_dedup(session_id: &str, state: &InjectionDedupState) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(json) = serde_json::to_string(state) {
-        let _ = std::fs::write(&path, json);
+    let Ok(json) = serde_json::to_string(state) else {
+        return;
+    };
+    let tmp_path = path.with_extension("tmp");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        if std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp_path)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(json.as_bytes())
+            })
+            .is_ok()
+        {
+            let _ = std::fs::rename(&tmp_path, &path);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if std::fs::write(&tmp_path, &json).is_ok() {
+            let _ = std::fs::rename(&tmp_path, &path);
+        }
     }
 }
 
-/// Compute a content hash of context string for dedup comparison
+/// Compute a content hash of context string for dedup comparison.
+/// Uses FNV-1a which is stable across compilations, unlike DefaultHasher.
 fn context_hash(context: &str) -> u64 {
-    let mut hasher = std::hash::DefaultHasher::new();
-    context.hash(&mut hasher);
-    hasher.finish()
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in context.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 /// Check if this context was recently injected and record it.
@@ -296,7 +328,7 @@ async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
                 lines.push(format!("  Decision: {}", d));
             }
             for w in ctx.active_work.iter().take(2) {
-                lines.push(format!("  Active: {}", w));
+                lines.push(format!("  In progress: {}", w));
             }
             for i in ctx.issues.iter().take(2) {
                 lines.push(format!("  Issue: {}", i));
@@ -480,7 +512,11 @@ async fn run_direct(
 ) -> Result<()> {
     // Open database pools (main + code index)
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open_hook(std::path::Path::new(&db_path)).await?);
+    let pool = Arc::new(
+        DatabasePool::open_hook(std::path::Path::new(&db_path))
+            .await
+            .context("Failed to open Mira database for UserPromptSubmit")?,
+    );
     let code_db_path = get_code_db_path();
     let code_pool = if code_db_path.exists() {
         match DatabasePool::open_code_db(&code_db_path).await {
@@ -1021,7 +1057,10 @@ mod tests {
         let context = "repeated context string for testing";
         let _ = check_and_record_injection(&sid, context);
         let is_dup = check_and_record_injection(&sid, context);
-        assert!(is_dup, "Second identical injection should be detected as duplicate");
+        assert!(
+            is_dup,
+            "Second identical injection should be detected as duplicate"
+        );
 
         let _ = std::fs::remove_file(injection_dedup_path(&sid));
     }
@@ -1056,7 +1095,10 @@ mod tests {
 
         // The oldest context should have been evicted
         let is_dup = check_and_record_injection(&sid, "unique context 0");
-        assert!(!is_dup, "Evicted context should not be detected as duplicate");
+        assert!(
+            !is_dup,
+            "Evicted context should not be detected as duplicate"
+        );
 
         let _ = std::fs::remove_file(injection_dedup_path(&sid));
     }

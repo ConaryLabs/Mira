@@ -1331,3 +1331,59 @@ fn new_constants_have_expected_values() {
     assert_eq!(MAX_FILE_REFS, 10);
     assert_eq!(MIN_FILE_PATH_LEN, 5);
 }
+
+// ── Post-compaction flag lifecycle ──────────────────────────────────
+
+#[test]
+fn test_post_compaction_flag_set_and_check() {
+    let sid = format!("test-flag-{}", std::process::id());
+    // Clean up any leftover state
+    let path = post_compaction_flag_path(&sid);
+    let _ = std::fs::remove_file(&path);
+
+    // Flag should not exist yet
+    assert!(!check_post_compaction_flag(&sid));
+
+    // Set the flag
+    set_post_compaction_flag(&sid);
+
+    // Check returns true (flag is fresh)
+    assert!(
+        check_post_compaction_flag(&sid),
+        "flag should be present and fresh after set"
+    );
+
+    // Consume returns true (flag was present)
+    assert!(
+        consume_post_compaction_flag(&sid),
+        "consume should return true"
+    );
+
+    // After consume, check returns false
+    assert!(
+        !check_post_compaction_flag(&sid),
+        "flag should be gone after consume"
+    );
+
+    // Cleanup
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn test_post_compaction_flag_not_set() {
+    let sid = format!("test-flag-notset-{}", std::process::id());
+    let path = post_compaction_flag_path(&sid);
+    let _ = std::fs::remove_file(&path);
+
+    // check and consume should both return false when no flag exists
+    assert!(!check_post_compaction_flag(&sid));
+    assert!(!consume_post_compaction_flag(&sid));
+}
+
+#[test]
+fn test_post_compaction_flag_empty_session() {
+    // Empty session_id: set should be a no-op, check/consume should return false
+    set_post_compaction_flag("");
+    assert!(!check_post_compaction_flag(""));
+    assert!(!consume_post_compaction_flag(""));
+}

@@ -334,4 +334,96 @@ mod tests {
         assert!(ctx.user_id.is_none());
         assert!(ctx.current_branch.is_none());
     }
+
+    use crate::db::test_support::setup_test_pool_with_project;
+
+    #[tokio::test]
+    async fn test_keyword_recall_requires_two_keywords() {
+        // A query with only one word longer than 3 chars should return empty.
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        pool.interact(move |conn| {
+            conn.execute(
+                "INSERT INTO memory_facts (project_id, content, fact_type, scope, status, confidence, suspicious)
+                 VALUES (?1, 'authentication token handling', 'general', 'project', 'confirmed', 1.0, 0)",
+                rusqlite::params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        // "auth" has 4 chars (>3), but is the only keyword — must return empty.
+        let results = keyword_recall(&pool, project_id, "auth").await;
+        assert!(results.is_empty(), "single keyword should return empty");
+    }
+
+    #[tokio::test]
+    async fn test_keyword_recall_and_join_matches() {
+        // Two keywords both >3 chars should find a matching row via AND-join.
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        pool.interact(move |conn| {
+            conn.execute(
+                "INSERT INTO memory_facts (project_id, content, fact_type, scope, status, confidence, suspicious)
+                 VALUES (?1, 'authentication token handling', 'general', 'project', 'confirmed', 1.0, 0)",
+                rusqlite::params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        // Both "authentication" and "token" are >3 chars — AND-join should match.
+        let results = keyword_recall(&pool, project_id, "authentication token").await;
+        assert!(!results.is_empty(), "two keywords should match the row");
+        assert!(results[0].contains("authentication"));
+    }
+
+    #[tokio::test]
+    async fn test_keyword_recall_short_words_filtered() {
+        // All words are <= 3 chars — no valid keywords remain after filtering.
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        pool.interact(move |conn| {
+            conn.execute(
+                "INSERT INTO memory_facts (project_id, content, fact_type, scope, status, confidence, suspicious)
+                 VALUES (?1, 'fix the bug', 'general', 'project', 'confirmed', 1.0, 0)",
+                rusqlite::params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        let results = keyword_recall(&pool, project_id, "fix the bug").await;
+        assert!(
+            results.is_empty(),
+            "all short words should produce no valid keywords and return empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_keyword_recall_and_join_no_partial_match() {
+        // Row contains only one of the two keywords — AND-join should not match.
+        let (pool, project_id) = setup_test_pool_with_project().await;
+
+        pool.interact(move |conn| {
+            conn.execute(
+                "INSERT INTO memory_facts (project_id, content, fact_type, scope, status, confidence, suspicious)
+                 VALUES (?1, 'authentication only content here', 'general', 'project', 'confirmed', 1.0, 0)",
+                rusqlite::params![project_id],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        // "authentication" matches but "embeddings" does not — AND requires both.
+        let results = keyword_recall(&pool, project_id, "authentication embeddings").await;
+        assert!(
+            results.is_empty(),
+            "AND-join should not match when only one keyword is present"
+        );
+    }
 }

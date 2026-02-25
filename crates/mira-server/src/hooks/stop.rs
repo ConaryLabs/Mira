@@ -500,23 +500,19 @@ async fn log_injection_telemetry(project_id: i64) {
         })
         .await;
 
-    if let Ok((total, referenced, avg_overlap, total_injections, total_chars)) = stats {
-        if total > 0 {
-            let hit_rate = if total > 0 {
-                (referenced as f64 / total as f64) * 100.0
-            } else {
-                0.0
-            };
-            tracing::info!(
-                total_24h = total,
-                referenced = referenced,
-                hit_rate = format!("{:.0}%", hit_rate),
-                avg_overlap = format!("{:.2}", avg_overlap),
-                lifetime_injections = total_injections,
-                lifetime_chars = total_chars,
-                "[mira] Injection efficiency"
-            );
-        }
+    if let Ok((total, referenced, avg_overlap, total_injections, total_chars)) = stats
+        && total > 0
+    {
+        let hit_rate = (referenced as f64 / total as f64) * 100.0;
+        tracing::info!(
+            total_24h = total,
+            referenced = referenced,
+            hit_rate = format!("{:.0}%", hit_rate),
+            avg_overlap = format!("{:.2}", avg_overlap),
+            lifetime_injections = total_injections,
+            lifetime_chars = total_chars,
+            "[mira] Injection efficiency"
+        );
     }
 }
 

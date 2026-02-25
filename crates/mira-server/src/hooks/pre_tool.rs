@@ -39,8 +39,11 @@ fn try_acquire_lock() -> Option<LockGuard> {
         .join("tmp")
         .join("pretool.lock");
 
-    if let Some(parent) = lock_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Some(parent) = lock_path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!("Failed to create Mira tmp dir: {e}");
+        return None;
     }
 
     // Check for existing lock
@@ -196,11 +199,15 @@ fn read_cache_path(session_id: &str) -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".mira")
         .join("tmp");
-    // Use first 16 chars of session_id to avoid overly long filenames
-    let sid = if session_id.len() > 16 {
-        &session_id[..16]
+    // Sanitize to ASCII alphanumeric + hyphens, then truncate to 16 chars
+    let sanitized: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    let sid = if sanitized.len() > 16 {
+        &sanitized[..16]
     } else {
-        session_id
+        &sanitized
     };
     mira_dir.join(format!("reads_{}.json", sid))
 }
@@ -220,11 +227,32 @@ fn save_read_cache(session_id: &str, cache: &FileReadCache) {
         return;
     }
     let path = read_cache_path(session_id);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!("Failed to create Mira tmp dir: {e}");
+        return;
     }
     if let Ok(json) = serde_json::to_string(cache) {
-        let _ = std::fs::write(&path, json);
+        // Write to temp file then rename for atomicity (prevents corruption on crash)
+        let temp = path.with_extension("tmp");
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        if let Ok(mut f) = opts.open(&temp) {
+            if let Err(e) = f.write_all(json.as_bytes()) {
+                tracing::debug!("Failed to write read cache temp file: {e}");
+                return;
+            }
+            drop(f);
+            if let Err(e) = std::fs::rename(&temp, &path) {
+                tracing::debug!("Failed to rename read cache temp file: {e}");
+            }
+        }
     }
 }
 
@@ -263,7 +291,7 @@ fn check_and_record_read(session_id: &str, file_path: &str) -> Option<String> {
                 .and_then(|f| f.to_str())
                 .unwrap_or(file_path);
             Some(format!(
-                "[Mira/efficiency] You already read {} ({}), file unchanged. Consider using existing context.",
+                "[Mira/efficiency] You already read {} ({}), file unchanged. Prefer using content already in your context window.",
                 filename, age_str
             ))
         } else {
@@ -386,8 +414,13 @@ async fn get_symbol_hints(file_path: &str) -> Option<String> {
     ))
 }
 
-/// Count lines in a file quickly (no full read, just count newlines)
+/// Count lines in a file quickly (no full read, just count newlines).
+/// Files larger than 50MB are skipped and return 0.
 fn count_file_lines(path: &str) -> usize {
+    const MAX_SIZE: u64 = 50 * 1024 * 1024;
+    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_SIZE {
+        return 0;
+    }
     std::fs::read(path)
         .map(|bytes| bytes.iter().filter(|&&b| b == b'\n').count())
         .unwrap_or(0)
@@ -463,30 +496,30 @@ pub async fn run() -> Result<()> {
 
     // Handle Read: check file-read cache and symbol hints (fast, no embeddings)
     // This runs before the lock/cooldown path to avoid unnecessary embedding calls.
-    if pre_input.tool_name == "Read" {
-        if let Some(ref fp) = pre_input.file_path {
-            let mut hints: Vec<String> = Vec::new();
+    if pre_input.tool_name == "Read"
+        && let Some(ref fp) = pre_input.file_path
+    {
+        let mut hints: Vec<String> = Vec::new();
 
-            // Reread advisory
-            if let Some(hint) = check_and_record_read(&pre_input.session_id, fp) {
-                hints.push(hint);
-            }
+        // Reread advisory
+        if let Some(hint) = check_and_record_read(&pre_input.session_id, fp) {
+            hints.push(hint);
+        }
 
-            // Symbol map for large files (> 200 lines)
-            if let Some(symbol_hint) = get_symbol_hints(fp).await {
-                hints.push(symbol_hint);
-            }
+        // Symbol map for large files (> 200 lines)
+        if let Some(symbol_hint) = get_symbol_hints(fp).await {
+            hints.push(symbol_hint);
+        }
 
-            if !hints.is_empty() {
-                let output = serde_json::json!({
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "additionalContext": hints.join("\n")
-                    }
-                });
-                write_hook_output(&output);
-                return Ok(());
-            }
+        if !hints.is_empty() {
+            let output = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": hints.join("\n")
+                }
+            });
+            write_hook_output(&output);
+            return Ok(());
         }
     }
 
@@ -530,7 +563,7 @@ pub async fn run() -> Result<()> {
     // Cooldown and dedup check — replay last injection summary if available
     if let Some(state) = read_cooldown() {
         let now = unix_now();
-        let in_cooldown = now - state.last_fired_at < COOLDOWN_SECS;
+        let in_cooldown = now.saturating_sub(state.last_fired_at) < COOLDOWN_SECS;
         let is_duplicate = state.recent_queries.contains(&search_query);
 
         if in_cooldown || is_duplicate {
@@ -1111,6 +1144,54 @@ mod tests {
     }
 
     #[test]
+    fn file_read_cache_hint_when_aged_out() {
+        let sid = format!("test_aged_{}", std::process::id());
+        let cache_path = read_cache_path(&sid);
+        let _ = std::fs::remove_file(&cache_path);
+
+        // Create a real temp file so mtime is consistent
+        let tmp_file = format!("/tmp/mira_aged_test_{}.rs", std::process::id());
+        std::fs::write(&tmp_file, b"fn foo() {}").unwrap();
+        let current_mtime = file_mtime_secs(&tmp_file);
+
+        // Inject a cache entry with last_read_at far in the past
+        let past_ts = unix_now().saturating_sub(REREAD_MIN_AGE_SECS + 120);
+        let mut cache = FileReadCache::default();
+        cache.entries.insert(
+            tmp_file.clone(),
+            FileReadEntry {
+                last_read_at: past_ts,
+                mtime_secs: current_mtime,
+            },
+        );
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let json = serde_json::to_string(&cache).unwrap();
+        std::fs::write(&cache_path, json).unwrap();
+
+        // check_and_record_read should now produce a hint
+        let hint = check_and_record_read(&sid, &tmp_file);
+        assert!(hint.is_some(), "Aged-out reread should produce a hint");
+        let hint_str = hint.unwrap();
+        assert!(
+            hint_str.contains("[Mira/efficiency]"),
+            "Hint should contain [Mira/efficiency]: {hint_str}"
+        );
+        assert!(
+            hint_str.contains("already read"),
+            "Hint should contain 'already read': {hint_str}"
+        );
+        assert!(
+            hint_str.contains("unchanged"),
+            "Hint should contain 'unchanged': {hint_str}"
+        );
+
+        let _ = std::fs::remove_file(&cache_path);
+        let _ = std::fs::remove_file(&tmp_file);
+    }
+
+    #[test]
     fn file_mtime_secs_nonexistent_file() {
         assert_eq!(file_mtime_secs("/nonexistent/path/xyz.rs"), 0);
     }
@@ -1145,14 +1226,18 @@ mod tests {
         // Use the workspace-relative path; count_file_lines needs absolute/valid path
         let this_file = concat!(env!("CARGO_MANIFEST_DIR"), "/src/hooks/pre_tool.rs");
         let count = count_file_lines(this_file);
-        assert!(count > 100, "pre_tool.rs should have > 100 lines, got {}", count);
+        assert!(
+            count > 100,
+            "pre_tool.rs should have > 100 lines, got {}",
+            count
+        );
     }
 
     #[test]
     fn symbol_hint_threshold() {
         // Files under threshold should not trigger hints
-        assert!(SYMBOL_HINT_MIN_LINES == 200);
-        assert!(SYMBOL_HINT_MAX_SYMBOLS == 20);
+        assert_eq!(SYMBOL_HINT_MIN_LINES, 200);
+        assert_eq!(SYMBOL_HINT_MAX_SYMBOLS, 20);
     }
 
     #[tokio::test]

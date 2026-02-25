@@ -86,8 +86,20 @@ pub(crate) fn merge_compaction_contexts(
     existing: &serde_json::Value,
     new: &serde_json::Value,
 ) -> serde_json::Value {
-    let old: CompactionContext = serde_json::from_value(existing.clone()).unwrap_or_default();
-    let incoming: CompactionContext = serde_json::from_value(new.clone()).unwrap_or_default();
+    let old: CompactionContext = match serde_json::from_value(existing.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!("Failed to deserialize existing compaction context: {e}");
+            CompactionContext::default()
+        }
+    };
+    let incoming: CompactionContext = match serde_json::from_value(new.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!("Failed to deserialize incoming compaction context: {e}");
+            CompactionContext::default()
+        }
+    };
 
     let merged = CompactionContext {
         decisions: merge_vec_field(&old.decisions, &incoming.decisions, MAX_ITEMS_PER_CATEGORY),
@@ -280,16 +292,20 @@ pub(crate) fn post_compaction_flag_path(session_id: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".mira")
         .join("tmp");
-    let sid = if session_id.len() > 16 {
-        &session_id[..16]
+    let sanitized: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    let sid = if sanitized.len() > 16 {
+        sanitized[..16].to_string()
     } else {
-        session_id
+        sanitized
     };
     mira_dir.join(format!("post_compact_{}.flag", sid))
 }
 
 /// Set the post-compaction flag for a session
-fn set_post_compaction_flag(session_id: &str) {
+pub(super) fn set_post_compaction_flag(session_id: &str) {
     if session_id.is_empty() || session_id == "unknown" {
         return;
     }

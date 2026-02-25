@@ -102,6 +102,7 @@ See `.env.example` for all options.
 | `/mira:qa-hardening` | Production readiness review and hardening backlog |
 | `/mira:refactor` | Safe code restructuring with architect + reviewer validation |
 | `/mira:help` | Show all available Mira commands and tools |
+| `/mira:efficiency` | Token efficiency stats and active optimization features |
 | `/mira:status` | Quick health check: index stats, storage, active goals |
 
 ## Hook Integration
@@ -112,7 +113,7 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 |------|-----------------|
 | `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info, incomplete tasks from previous session |
 | `UserPromptSubmit` | Pending tasks, relevant memories, proactive predictions, pre-generated suggestions, team context |
-| `PreToolUse` | Relevant memories before Grep/Glob/Read/Edit/Write (semantic search with keyword fallback from search pattern) |
+| `PreToolUse` | Relevant memories before Grep/Glob/Read (semantic search with keyword fallback); file reread advisory and symbol hints for Read |
 | `PostToolUse` | Tracks file modifications, team conflict detection |
 | `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |
 | `Stop` | Session snapshot, task export, goal progress check, auto-export to CLAUDE.local.md |
