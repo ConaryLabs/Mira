@@ -181,3 +181,109 @@ pub async fn handle_code<C: ToolContext>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcp::requests::{CodeAction, CodeRequest};
+    use crate::tools::core::test_utils::MockToolContext;
+
+    fn make_code_request(action: CodeAction) -> CodeRequest {
+        CodeRequest {
+            action,
+            query: None,
+            file_path: None,
+            function_name: None,
+            symbol_type: None,
+            limit: None,
+            from_ref: None,
+            to_ref: None,
+            include_impact: None,
+            scope: None,
+            budget: None,
+            depth: None,
+        }
+    }
+
+    // ========================================================================
+    // handle_code dispatch: missing required fields
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_handle_code_search_missing_query() {
+        let ctx = MockToolContext::with_project().await;
+        let req = make_code_request(CodeAction::Search);
+        match handle_code(&ctx, req).await {
+            Err(e) => assert!(
+                e.to_string().contains("query"),
+                "Error should mention 'query', got: {e}"
+            ),
+            Ok(_) => panic!("Search without query should fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_code_symbols_missing_file_path() {
+        let ctx = MockToolContext::with_project().await;
+        let req = make_code_request(CodeAction::Symbols);
+        match handle_code(&ctx, req).await {
+            Err(e) => assert!(
+                e.to_string().contains("file_path"),
+                "Error should mention 'file_path', got: {e}"
+            ),
+            Ok(_) => panic!("Symbols without file_path should fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_code_callers_missing_function_name() {
+        let ctx = MockToolContext::with_project().await;
+        let req = make_code_request(CodeAction::Callers);
+        match handle_code(&ctx, req).await {
+            Err(e) => assert!(
+                e.to_string().contains("function_name"),
+                "Error should mention 'function_name', got: {e}"
+            ),
+            Ok(_) => panic!("Callers without function_name should fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_code_callees_missing_function_name() {
+        let ctx = MockToolContext::with_project().await;
+        let req = make_code_request(CodeAction::Callees);
+        match handle_code(&ctx, req).await {
+            Err(e) => assert!(
+                e.to_string().contains("function_name"),
+                "Error should mention 'function_name', got: {e}"
+            ),
+            Ok(_) => panic!("Callees without function_name should fail"),
+        }
+    }
+
+    // ========================================================================
+    // query_callers / query_callees: empty index returns empty vec
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_query_callers_empty_index() {
+        let ctx = MockToolContext::with_project().await;
+        let result = query_callers(&ctx, "some_function", 10).await;
+        assert!(result.is_ok(), "query_callers should succeed with empty index");
+        assert!(
+            result.unwrap().is_empty(),
+            "No callers expected in empty index"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_callees_empty_index() {
+        let ctx = MockToolContext::with_project().await;
+        let result = query_callees(&ctx, "some_function", 10).await;
+        assert!(result.is_ok(), "query_callees should succeed with empty index");
+        assert!(
+            result.unwrap().is_empty(),
+            "No callees expected in empty index"
+        );
+    }
+}

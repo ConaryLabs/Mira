@@ -135,6 +135,10 @@ pub async fn get_project_info<C: ToolContext + ?Sized>(ctx: &C) -> ProjectInfo {
     }
 }
 
+// Shared test utilities (only compiled during tests)
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 // Sub-modules with tool implementations
 pub mod claude_local;
 pub mod code;

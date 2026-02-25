@@ -521,3 +521,119 @@ pub fn get_symbols(
         }))
     } // #[cfg(feature = "parsers")]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::core::test_utils::MockToolContext;
+
+    // ========================================================================
+    // search_code
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_search_code_empty_query_returns_no_results_message() {
+        let ctx = MockToolContext::with_project().await;
+        // Empty query succeeds at the search_code level (validation is in handle_code).
+        // With an empty index it should return the "No code index found" message.
+        let result = search_code(&ctx, String::new(), None).await;
+        assert!(result.is_ok(), "search_code with empty query should not error");
+        let output = result.unwrap();
+        assert!(
+            output.0.message.contains("No code index")
+                || output.0.message.contains("No code matches"),
+            "Expected 'no index' message, got: {}",
+            output.0.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_code_valid_query_empty_index_returns_no_index_message() {
+        let ctx = MockToolContext::with_project().await;
+        let result = search_code(&ctx, "authentication".to_string(), None).await;
+        assert!(result.is_ok(), "search_code should succeed with empty index");
+        let output = result.unwrap();
+        // No indexed data -> should mention indexing
+        assert!(
+            output.0.message.contains("No code index")
+                || output.0.message.contains("No code matches"),
+            "Expected no-index message, got: {}",
+            output.0.message
+        );
+    }
+
+    // ========================================================================
+    // find_function_callers / find_function_callees: empty function_name
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_find_function_callers_empty_name_errors() {
+        let ctx = MockToolContext::with_project().await;
+        match find_function_callers(&ctx, String::new(), None).await {
+            Err(e) => assert!(
+                e.to_string().contains("function_name"),
+                "Error should mention 'function_name', got: {e}"
+            ),
+            Ok(_) => panic!("Empty function_name should fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_function_callees_empty_name_errors() {
+        let ctx = MockToolContext::with_project().await;
+        match find_function_callees(&ctx, String::new(), None).await {
+            Err(e) => assert!(
+                e.to_string().contains("function_name"),
+                "Error should mention 'function_name', got: {e}"
+            ),
+            Ok(_) => panic!("Empty function_name should fail"),
+        }
+    }
+
+    // ========================================================================
+    // get_symbols: nonexistent file and directory path
+    // ========================================================================
+
+    #[cfg(feature = "parsers")]
+    #[test]
+    fn test_get_symbols_nonexistent_file_errors() {
+        match get_symbols("/nonexistent/path/that/does/not/exist.rs".to_string(), None) {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("File not found") || msg.contains("not found"),
+                    "Error should mention file not found, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("Nonexistent file should fail"),
+        }
+    }
+
+    #[cfg(feature = "parsers")]
+    #[test]
+    fn test_get_symbols_directory_path_errors() {
+        match get_symbols("/tmp".to_string(), None) {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("is a directory") || msg.contains("directory"),
+                    "Error should mention directory, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("Directory path should fail"),
+        }
+    }
+
+    #[cfg(not(feature = "parsers"))]
+    #[test]
+    fn test_get_symbols_requires_parsers_feature() {
+        match get_symbols("/tmp/any_file.rs".to_string(), None) {
+            Err(e) => assert!(
+                e.to_string().contains("parsers"),
+                "Error should mention 'parsers' feature, got: {}",
+                e
+            ),
+            Ok(_) => panic!("Without parsers feature, get_symbols should fail"),
+        }
+    }
+}
