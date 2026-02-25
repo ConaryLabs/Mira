@@ -3,13 +3,17 @@
 
 use super::types::{PonderingInsight, ProjectInsightData, TrendDirection};
 
+/// Maximum insights to generate per category. Prevents insight floods when
+/// a project has many files/modules matching a heuristic (e.g. untested hotspots).
+const MAX_PER_CATEGORY: usize = 10;
+
 /// Generate insights from project data without LLM.
 /// Produces specific, actionable insights based on real project signals.
 pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<PonderingInsight> {
     let mut insights = Vec::new();
 
     // 1. Stale goals — goals stuck in_progress for >14 days
-    for goal in &data.stale_goals {
+    for goal in data.stale_goals.iter().take(MAX_PER_CATEGORY) {
         if goal.days_since_update > 14 {
             let confidence = if goal.days_since_update > 21 {
                 0.8
@@ -35,9 +39,9 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
         }
     }
 
-    // 2. Fragile modules — high revert/fix rate
-    for module in &data.fragile_modules {
-        if module.bad_rate > 0.3 {
+    // 2. Fragile modules — high revert/fix rate (minimum 10 changes to avoid small-sample noise)
+    for module in data.fragile_modules.iter().take(MAX_PER_CATEGORY) {
+        if module.total_changes >= 10 && module.bad_rate > 0.3 {
             let confidence = (module.bad_rate * 1.1).min(0.9);
             insights.push(PonderingInsight {
                 pattern_type: "insight_fragile_code".to_string(),
@@ -60,7 +64,7 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
     }
 
     // 3. Revert clusters — multiple reverts in short timespan
-    for cluster in &data.revert_clusters {
+    for cluster in data.revert_clusters.iter().take(MAX_PER_CATEGORY) {
         if cluster.revert_count >= 2 {
             let confidence = if cluster.revert_count >= 3 {
                 0.85
@@ -79,36 +83,12 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
         }
     }
 
-    // 4. Untested hotspots — frequently modified without test updates
-    for file in &data.untested_hotspots {
-        if file.modification_count >= 5 {
-            insights.push(PonderingInsight {
-                pattern_type: "insight_untested".to_string(),
-                description: format!(
-                    "'{}' modified {} times across {} sessions with no test updates",
-                    file.file_path, file.modification_count, file.sessions_involved,
-                ),
-                confidence: 0.6,
-                evidence: vec![
-                    format!("modifications: {}", file.modification_count),
-                    format!("sessions: {}", file.sessions_involved),
-                ],
-            });
-        }
-    }
-
-    // 5. Session patterns — use description directly
-    for pattern in &data.session_patterns {
-        insights.push(PonderingInsight {
-            pattern_type: "insight_session".to_string(),
-            description: pattern.description.clone(),
-            confidence: 0.5,
-            evidence: vec![format!("count: {}", pattern.count)],
-        });
-    }
-
-    // 6. Recurring errors — unresolved errors with 3+ occurrences
+    // 4. Recurring errors — unresolved errors with 3+ occurrences
+    let mut error_count = 0;
     for error in &data.recurring_errors {
+        if error_count >= MAX_PER_CATEGORY {
+            break;
+        }
         // Skip benign errors that are normal Claude Code behavior
         if is_benign_error(&error.tool_name, &error.error_template) {
             continue;
@@ -132,30 +112,10 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
                 format!("tool: {}", error.tool_name),
             ],
         });
+        error_count += 1;
     }
 
-    // 7. Churn hotspots — files touched in many sessions
-    for hotspot in &data.churn_hotspots {
-        let confidence = if hotspot.sessions_touched >= 10 {
-            0.8
-        } else {
-            0.6
-        };
-        insights.push(PonderingInsight {
-            pattern_type: "insight_churn_hotspot".to_string(),
-            description: format!(
-                "'{}' touched in {} sessions over {} days \u{2014} consider refactoring or stabilizing",
-                hotspot.file_path, hotspot.sessions_touched, hotspot.period_days,
-            ),
-            confidence,
-            evidence: vec![
-                format!("sessions: {}", hotspot.sessions_touched),
-                format!("period_days: {}", hotspot.period_days),
-            ],
-        });
-    }
-
-    // 8. Health degradation — codebase health getting worse
+    // 5. Health degradation — codebase health getting worse
     if let Some(ref trend) = data.health_trend
         && let TrendDirection::Degrading = trend.direction
         && let Some(prev) = trend.previous_score
@@ -271,12 +231,29 @@ mod tests {
     }
 
     #[test]
+    fn test_fragile_module_below_min_changes() {
+        // total_changes < 10 should be suppressed regardless of bad_rate
+        let data = ProjectInsightData {
+            fragile_modules: vec![FragileModule {
+                module: "src/bad".to_string(),
+                total_changes: 9,
+                reverted: 5,
+                follow_up_fixes: 2,
+                bad_rate: 0.78,
+            }],
+            ..Default::default()
+        };
+        let insights = generate_insights_heuristic(&data);
+        assert!(insights.is_empty());
+    }
+
+    #[test]
     fn test_fragile_module_high_rate_capped() {
         let data = ProjectInsightData {
             fragile_modules: vec![FragileModule {
                 module: "src/bad".to_string(),
-                total_changes: 5,
-                reverted: 5,
+                total_changes: 10,
+                reverted: 10,
                 follow_up_fixes: 0,
                 bad_rate: 1.0,
             }],
@@ -316,52 +293,6 @@ mod tests {
         };
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights[0].confidence, 0.70);
-    }
-
-    #[test]
-    fn test_untested_hotspot() {
-        let data = ProjectInsightData {
-            untested_hotspots: vec![UntestedFile {
-                file_path: "src/db/pool.rs".to_string(),
-                modification_count: 8,
-                sessions_involved: 3,
-            }],
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights.len(), 1);
-        assert_eq!(insights[0].pattern_type, "insight_untested");
-        assert_eq!(insights[0].confidence, 0.6);
-        assert!(insights[0].description.contains("pool.rs"));
-    }
-
-    #[test]
-    fn test_untested_hotspot_below_threshold() {
-        let data = ProjectInsightData {
-            untested_hotspots: vec![UntestedFile {
-                file_path: "src/main.rs".to_string(),
-                modification_count: 4,
-                sessions_involved: 2,
-            }],
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert!(insights.is_empty());
-    }
-
-    #[test]
-    fn test_session_pattern() {
-        let data = ProjectInsightData {
-            session_patterns: vec![SessionPattern {
-                description: "5 sessions in the last 7 days lasted less than 5 minutes".to_string(),
-                count: 5,
-            }],
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights.len(), 1);
-        assert_eq!(insights[0].pattern_type, "insight_session");
-        assert_eq!(insights[0].confidence, 0.5);
     }
 
     #[test]
@@ -458,38 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn test_churn_hotspot_high() {
-        let data = ProjectInsightData {
-            churn_hotspots: vec![ChurnHotspot {
-                file_path: "src/db/pool.rs".to_string(),
-                sessions_touched: 15,
-                period_days: 14,
-            }],
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights.len(), 1);
-        assert_eq!(insights[0].pattern_type, "insight_churn_hotspot");
-        assert_eq!(insights[0].confidence, 0.8);
-        assert!(insights[0].description.contains("pool.rs"));
-        assert!(insights[0].description.contains("15 sessions"));
-    }
-
-    #[test]
-    fn test_churn_hotspot_moderate() {
-        let data = ProjectInsightData {
-            churn_hotspots: vec![ChurnHotspot {
-                file_path: "src/main.rs".to_string(),
-                sessions_touched: 6,
-                period_days: 20,
-            }],
-            ..Default::default()
-        };
-        let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights[0].confidence, 0.6);
-    }
-
-    #[test]
     fn test_empty_data_produces_no_insights() {
         let data = ProjectInsightData::default();
         let insights = generate_insights_heuristic(&data);
@@ -516,12 +415,6 @@ mod tests {
                 bad_rate: 0.5,
             }],
             revert_clusters: vec![],
-            untested_hotspots: vec![UntestedFile {
-                file_path: "src/lib.rs".to_string(),
-                modification_count: 10,
-                sessions_involved: 4,
-            }],
-            session_patterns: vec![],
             recurring_errors: vec![RecurringError {
                 tool_name: "code".to_string(),
                 error_template: "index missing".to_string(),
@@ -529,15 +422,10 @@ mod tests {
                 first_seen_session_id: None,
                 last_seen_session_id: None,
             }],
-            churn_hotspots: vec![ChurnHotspot {
-                file_path: "src/config.rs".to_string(),
-                sessions_touched: 8,
-                period_days: 10,
-            }],
             health_trend: None,
         };
         let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights.len(), 5); // stale goal + fragile module + untested + recurring error + churn
+        assert_eq!(insights.len(), 3); // stale goal + fragile module + recurring error
     }
 
     #[test]

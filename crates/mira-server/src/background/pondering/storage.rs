@@ -294,10 +294,7 @@ fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
     // For file/module insights, key on the entity not the prose
     if matches!(
         pattern_type,
-        "insight_fragile_code"
-            | "insight_untested"
-            | "insight_revert_cluster"
-            | "insight_churn_hotspot"
+        "insight_fragile_code" | "insight_revert_cluster"
     ) && let Some(entity) = extract_primary_entity(description)
     {
         return hash_key(&format!("{}:{}", pattern_type, entity));
@@ -326,13 +323,8 @@ fn compute_pattern_key(pattern_type: &str, description: &str) -> String {
 }
 
 /// Maximum number of insights to keep per pattern_type per project.
-/// Session insights get a tighter cap because LLM paraphrasing creates
-/// variants that similarity-based dedup can't reliably catch.
-fn max_insights_for_type(pattern_type: &str) -> i64 {
-    match pattern_type {
-        "insight_session" => 5,
-        _ => 10,
-    }
+fn max_insights_for_type(_pattern_type: &str) -> i64 {
+    10
 }
 
 /// Bigram Jaccard similarity threshold for near-duplicate detection.
@@ -416,38 +408,30 @@ pub(super) async fn store_insights(
             let has_stable_key = matches!(
                 insight.pattern_type.as_str(),
                 "insight_fragile_code"
-                    | "insight_untested"
                     | "insight_revert_cluster"
                     | "insight_stale_goal"
-                    | "insight_churn_hotspot"
                     | "insight_health_degrading"
             ) || (insight.pattern_type == "insight_recurring_error"
                 && extract_error_identity(&insight.description).is_some());
 
             // Skip if this pattern was previously dismissed.
-            // Stable-key types skip this check — the upsert resets dismissed=0
-            // so recurring issues with fresh evidence re-activate automatically.
-            if !has_stable_key {
-                let dismissed: bool = conn
-                    .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM behavior_patterns \
-                         WHERE project_id = ? AND pattern_type = ? AND pattern_key IN (?, ?) AND dismissed = 1)",
-                        params![project_id, insight.pattern_type, pattern_key, legacy_key],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(false);
-                if dismissed {
-                    continue;
-                }
+            let dismissed: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM behavior_patterns \
+                     WHERE project_id = ? AND pattern_type = ? AND pattern_key IN (?, ?) AND dismissed = 1)",
+                    params![project_id, insight.pattern_type, pattern_key, legacy_key],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if dismissed {
+                continue;
             }
 
             // Intra-batch dedup for types WITHOUT stable keys.
             // Stable-key types rely on the DB upsert (same key → ON CONFLICT).
             // Non-stable types: limit 1 per pattern_type per batch — LLMs often
             // generate multiple prose variants of the same finding.
-            // Exception: insight_session can have multiple distinct patterns from
-            // the heuristic (short sessions, high churn, no summaries).
-            if !has_stable_key && insight.pattern_type != "insight_session" {
+            if !has_stable_key {
                 let type_already_in_batch = batch_descriptions
                     .iter()
                     .any(|(pt, _)| pt == &insight.pattern_type);
@@ -513,8 +497,7 @@ pub(super) async fn store_insights(
                     occurrence_count = occurrence_count + 1,
                     confidence = (confidence + excluded.confidence) / 2,
                     pattern_data = excluded.pattern_data,
-                    last_triggered_at = datetime('now'),
-                    dismissed = 0
+                    last_triggered_at = datetime('now')
                 "#,
                 params![
                     project_id,
@@ -547,7 +530,7 @@ pub(super) async fn store_insights(
                       AND id NOT IN (
                           SELECT id FROM behavior_patterns
                           WHERE project_id = ? AND pattern_type = ?
-                          ORDER BY last_triggered_at DESC
+                          ORDER BY last_triggered_at DESC, id DESC
                           LIMIT ?
                       )
                     "#,
@@ -793,7 +776,7 @@ mod tests {
     /// Stable-key types bypass the dismissed check — the upsert resets dismissed=0.
     /// Legacy dismissed entries get reactivated when the issue recurs.
     #[tokio::test]
-    async fn test_stable_key_reactivates_legacy_dismissed() {
+    async fn test_stable_key_blocked_by_legacy_dismissed() {
         use crate::db::test_support::setup_test_pool;
 
         let pool = setup_test_pool().await;
@@ -831,8 +814,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Store the same insight — stable-key type bypasses dismissed check,
-        // upsert creates a new row (different key: entity-based vs legacy)
+        // Store the same insight — dismissed insights stay dismissed
         let insights = vec![PonderingInsight {
             pattern_type: pattern_type.to_string(),
             description: description.to_string(),
@@ -841,7 +823,7 @@ mod tests {
         }];
 
         let stored = store_insights(&pool, project_id, &insights).await.unwrap();
-        assert_eq!(stored, 1, "stable-key type should bypass dismissed check");
+        assert_eq!(stored, 0, "dismissed insight should stay dismissed");
     }
 
     /// Non-stable types should still be blocked by dismissed keys.
@@ -894,34 +876,6 @@ mod tests {
 
         let stored = store_insights(&pool, project_id, &insights).await.unwrap();
         assert_eq!(stored, 0, "non-stable type should be blocked by dismissal");
-    }
-
-    // ── Churn hotspot entity-aware keying ──────────────────────────────
-
-    #[test]
-    fn test_churn_hotspot_same_file_different_prose() {
-        let key1 = compute_pattern_key(
-            "insight_churn_hotspot",
-            "'src/mcp/mod.rs' touched in 56 sessions over 20 days — consider refactoring",
-        );
-        let key2 = compute_pattern_key(
-            "insight_churn_hotspot",
-            "src/mcp/mod.rs has been in continuous modification for 20+ days with 301 changes",
-        );
-        assert_eq!(key1, key2, "same file should produce same key");
-    }
-
-    #[test]
-    fn test_churn_hotspot_different_files() {
-        let key1 = compute_pattern_key(
-            "insight_churn_hotspot",
-            "'src/mcp/mod.rs' touched in 56 sessions",
-        );
-        let key2 = compute_pattern_key(
-            "insight_churn_hotspot",
-            "'src/mcp/requests.rs' touched in 53 sessions",
-        );
-        assert_ne!(key1, key2, "different files should produce different keys");
     }
 
     // ── Recurring error entity-aware keying ─────────────────────────────
@@ -1306,23 +1260,23 @@ mod tests {
             .await
             .unwrap();
 
-        // Two different files — both should be stored
+        // Two different files flagged as fragile — both should be stored (entity-aware)
         let insights = vec![
             PonderingInsight {
-                pattern_type: "insight_churn_hotspot".to_string(),
+                pattern_type: "insight_fragile_code".to_string(),
                 description:
-                    "'src/mcp/mod.rs' touched in 56 sessions over 20 days — high churn area"
+                    "src/mcp/mod.rs has 40% failure rate — 8 reverted, 2 follow-up fixes out of 25 changes"
                         .to_string(),
                 confidence: 0.7,
-                evidence: vec!["56 sessions".to_string()],
+                evidence: vec!["reverted: 8".to_string()],
             },
             PonderingInsight {
-                pattern_type: "insight_churn_hotspot".to_string(),
+                pattern_type: "insight_fragile_code".to_string(),
                 description:
-                    "'src/mcp/requests.rs' touched in 53 sessions over 20 days — high churn area"
+                    "src/mcp/requests.rs has 35% failure rate — 6 reverted, 3 follow-up fixes out of 26 changes"
                         .to_string(),
                 confidence: 0.7,
-                evidence: vec!["53 sessions".to_string()],
+                evidence: vec!["reverted: 6".to_string()],
             },
         ];
 
@@ -1333,9 +1287,8 @@ mod tests {
         );
     }
 
-    /// Distinct session patterns (from heuristic) should coexist since they
-    /// have different normalized hashes. LLM variants are limited by the
-    /// intra-batch type dedup + per-type eviction cap.
+    /// insight_session (now removed from heuristic) is still subject to the
+    /// standard intra-batch type dedup: only 1 per batch is stored.
     #[tokio::test]
     async fn test_distinct_session_patterns_coexist() {
         use crate::db::test_support::setup_test_pool;
@@ -1353,7 +1306,7 @@ mod tests {
             .await
             .unwrap();
 
-        // 3 distinct heuristic session patterns
+        // Multiple insight_session entries in one batch — intra-batch dedup limits to 1
         let insights = vec![
             PonderingInsight {
                 pattern_type: "insight_session".to_string(),
@@ -1377,8 +1330,8 @@ mod tests {
             },
         ];
 
-        // insight_session is exempt from intra-batch type limit,
-        // so all 3 distinct patterns survive in a single batch.
+        // insight_session is no longer exempt from intra-batch type dedup,
+        // so only the first entry is stored.
         store_insights(&pool, project_id, &insights).await.unwrap();
 
         let count: i64 = pool
@@ -1394,14 +1347,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            count, 3,
-            "Distinct session patterns should each get their own row"
+            count, 1,
+            "insight_session is subject to standard intra-batch type dedup — 1 per batch"
         );
     }
 
     /// Upsert should reset dismissed=0 so recurring issues re-activate.
     #[tokio::test]
-    async fn test_upsert_resets_dismissed_flag() {
+    async fn test_dismissed_stays_dismissed_on_upsert() {
         use crate::db::test_support::setup_test_pool;
 
         let pool = setup_test_pool().await;
@@ -1409,7 +1362,7 @@ mod tests {
         let project_id = pool
             .run(|conn| {
                 Ok::<_, anyhow::Error>(
-                    crate::db::get_or_create_project_sync(conn, "/tmp/dismiss-reset", None)
+                    crate::db::get_or_create_project_sync(conn, "/tmp/dismiss-stays", None)
                         .unwrap()
                         .0,
                 )
@@ -1420,13 +1373,13 @@ mod tests {
         // Store an insight
         let insights = vec![PonderingInsight {
             pattern_type: "insight_health_degrading".to_string(),
-            description: "Health degrading: score 42 → 55".to_string(),
+            description: "Health degrading: score 42 -> 55".to_string(),
             confidence: 0.7,
             evidence: vec!["test".to_string()],
         }];
         store_insights(&pool, project_id, &insights).await.unwrap();
 
-        // Simulate auto-dismiss
+        // Dismiss it
         pool.run(move |conn| {
             conn.execute(
                 "UPDATE behavior_patterns SET dismissed = 1 \
@@ -1438,31 +1391,15 @@ mod tests {
         .await
         .unwrap();
 
-        // Store again (issue recurs) — should un-dismiss via upsert
+        // Store again — should be skipped, dismissed stays dismissed
         let insights2 = vec![PonderingInsight {
             pattern_type: "insight_health_degrading".to_string(),
-            description: "Health degrading: score 48 → 60".to_string(),
+            description: "Health degrading: score 48 -> 60".to_string(),
             confidence: 0.75,
             evidence: vec!["updated".to_string()],
         }];
-        store_insights(&pool, project_id, &insights2).await.unwrap();
-
-        let dismissed: bool = pool
-            .run(move |conn| {
-                conn.query_row(
-                    "SELECT dismissed FROM behavior_patterns \
-                     WHERE project_id = ? AND pattern_type = 'insight_health_degrading'",
-                    params![project_id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-            .unwrap();
-        assert!(
-            !dismissed,
-            "Upsert should reset dismissed=0 when issue recurs"
-        );
+        let stored = store_insights(&pool, project_id, &insights2).await.unwrap();
+        assert_eq!(stored, 0, "dismissed insight should not be re-stored");
     }
 
     #[test]

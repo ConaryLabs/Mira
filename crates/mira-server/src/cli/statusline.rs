@@ -12,7 +12,6 @@ const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
-const MAGENTA: &str = "\x1b[35m";
 
 /// Rainbow colors for "Mira"
 const RAINBOW: [&str; 4] = [
@@ -69,48 +68,38 @@ fn query_goals(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Count non-dismissed insights from the last 7 days.
-/// Returns (new_count, total_count) where new = shown_count == 0.
-fn query_insights(conn: &Connection, project_id: i64) -> (i64, i64) {
+/// Count memories stored for a project.
+fn query_memories(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
-        "SELECT \
-           COALESCE(SUM(CASE WHEN shown_count = 0 THEN 1 ELSE 0 END), 0), \
-           COUNT(*) \
-         FROM behavior_patterns \
-         WHERE project_id = ?1 \
-           AND pattern_type LIKE 'insight_%' \
-           AND first_seen_at > datetime('now', '-7 days') \
-           AND (dismissed IS NULL OR dismissed = 0)",
-        [project_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )
-    .unwrap_or((0, 0))
-}
-
-/// Count pending/draft documentation tasks for a project.
-fn query_stale_docs(conn: &Connection, project_id: i64) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(*) FROM documentation_tasks \
-         WHERE project_id = ?1 AND status IN ('pending', 'draft_ready')",
+        "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1",
         [project_id],
         |r| r.get(0),
     )
     .unwrap_or(0)
 }
 
-/// Check if background processing is stalled.
-/// Uses the slow lane heartbeat (written every cycle) instead of pondering timestamps,
-/// which have many legitimate reasons to go stale (cooldown, insufficient data, etc.).
-/// Returns true if the heartbeat is >5 minutes old (and has ever been written).
-fn query_bg_stalled(conn: &Connection) -> bool {
+/// Count distinct indexed files for a project (uses code DB).
+fn query_indexed_files(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
-        "SELECT CAST((julianday('now') - julianday(value)) * 86400 AS INTEGER) \
-         FROM server_state WHERE key = 'last_bg_heartbeat'",
-        [],
-        |r| r.get::<_, i64>(0),
+        "SELECT COUNT(DISTINCT file_path) FROM code_symbols WHERE project_id = ?1",
+        [project_id],
+        |r| r.get(0),
     )
-    .map(|secs| secs > 300) // 5 minutes
-    .unwrap_or(false) // never ran = don't warn (fresh install)
+    .unwrap_or(0)
+}
+
+/// Count high-priority alerts: recurring errors and revert clusters only.
+fn query_alerts(conn: &Connection, project_id: i64) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM behavior_patterns \
+         WHERE project_id = ?1 \
+           AND pattern_type IN ('insight_recurring_error', 'insight_revert_cluster') \
+           AND (dismissed IS NULL OR dismissed = 0) \
+           AND first_seen_at > datetime('now', '-7 days')",
+        [project_id],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
 }
 
 /// Count pending embedding chunks.
@@ -183,53 +172,47 @@ pub fn run() -> Result<()> {
         }
     };
 
-    // Query stats
+    // Query stats from main DB
     let goals = query_goals(&main_conn, project_id);
-    let (new_insights, total_insights) = query_insights(&main_conn, project_id);
-    let stale_docs = query_stale_docs(&main_conn, project_id);
-    let bg_stalled = query_bg_stalled(&main_conn);
+    let memories = query_memories(&main_conn, project_id);
+    let alerts = query_alerts(&main_conn, project_id);
 
+    // Query stats from code DB
     let code_conn = open_readonly(&code_db);
+    let indexed = code_conn
+        .as_ref()
+        .map(|c| query_indexed_files(c, project_id))
+        .unwrap_or(0);
     let pending = code_conn
         .as_ref()
         .map(|c| query_pending(c, project_id))
         .unwrap_or(0);
 
-    // Build output: Mira Name · 🎯 goals · 💡 insights · ...
+    // Build output parts in order: goals, memories, indexed, alerts, pending
     let mut parts = Vec::new();
 
-    // Active workload
     if goals > 0 {
-        parts.push(format!("🎯 {GREEN}{goals}{RESET} goals"));
+        parts.push(format!("{GREEN}{goals}{RESET} goals"));
     }
 
-    // 4. Actionable items
-    if total_insights > 0 {
-        if new_insights > 0 {
-            parts.push(format!(
-                "💡 {MAGENTA}{total_insights}\u{00a0}insights{RESET} ({MAGENTA}{new_insights}\u{00a0}new{RESET})"
-            ));
-        } else {
-            parts.push(format!("💡 {DIM}{total_insights}\u{00a0}insights{RESET}"));
-        }
+    if memories > 0 {
+        parts.push(format!("{DIM}{memories}{RESET} memories"));
     }
 
-    if stale_docs > 0 {
-        parts.push(format!("📝 {YELLOW}{stale_docs} stale docs{RESET}"));
+    if indexed > 0 {
+        parts.push(format!("{DIM}{indexed}{RESET} indexed"));
     }
 
-    // 5. Alerts
-    if bg_stalled {
-        parts.push(format!("⚠️  {YELLOW}bg stopped{RESET}"));
+    if alerts > 0 {
+        parts.push(format!("{YELLOW}{alerts} alerts{RESET}"));
     }
 
-    // 6. Transient activity
     if pending > 0 {
-        parts.push(format!("⏳ {YELLOW}{pending} pending{RESET}"));
+        parts.push(format!("{YELLOW}{pending} pending{RESET}"));
     }
 
     let joined = parts.join(DOT);
-    println!("{mira_label} {joined}");
+    println!("{mira_label}{DOT}{joined}");
 
     Ok(())
 }

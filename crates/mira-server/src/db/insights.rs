@@ -11,7 +11,7 @@ fn auto_dismiss_stale_insights(conn: &Connection, project_id: i64) -> rusqlite::
         "UPDATE behavior_patterns SET dismissed = 1 \
          WHERE project_id = ?1 \
            AND pattern_type LIKE 'insight_%' \
-           AND pattern_type NOT IN ('insight_stale_goal', 'insight_fragile_code', 'insight_untested', 'insight_recurring_error', 'insight_health_degrading') \
+           AND pattern_type NOT IN ('insight_stale_goal', 'insight_fragile_code', 'insight_recurring_error', 'insight_health_degrading') \
            AND (dismissed IS NULL OR dismissed = 0) \
            AND last_triggered_at < datetime('now', '-14 days')",
         params![project_id],
@@ -120,12 +120,8 @@ fn humanize_insight_type(pattern_type: &str) -> String {
         "insight_revert_cluster" => "Revert Pattern".to_string(),
         "insight_fragile_code" => "Fragile Code".to_string(),
         "insight_stale_goal" => "Stale Goal".to_string(),
-        "insight_untested" => "Untested Code".to_string(),
         "insight_recurring_error" => "Recurring Error".to_string(),
-        "insight_churn_hotspot" => "Code Churn".to_string(),
         "insight_health_degrading" => "Health Degradation".to_string(),
-        "insight_session" => "Session Pattern".to_string(),
-        "insight_workflow" => "Workflow".to_string(),
         other => other
             .strip_prefix("insight_")
             .unwrap_or(other)
@@ -196,11 +192,7 @@ fn fetch_pondering_insights(
             "insight_recurring_error" => 0.95,
             "insight_fragile_code" => 0.95,
             "insight_stale_goal" => 0.9,
-            "insight_untested" => 0.85,
-            "insight_churn_hotspot" => 0.8,
             "insight_health_degrading" => 0.85,
-            "insight_session" => 0.75,
-            "insight_workflow" => 0.7,
             _ => 0.5,
         };
 
@@ -210,7 +202,6 @@ fn fetch_pondering_insights(
             // Chronic issues get MORE important over time (inverse decay, cap at 2.0x)
             "insight_stale_goal"
             | "insight_fragile_code"
-            | "insight_untested"
             | "insight_recurring_error"
             | "insight_health_degrading" => (1.0 + (age_days / 14.0)).min(2.0),
             // Acute issues decay normally, floor at 30%
@@ -220,9 +211,8 @@ fn fetch_pondering_insights(
 
         let category = match pattern_type.as_str() {
             "insight_revert_cluster" | "insight_fragile_code" => "quality",
-            "insight_untested" | "insight_recurring_error" => "testing",
-            "insight_stale_goal" | "insight_session" | "insight_workflow" => "workflow",
-            "insight_churn_hotspot" => "quality",
+            "insight_recurring_error" => "testing",
+            "insight_stale_goal" => "workflow",
             "insight_health_degrading" => "health",
             _ => "other",
         };

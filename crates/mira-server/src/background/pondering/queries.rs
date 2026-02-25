@@ -2,8 +2,8 @@
 // Database queries for pondering data gathering
 
 use super::types::{
-    ChurnHotspot, FragileModule, HealthTrend, ProjectInsightData, RecurringError, RevertCluster,
-    SessionPattern, StaleGoal, ToolUsageEntry, TrendDirection, UntestedFile,
+    FragileModule, HealthTrend, ProjectInsightData, RecurringError, RevertCluster, StaleGoal,
+    ToolUsageEntry, TrendDirection,
 };
 use crate::db::pool::DatabasePool;
 use crate::utils::truncate;
@@ -318,178 +318,6 @@ pub(super) async fn get_recent_revert_clusters(
     .map_err(Into::into)
 }
 
-/// Files modified 5+ times across multiple sessions without corresponding test file changes.
-/// Uses session_behavior_log with event_type = 'file_access' and event_data containing file paths.
-pub(super) async fn get_untested_hotspots(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Result<Vec<UntestedFile>, String> {
-    pool.run(move |conn| {
-        // Get file modification events from session_behavior_log
-        let mut stmt = conn
-            .prepare(
-                r#"
-                SELECT
-                    sbl.event_data,
-                    sbl.session_id
-                FROM session_behavior_log sbl
-                WHERE sbl.project_id = ?
-                  AND sbl.event_type = 'file_access'
-                  AND sbl.created_at > datetime('now', '-30 days')
-                ORDER BY sbl.created_at DESC
-            "#,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to prepare untested hotspots: {}", e))?;
-
-        let rows = stmt
-            .query_map(params![project_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| anyhow::anyhow!("Failed to query untested hotspots: {}", e))?;
-
-        // Track per-file: (modification_count, set of sessions)
-        let mut file_stats: HashMap<String, (i64, std::collections::HashSet<String>)> =
-            HashMap::new();
-        let mut test_files_modified: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-
-        for row in rows {
-            let (event_data, session_id) = row.map_err(|e| anyhow::anyhow!("Row error: {}", e))?;
-
-            // event_data is JSON, extract file_path
-            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event_data)
-                && let Some(file_path) = data
-                    .get("file_path")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            {
-                // Track test files separately
-                if is_test_file(&file_path) {
-                    test_files_modified.insert(file_path);
-                    continue;
-                }
-
-                let entry = file_stats
-                    .entry(file_path)
-                    .or_insert((0, Default::default()));
-                entry.0 += 1;
-                entry.1.insert(session_id);
-            }
-        }
-
-        // Filter: 5+ modifications, multiple sessions, actual code file, no corresponding test, no inline tests
-        let mut results: Vec<UntestedFile> = file_stats
-            .into_iter()
-            .filter(|(path, (count, sessions))| {
-                *count >= 5
-                    && sessions.len() >= 2
-                    && !is_non_code_file(path)
-                    && !has_corresponding_test(&test_files_modified, path)
-                    && !has_inline_rust_tests(path)
-            })
-            .map(|(file_path, (count, sessions))| UntestedFile {
-                file_path,
-                modification_count: count,
-                sessions_involved: sessions.len() as i64,
-            })
-            .collect();
-
-        results.sort_by(|a, b| b.modification_count.cmp(&a.modification_count));
-        Ok::<_, anyhow::Error>(results)
-    })
-    .await
-    .map_err(Into::into)
-}
-
-/// Detect session-level patterns: many short sessions, sessions with no commits, long gaps.
-pub(super) async fn get_session_patterns(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Result<Vec<SessionPattern>, String> {
-    pool.run(move |conn| {
-        let mut patterns = Vec::new();
-
-        // Pattern 1: Short sessions (< 5 minutes)
-        let short_sessions: i64 = conn
-            .query_row(
-                r#"
-                SELECT COUNT(*)
-                FROM sessions
-                WHERE project_id = ?
-                  AND started_at > datetime('now', '-7 days')
-                  AND last_activity IS NOT NULL
-                  AND (julianday(last_activity) - julianday(started_at)) * 24 * 60 < 5
-            "#,
-                params![project_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        if short_sessions >= 3 {
-            patterns.push(SessionPattern {
-                description: format!(
-                    "{} sessions in the last 7 days lasted less than 5 minutes",
-                    short_sessions
-                ),
-                count: short_sessions,
-            });
-        }
-
-        // Pattern 2: Total sessions in last 7 days (high churn indicator)
-        let total_sessions: i64 = conn
-            .query_row(
-                r#"
-                SELECT COUNT(*)
-                FROM sessions
-                WHERE project_id = ?
-                  AND started_at > datetime('now', '-7 days')
-            "#,
-                params![project_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        if total_sessions >= 10 {
-            patterns.push(SessionPattern {
-                description: format!(
-                    "{} sessions in the last 7 days — high context-switching frequency",
-                    total_sessions
-                ),
-                count: total_sessions,
-            });
-        }
-
-        // Pattern 3: Sessions without summaries (may indicate incomplete work)
-        let no_summary_sessions: i64 = conn
-            .query_row(
-                r#"
-                SELECT COUNT(*)
-                FROM sessions
-                WHERE project_id = ?
-                  AND started_at > datetime('now', '-7 days')
-                  AND (summary IS NULL OR summary = '')
-            "#,
-                params![project_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        if no_summary_sessions >= 3 {
-            patterns.push(SessionPattern {
-                description: format!(
-                    "{} sessions in the last 7 days ended without a summary",
-                    no_summary_sessions
-                ),
-                count: no_summary_sessions,
-            });
-        }
-
-        Ok::<_, rusqlite::Error>(patterns)
-    })
-    .await
-    .map_err(Into::into)
-}
-
 /// Errors that recur across multiple sessions without resolution (3+ occurrences).
 pub(super) async fn get_recurring_errors(
     pool: &Arc<DatabasePool>,
@@ -523,47 +351,6 @@ pub(super) async fn get_recurring_errors(
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow::anyhow!("Failed to collect recurring errors: {}", e))
-    })
-    .await
-    .map_err(Into::into)
-}
-
-/// Files modified frequently across many sessions (5+ sessions in the last 30 days).
-pub(super) async fn get_churn_hotspots(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Result<Vec<ChurnHotspot>, String> {
-    pool.run(move |conn| {
-        let mut stmt = conn
-            .prepare(
-                r#"SELECT
-                        json_extract(event_data, '$.file_path') AS file_path,
-                        COUNT(DISTINCT session_id) AS sessions_touched,
-                        CAST(julianday('now') - julianday(MIN(created_at)) AS INTEGER) AS period_days
-                   FROM session_behavior_log
-                   WHERE project_id = ?
-                     AND event_type = 'file_access'
-                     AND created_at > datetime('now', '-30 days')
-                     AND json_extract(event_data, '$.file_path') IS NOT NULL
-                   GROUP BY file_path
-                   HAVING sessions_touched >= 5
-                   ORDER BY sessions_touched DESC
-                   LIMIT 10"#,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to prepare churn hotspots: {}", e))?;
-
-        let rows = stmt
-            .query_map(params![project_id], |row| {
-                Ok(ChurnHotspot {
-                    file_path: row.get(0)?,
-                    sessions_touched: row.get(1)?,
-                    period_days: row.get(2)?,
-                })
-            })
-            .map_err(|e| anyhow::anyhow!("Failed to query churn hotspots: {}", e))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow::anyhow!("Failed to collect churn hotspots: {}", e))
     })
     .await
     .map_err(Into::into)
@@ -656,34 +443,20 @@ pub(super) async fn get_project_insight_data(
     project_id: i64,
 ) -> Result<ProjectInsightData, String> {
     // Run all queries concurrently
-    let (
-        stale_goals,
-        fragile_modules,
-        revert_clusters,
-        untested_hotspots,
-        session_patterns,
-        recurring_errors,
-        churn_hotspots,
-        health_trend,
-    ) = tokio::join!(
-        get_stale_goals(pool, project_id),
-        get_fragile_modules(pool, project_id),
-        get_recent_revert_clusters(pool, project_id),
-        get_untested_hotspots(pool, project_id),
-        get_session_patterns(pool, project_id),
-        get_recurring_errors(pool, project_id),
-        get_churn_hotspots(pool, project_id),
-        get_health_trend(pool, project_id),
-    );
+    let (stale_goals, fragile_modules, revert_clusters, recurring_errors, health_trend) =
+        tokio::join!(
+            get_stale_goals(pool, project_id),
+            get_fragile_modules(pool, project_id),
+            get_recent_revert_clusters(pool, project_id),
+            get_recurring_errors(pool, project_id),
+            get_health_trend(pool, project_id),
+        );
 
     Ok(ProjectInsightData {
         stale_goals: stale_goals.unwrap_or_default(),
         fragile_modules: fragile_modules.unwrap_or_default(),
         revert_clusters: revert_clusters.unwrap_or_default(),
-        untested_hotspots: untested_hotspots.unwrap_or_default(),
-        session_patterns: session_patterns.unwrap_or_default(),
         recurring_errors: recurring_errors.unwrap_or_default(),
-        churn_hotspots: churn_hotspots.unwrap_or_default(),
         health_trend: health_trend.unwrap_or(None),
     })
 }
@@ -708,118 +481,6 @@ fn extract_modules_from_files_json(files_json: &str) -> Vec<String> {
     }
 
     modules.into_iter().collect()
-}
-
-/// Check if a file is a non-code file that shouldn't be flagged as an "untested hotspot".
-/// Config files, documentation, lock files, etc. don't have meaningful unit tests.
-fn is_non_code_file(path: &str) -> bool {
-    let non_code_extensions = [
-        ".json",
-        ".toml",
-        ".yaml",
-        ".yml",
-        ".env",
-        ".md",
-        ".txt",
-        ".rst",
-        ".lock",
-        ".generated",
-        ".sh",
-        ".bash",
-        ".bat",
-        ".cmd",
-        ".sql",
-        ".csv",
-        ".tsv",
-        ".xml",
-        ".html",
-        ".css",
-        ".svg",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".ico",
-    ];
-    let lower = path.to_lowercase();
-    non_code_extensions.iter().any(|ext| lower.ends_with(ext))
-}
-
-/// Check if a file path looks like a test file.
-fn is_test_file(path: &str) -> bool {
-    path.contains("/test/")
-        || path.contains("/tests/")
-        || path.contains("/spec/")
-        || path.contains("/specs/")
-        || path.contains("_test.")
-        || path.contains("_tests.")
-        || path.contains(".test.")
-        || path.contains("_spec.")
-        || path.contains(".spec.")
-        || path.contains("/test_")
-        || path.starts_with("test/")
-        || path.starts_with("tests/")
-        || path.starts_with("spec/")
-}
-
-/// Check if a Rust file has inline tests (e.g., `#[cfg(test)]` or `mod tests`).
-/// Only checks `.rs` files. Returns false on any error.
-fn has_inline_rust_tests(path: &str) -> bool {
-    // Only check Rust files
-    if !path.ends_with(".rs") {
-        return false;
-    }
-
-    // Read file from disk with graceful error handling
-    match std::fs::read_to_string(path) {
-        Ok(contents) => {
-            // Check for common Rust test markers
-            contents.contains("#[cfg(test)]") || contents.contains("mod tests")
-        }
-        Err(_) => false, // File read failed, treat as no inline tests
-    }
-}
-
-/// Check if a source file has a corresponding test file in the modified set.
-fn has_corresponding_test(
-    test_files: &std::collections::HashSet<String>,
-    source_path: &str,
-) -> bool {
-    // Check for common test file naming patterns
-    let stem = source_path
-        .trim_end_matches(".rs")
-        .trim_end_matches(".ts")
-        .trim_end_matches(".js")
-        .trim_end_matches(".py")
-        .trim_end_matches(".go")
-        .trim_end_matches(".rb");
-
-    let test_variants = [
-        format!("{}_test.rs", stem),
-        format!("{}_tests.rs", stem),
-        format!("{}.test.ts", stem),
-        format!("{}.test.js", stem),
-        format!("test_{}.py", stem),
-        format!("{}_test.go", stem),
-        format!("{}_spec.rb", stem),
-    ];
-
-    for variant in &test_variants {
-        if test_files.contains(variant) {
-            return true;
-        }
-    }
-
-    // Also check if any test file is in the same directory
-    if let Some(dir) = source_path.rsplit_once('/').map(|(d, _)| d) {
-        for test_file in test_files {
-            if test_file.starts_with(dir) && is_test_file(test_file) {
-                return true;
-            }
-        }
-    }
-
-    false
 }
 
 #[cfg(test)]
@@ -853,62 +514,6 @@ mod tests {
         let json = r#"["Cargo.toml"]"#;
         let modules = extract_modules_from_files_json(json);
         assert_eq!(modules, vec!["Cargo.toml"]);
-    }
-
-    #[test]
-    fn test_is_test_file() {
-        assert!(is_test_file("src/db/pool_test.rs"));
-        assert!(is_test_file("src/components/Button.test.ts"));
-        assert!(is_test_file("tests/integration.rs"));
-        assert!(!is_test_file("src/db/pool.rs"));
-        assert!(!is_test_file("src/main.rs"));
-    }
-
-    #[test]
-    fn test_is_non_code_file() {
-        // Config files
-        assert!(is_non_code_file("package.json"));
-        assert!(is_non_code_file("Cargo.toml"));
-        assert!(is_non_code_file("config.yaml"));
-        assert!(is_non_code_file("settings.yml"));
-        assert!(is_non_code_file(".env"));
-
-        // Documentation
-        assert!(is_non_code_file("README.md"));
-        assert!(is_non_code_file("CHANGELOG.md"));
-
-        // Lock files
-        assert!(is_non_code_file("Cargo.lock"));
-        assert!(is_non_code_file("package-lock.json"));
-
-        // SQL and scripts
-        assert!(is_non_code_file("schema.sql"));
-        assert!(is_non_code_file("deploy.sh"));
-
-        // Actual code files should NOT match
-        assert!(!is_non_code_file("src/db/pool.rs"));
-        assert!(!is_non_code_file("src/main.ts"));
-        assert!(!is_non_code_file("lib/auth.py"));
-        assert!(!is_non_code_file("cmd/server.go"));
-        assert!(!is_non_code_file("App.java"));
-    }
-
-    #[test]
-    fn test_has_corresponding_test() {
-        let mut test_files = std::collections::HashSet::new();
-        test_files.insert("src/db/pool_test.rs".to_string());
-
-        // Direct name match
-        assert!(has_corresponding_test(&test_files, "src/db/pool.rs"));
-
-        // Different directory — no match
-        assert!(!has_corresponding_test(
-            &test_files,
-            "src/background/worker.rs"
-        ));
-
-        // Same directory counts as tested (test file exists in same dir)
-        assert!(has_corresponding_test(&test_files, "src/db/tasks.rs"));
     }
 
     // ── Edge-case tests for helper functions ─────────────────────────────
@@ -969,58 +574,6 @@ mod tests {
         assert_eq!(modules, vec!["a/b"]);
     }
 
-    #[test]
-    fn test_is_test_file_edge_cases() {
-        // Empty string
-        assert!(!is_test_file(""));
-        // Just "test" without separators
-        assert!(!is_test_file("test"));
-        // Starts with test/
-        assert!(is_test_file("test/foo.rs"));
-        // tests/ at start
-        assert!(is_test_file("tests/integration.rs"));
-        // spec/ at start
-        assert!(is_test_file("spec/my_spec.rb"));
-    }
-
-    #[test]
-    fn test_is_non_code_file_edge_cases() {
-        // Empty string
-        assert!(!is_non_code_file(""));
-        // Case insensitivity
-        assert!(is_non_code_file("README.MD"));
-        assert!(is_non_code_file("Config.JSON"));
-        // No extension
-        assert!(!is_non_code_file("Makefile"));
-    }
-
-    #[test]
-    fn test_has_corresponding_test_empty_test_files() {
-        let test_files = std::collections::HashSet::new();
-        assert!(!has_corresponding_test(&test_files, "src/db/pool.rs"));
-    }
-
-    #[test]
-    fn test_has_corresponding_test_no_directory_separator() {
-        let test_files = std::collections::HashSet::new();
-        // File with no directory should not panic on rsplit_once
-        assert!(!has_corresponding_test(&test_files, "pool.rs"));
-    }
-
-    #[test]
-    fn test_has_inline_rust_tests_non_rs_file() {
-        // Non-Rust files should always return false
-        assert!(!has_inline_rust_tests("src/main.py"));
-        assert!(!has_inline_rust_tests("src/index.ts"));
-        assert!(!has_inline_rust_tests(""));
-    }
-
-    #[test]
-    fn test_has_inline_rust_tests_nonexistent_file() {
-        // Nonexistent Rust file should return false (graceful error)
-        assert!(!has_inline_rust_tests("/tmp/nonexistent_file_12345.rs"));
-    }
-
     // ── Async DB tests for query functions on empty tables ───────────────
 
     #[tokio::test]
@@ -1064,41 +617,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_untested_hotspots_empty_tables() {
-        use crate::db::test_support::setup_test_pool_with_project;
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        let result = get_untested_hotspots(&pool, project_id).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_get_session_patterns_empty_tables() {
-        use crate::db::test_support::setup_test_pool_with_project;
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        let result = get_session_patterns(&pool, project_id).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[tokio::test]
     async fn test_get_recurring_errors_empty_tables() {
         use crate::db::test_support::setup_test_pool_with_project;
         let (pool, project_id) = setup_test_pool_with_project().await;
 
         let result = get_recurring_errors(&pool, project_id).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_get_churn_hotspots_empty_tables() {
-        use crate::db::test_support::setup_test_pool_with_project;
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        let result = get_churn_hotspots(&pool, project_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -1190,25 +713,6 @@ mod tests {
         // NULL files_json is filtered by the WHERE clause
         let result = get_fragile_modules(&pool, project_id).await;
         assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_get_session_patterns_below_thresholds() {
-        use crate::db::test_support::{seed_session, setup_test_pool_with_project};
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        // Create only 1 session -- below all thresholds (3 short, 10 total, 3 no-summary)
-        pool.run(move |conn| {
-            seed_session(conn, "sess-1", project_id, "active");
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .unwrap();
-
-        let result = get_session_patterns(&pool, project_id).await;
-        assert!(result.is_ok());
-        // 1 session is below all thresholds, so no patterns
         assert!(result.unwrap().is_empty());
     }
 

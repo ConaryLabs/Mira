@@ -25,8 +25,7 @@ impl PendingIntervention {
     pub fn format(&self) -> String {
         let icon = match self.pattern_type.as_str() {
             "insight_fragile_code" | "insight_revert_cluster" | "insight_recurring_error" => "!",
-            "insight_session" | "insight_stale_goal" => "*",
-            "insight_untested" | "insight_churn_hotspot" => "@",
+            "insight_stale_goal" => "*",
             "insight_health_degrading" => "~",
             "stale_doc" => "~",
             "missing_doc" => "+",
@@ -138,7 +137,7 @@ pub fn get_pending_interventions_sync(
             "insight_fragile_code" | "insight_revert_cluster" | "insight_recurring_error" => {
                 InterventionType::BugWarning
             }
-            "insight_untested" | "insight_churn_hotspot" => InterventionType::ResourceSuggestion,
+            "insight_stale_goal" | "insight_health_degrading" => InterventionType::ContextPrediction,
             _ => InterventionType::ContextPrediction,
         };
 

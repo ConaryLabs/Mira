@@ -167,12 +167,8 @@ mod tests {
             ("insight_revert_cluster", "Revert Pattern"),
             ("insight_fragile_code", "Fragile Code"),
             ("insight_stale_goal", "Stale Goal"),
-            ("insight_untested", "Untested Code"),
             ("insight_recurring_error", "Recurring Error"),
-            ("insight_churn_hotspot", "Code Churn"),
             ("insight_health_degrading", "Health Degradation"),
-            ("insight_session", "Session Pattern"),
-            ("insight_workflow", "Workflow"),
         ];
 
         for (i, (pattern_type, expected_label)) in known_types.iter().enumerate() {
@@ -273,8 +269,8 @@ mod tests {
         insert_behavior_pattern(
             &conn,
             project_id,
-            "insight_session",
-            r#"{"description":"session pattern test"}"#,
+            "insight_custom_acute",
+            r#"{"description":"acute pattern test"}"#,
             0.8,
             &ts,
         );
@@ -284,9 +280,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         // decay = (1.0 - 7/14).max(0.3) = 0.5
-        // type_weight for insight_session = 0.75
-        // priority_score = 0.8 * 0.75 * 0.5 = 0.3
-        let expected = 0.8 * 0.75 * 0.5;
+        // type_weight for unknown type = 0.5
+        // priority_score = 0.8 * 0.5 * 0.5 = 0.2
+        let expected = 0.8 * 0.5 * 0.5;
         assert!(
             (results[0].priority_score - expected).abs() < 0.05,
             "Expected priority_score ~{}, got {}",
@@ -305,8 +301,8 @@ mod tests {
         insert_behavior_pattern(
             &conn,
             project_id,
-            "insight_workflow",
-            r#"{"description":"old workflow"}"#,
+            "insight_custom_acute",
+            r#"{"description":"old acute insight"}"#,
             0.8,
             &ts,
         );
@@ -316,9 +312,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         // decay = (1.0 - 13/14).max(0.3) = max(0.071, 0.3) = 0.3 (floor)
-        // type_weight for insight_workflow = 0.7
-        // priority_score = 0.8 * 0.7 * 0.3 = 0.168
-        let expected = 0.8 * 0.7 * 0.3;
+        // type_weight for unknown type = 0.5
+        // priority_score = 0.8 * 0.5 * 0.3 = 0.12
+        let expected = 0.8 * 0.5 * 0.3;
         assert!(
             (results[0].priority_score - expected).abs() < 0.05,
             "Expected priority_score ~{} (decay floor at 0.3), got {}",
@@ -1065,7 +1061,6 @@ mod tests {
         let chronic_types = [
             "insight_stale_goal",
             "insight_fragile_code",
-            "insight_untested",
             "insight_recurring_error",
             "insight_health_degrading",
         ];
