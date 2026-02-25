@@ -39,9 +39,6 @@ pub struct RetentionConfig {
     /// Days to keep system observations
     #[serde(default = "RetentionConfig::default_observations_days")]
     pub observations_days: u32,
-    /// Days to keep untouched memories (based on updated_at, not created_at)
-    #[serde(default = "RetentionConfig::default_memory_days")]
-    pub memory_days: u32,
 }
 
 impl Default for RetentionConfig {
@@ -54,7 +51,6 @@ impl Default for RetentionConfig {
             analytics_days: 180,
             behavior_days: 365,
             observations_days: 90,
-            memory_days: 180,
         }
     }
 }
@@ -80,9 +76,6 @@ impl RetentionConfig {
     }
     fn default_observations_days() -> u32 {
         90
-    }
-    fn default_memory_days() -> u32 {
-        180
     }
 
     /// Check if retention is enabled (config field OR env var override)
@@ -297,7 +290,6 @@ background_provider = 123
         assert_eq!(config.retention.analytics_days, 180);
         assert_eq!(config.retention.behavior_days, 365);
         assert_eq!(config.retention.observations_days, 90);
-        assert_eq!(config.retention.memory_days, 180);
     }
 
     #[test]

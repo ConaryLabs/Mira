@@ -172,52 +172,6 @@ async fn test_duplex_resolve_project() {
 }
 
 #[tokio::test]
-async fn test_duplex_recall_memories() {
-    let (pool, project_id) = setup_test_pool_with_project().await;
-
-    // Store a confirmed memory
-    let pid = project_id;
-    pool.interact(move |conn| {
-        let id = crate::db::test_support::store_memory_helper(
-            conn,
-            Some(pid),
-            None,
-            "Always use the builder pattern for config structs",
-            "decision",
-            Some("patterns"),
-            0.9,
-        )?;
-        conn.execute(
-            "UPDATE memory_facts SET status = 'confirmed' WHERE id = ?",
-            [id],
-        )
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .unwrap();
-
-    let (mut reader, mut writer, handle) = spawn_duplex_handler(pool).await;
-
-    let req = IpcRequest {
-        op: "recall_memories".into(),
-        id: "recall-1".into(),
-        params: json!({"project_id": project_id, "query": "builder pattern"}),
-    };
-    let resp = send_request(&mut reader, &mut writer, &req).await;
-    assert!(resp.ok, "recall_memories should succeed");
-    let memories = resp.result.as_ref().unwrap()["memories"]
-        .as_array()
-        .unwrap();
-    assert!(
-        !memories.is_empty(),
-        "recall_memories should return at least one result"
-    );
-
-    handle.abort();
-}
-
-#[tokio::test]
 async fn test_duplex_log_behavior() {
     let (pool, project_id) = setup_test_pool_with_project().await;
     let pool_verify = pool.clone();

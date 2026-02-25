@@ -1,7 +1,6 @@
 // db/project.rs
 // Project management operations
 
-use mira_types::MemoryFact;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::utils::normalize_project_path;
@@ -165,45 +164,6 @@ pub fn get_project_paths_by_ids_sync(
         .filter_map(super::log_and_discard)
         .collect();
     Ok(projects)
-}
-
-/// Search memories by text pattern - sync version for pool.interact()
-///
-/// Delegates to `memory::search_memories_sync` with reordered parameters.
-pub fn search_memories_text_sync(
-    conn: &Connection,
-    project_id: Option<i64>,
-    query: &str,
-    limit: usize,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
-) -> rusqlite::Result<Vec<MemoryFact>> {
-    super::memory::search_memories_sync(conn, project_id, query, user_id, team_id, limit)
-}
-
-/// Get preferences for a project - sync version for pool.interact()
-///
-/// Delegates to `memory::get_preferences_sync`.
-pub fn get_preferences_sync(
-    conn: &Connection,
-    project_id: Option<i64>,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
-) -> rusqlite::Result<Vec<MemoryFact>> {
-    super::memory::get_preferences_sync(conn, project_id, user_id, team_id)
-}
-
-/// Get health alerts for a project - sync version for pool.interact()
-///
-/// Delegates to `memory::get_health_alerts_sync`.
-pub fn get_health_alerts_sync(
-    conn: &Connection,
-    project_id: Option<i64>,
-    limit: usize,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
-) -> rusqlite::Result<Vec<MemoryFact>> {
-    super::memory::get_health_alerts_sync(conn, project_id, limit, user_id, team_id)
 }
 
 /// Get projects that need briefing checks - sync version for pool.interact()

@@ -1,50 +1,11 @@
 // crates/mira-server/src/ipc/client/memory_ops.rs
-//! HookClient methods for memory recall, behavior logging, observations,
-//! compaction context, and auto-memory export.
+//! HookClient methods for behavior logging, observations, and compaction context.
 
 use super::Backend;
 use serde_json::json;
 
 impl super::HookClient {
-    /// Recall relevant memories for a project and query string.
-    ///
-    /// Accepts a `RecallContext` for passing user identity and branch info
-    /// through to the semantic recall layer for better result ranking.
-    pub async fn recall_memories(
-        &mut self,
-        ctx: &crate::hooks::recall::RecallContext,
-        query: &str,
-    ) -> Vec<String> {
-        if self.is_ipc() {
-            let mut params = json!({
-                "project_id": ctx.project_id,
-                "query": query,
-            });
-            if let Some(ref uid) = ctx.user_id {
-                params["user_id"] = json!(uid);
-            }
-            if let Some(ref branch) = ctx.current_branch {
-                params["current_branch"] = json!(branch);
-            }
-            if let Ok(result) = self.call("recall_memories", params).await {
-                return result
-                    .get("memories")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-            }
-        }
-        if let Backend::Direct { pool } = &self.inner {
-            return crate::hooks::recall::recall_memories(pool, ctx, query).await;
-        }
-        Vec::new()
-    }
-
-    /// Log a behavior event. Fire-and-forget — errors are logged but not propagated.
+    /// Log a behavior event. Fire-and-forget -- errors are logged but not propagated.
     pub async fn log_behavior(
         &mut self,
         session_id: &str,
@@ -219,76 +180,6 @@ impl super::HookClient {
                         Err(e)
                     }
                 }
-            })
-            .await;
-        }
-    }
-
-    /// Mark memories referencing a file as stale. Fire-and-forget.
-    ///
-    /// Called by PostToolUse when Write/Edit tools modify a file. Memories whose
-    /// content mentions the changed file get a graduated recall penalty.
-    pub async fn mark_memories_stale_for_file(&mut self, project_id: i64, file_path: &str) {
-        if self.is_ipc() {
-            let params = json!({
-                "project_id": project_id,
-                "file_path": file_path,
-            });
-            if self.call("mark_memories_stale", params).await.is_ok() {
-                return;
-            }
-        }
-        if let Backend::Direct { pool } = &self.inner {
-            let pool = pool.clone();
-            let file_path = file_path.to_string();
-            pool.try_interact("mark_memories_stale", move |conn| {
-                if let Err(e) =
-                    crate::db::mark_memories_stale_for_file_sync(conn, project_id, &file_path)
-                {
-                    tracing::debug!("Failed to mark memories stale: {e}");
-                }
-                Ok(())
-            })
-            .await;
-        }
-    }
-
-    /// Export memories to MEMORY.mira.md. Fire-and-forget.
-    pub async fn write_auto_memory(&mut self, project_id: i64, project_path: &str) {
-        if self.is_ipc() {
-            let params = json!({"project_id": project_id, "project_path": project_path});
-            if let Ok(v) = self.call("write_auto_memory", params).await {
-                let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
-                if count > 0 {
-                    tracing::debug!("[mira] Auto-exported {} memories to MEMORY.mira.md", count);
-                }
-                return;
-            }
-            // fall through to Direct
-        }
-        if let Backend::Direct { pool } = &self.inner {
-            let pool = pool.clone();
-            let project_path = project_path.to_string();
-            pool.try_interact_warn("auto memory export", move |conn| {
-                if crate::tools::core::claude_local::auto_memory_dir_exists(&project_path) {
-                    match crate::tools::core::claude_local::write_auto_memory_sync(
-                        conn,
-                        project_id,
-                        &project_path,
-                    ) {
-                        Ok(count) if count > 0 => {
-                            tracing::debug!(
-                                "[mira] Auto-exported {} memories to MEMORY.mira.md",
-                                count
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("[mira] Auto memory export failed: {}", e);
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(())
             })
             .await;
         }

@@ -893,71 +893,16 @@ pub(crate) async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str)
     }
 }
 
-/// Get cross-project knowledge: search memories from other projects.
+/// Get cross-project knowledge.
 ///
-/// First tries tight "you solved this" matching (decisions/patterns, distance < 0.25),
-/// then falls back to general cross-project recall (distance < 0.35).
-/// Returns formatted context string or None if no relevant matches.
+/// Memory recall removed (Phase 1 memory system removal). Returns None.
 pub(crate) async fn get_cross_project_context(
-    pool: &Arc<DatabasePool>,
-    embeddings: &Option<Arc<EmbeddingClient>>,
-    project_id: i64,
-    message: &str,
+    _pool: &Arc<DatabasePool>,
+    _embeddings: &Option<Arc<EmbeddingClient>>,
+    _project_id: i64,
+    _message: &str,
 ) -> Option<String> {
-    // Gated behind ProactiveConfig::enabled (default false). Users opt in by storing:
-    // memory(action="remember", content="enable proactive suggestions", key="proactive:enabled", fact_type="preference")
-    let pool_check = pool.clone();
-    let pid = project_id;
-    let config_enabled = pool_check
-        .interact(move |conn| {
-            Ok::<_, anyhow::Error>(crate::proactive::get_proactive_config(conn, None, pid).enabled)
-        })
-        .await
-        .unwrap_or(false);
-    if !config_enabled {
-        return None;
-    }
-
-    let embeddings = embeddings.as_ref()?;
-    let query_embedding = embeddings.embed(message).await.ok()?;
-    let embedding_bytes = crate::search::embedding_to_bytes(&query_embedding);
-
-    let pool_clone = pool.clone();
-    pool_clone
-        .interact(move |conn| {
-            // First: tight match for "You solved this in Project X"
-            let solved = crate::db::find_solved_in_other_project_sync(
-                conn,
-                &embedding_bytes,
-                project_id,
-                0.25,
-                2,
-            )
-            .unwrap_or_default();
-
-            if !solved.is_empty() {
-                return Ok::<Option<String>, anyhow::Error>(Some(
-                    crate::db::format_cross_project_context(&solved),
-                ));
-            }
-
-            // Fallback: general cross-project recall with looser threshold
-            let results =
-                crate::db::recall_cross_project_sync(conn, &embedding_bytes, project_id, 5)
-                    .unwrap_or_default();
-
-            // Filter to only reasonably relevant results
-            let relevant: Vec<_> = results.into_iter().filter(|r| r.distance < 0.35).collect();
-
-            if relevant.is_empty() {
-                return Ok(None);
-            }
-
-            Ok(Some(crate::db::format_cross_project_context(&relevant)))
-        })
-        .await
-        .ok()
-        .flatten()
+    None
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

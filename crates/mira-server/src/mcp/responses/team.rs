@@ -10,7 +10,6 @@ pub type TeamOutput = ToolOutput<TeamData>;
 pub enum TeamData {
     Status(TeamStatusData),
     Review(TeamReviewData),
-    Distill(TeamDistillData),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -46,18 +45,3 @@ pub struct TeamReviewData {
     pub file_count: usize,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct TeamDistillData {
-    pub team_name: String,
-    pub findings_count: usize,
-    pub memories_processed: usize,
-    pub files_touched: usize,
-    pub findings: Vec<DistilledFindingSummary>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct DistilledFindingSummary {
-    pub category: String,
-    pub content: String,
-    pub source_count: usize,
-}

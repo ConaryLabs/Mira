@@ -140,13 +140,11 @@ pub async fn get_project_info<C: ToolContext + ?Sized>(ctx: &C) -> ProjectInfo {
 pub(crate) mod test_utils;
 
 // Sub-modules with tool implementations
-pub mod claude_local;
 pub mod code;
 pub mod diff;
 pub mod documentation;
 pub mod goals;
 pub mod insights;
-pub mod memory;
 pub mod project;
 pub mod recipe;
 pub mod session;
@@ -156,7 +154,6 @@ pub mod team;
 pub mod usage;
 
 // Re-export handler functions used by MCP router, CLI, and tests
-pub use claude_local::export_claude_local;
 pub use code::{
     find_function_callees, find_function_callers, get_symbols, handle_code, index, query_callees,
     query_callers, query_search_code, search_code, summarize_codebase,
@@ -165,7 +162,6 @@ pub use diff::{analyze_diff_tool, list_diff_analyses};
 pub use documentation::documentation;
 pub use goals::goal;
 pub use insights::{dismiss_insight, query_insights};
-pub use memory::{archive, forget, handle_memory, recall, remember};
 pub use project::{get_project, project, session_start, set_project};
 pub use recipe::handle_recipe;
 pub use session::{ensure_session, get_session_recap, handle_session};

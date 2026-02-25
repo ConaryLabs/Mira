@@ -2,12 +2,11 @@
 // File mention detection and context injection
 
 use crate::db::pool::DatabasePool;
-use crate::db::search_memories_sync;
 use regex::Regex;
-use std::path::Path;
 use std::sync::Arc;
 
 pub struct FileAwareInjector {
+    #[allow(dead_code)]
     pool: Arc<DatabasePool>,
     file_pattern: Regex,
 }
@@ -39,67 +38,16 @@ impl FileAwareInjector {
         paths
     }
 
-    /// Inject context related to specific file paths
-    /// Searches memories for mentions of these files
+    /// Inject context related to specific file paths.
+    /// Memory system removed (Phase 4) -- returns empty string.
     pub async fn inject_file_context(&self, file_paths: Vec<String>) -> String {
         if file_paths.is_empty() {
             return String::new();
         }
 
-        let mut context_parts = Vec::new();
-
-        for path in &file_paths {
-            // Extract just the filename for broader matching
-            let filename = Path::new(path)
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or(path)
-                .to_string();
-
-            // Search memories that mention this file
-            let pool = self.pool.clone();
-            if let Ok(memories) = pool
-                .interact(move |conn| {
-                    search_memories_sync(conn, None, &filename, None, None, 3)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                })
-                .await
-            {
-                for mem in memories {
-                    // Skip if it's just a health alert or low confidence
-                    if mem.fact_type == "health" || mem.confidence < 0.5 {
-                        continue;
-                    }
-
-                    // Format: [category] content (truncated)
-                    let category = mem.category.as_deref().unwrap_or("note");
-                    let content = if mem.content.len() > 150 {
-                        format!("{}...", &mem.content[..150])
-                    } else {
-                        mem.content.clone()
-                    };
-
-                    context_parts.push(format!("[{}] {}", category, content));
-                }
-            }
-        }
-
-        if context_parts.is_empty() {
-            return String::new();
-        }
-
-        // Deduplicate context parts
-        context_parts.sort();
-        context_parts.dedup();
-
-        // Limit to 3 most relevant
-        context_parts.truncate(3);
-
-        format!(
-            "Related to files mentioned ({}):\n{}",
-            file_paths.join(", "),
-            context_parts.join("\n")
-        )
+        // Memory-based file context removed in Phase 4 of memory system removal.
+        // File tracking is now handled by observations and code index.
+        String::new()
     }
 }
 

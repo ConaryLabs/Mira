@@ -37,36 +37,6 @@ pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value
     }
 }
 
-/// Recall memories relevant to a query for the given project.
-pub async fn recall_memories(server: &MiraServer, params: Value) -> Result<Value> {
-    let project_id = params
-        .get("project_id")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
-
-    let query = params
-        .get("query")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: query"))?;
-
-    let user_id = params
-        .get("user_id")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let current_branch = params
-        .get("current_branch")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    let ctx = crate::hooks::recall::RecallContext {
-        project_id,
-        user_id,
-        current_branch,
-    };
-    let memories = crate::hooks::recall::recall_memories(&server.pool, &ctx, query).await;
-    Ok(json!({"memories": memories}))
-}
-
 /// Log a behavior event to session_behavior_log.
 pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
     let session_id = params
@@ -829,41 +799,6 @@ pub async fn snapshot_tasks(server: &MiraServer, params: Value) -> Result<Value>
     Ok(json!({"count": count}))
 }
 
-/// Auto-export ranked memories to CLAUDE.local.md.
-pub async fn write_claude_local_md(server: &MiraServer, params: Value) -> Result<Value> {
-    let project_id = params
-        .get("project_id")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
-
-    let count = server
-        .pool
-        .interact(move |conn| {
-            let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
-                tracing::warn!("Failed to get last active project: {e}");
-                None
-            });
-            if let Some(project_path) = path {
-                match crate::tools::core::claude_local::write_claude_local_md_sync(
-                    conn,
-                    project_id,
-                    &project_path,
-                ) {
-                    Ok(count) => Ok::<_, anyhow::Error>(count),
-                    Err(e) => {
-                        tracing::warn!("[mira] CLAUDE.local.md export failed: {}", e);
-                        Ok(0)
-                    }
-                }
-            } else {
-                Ok(0)
-            }
-        })
-        .await?;
-
-    Ok(json!({"count": count}))
-}
-
 /// Deactivate a team session (set status='stopped').
 pub async fn deactivate_team_session(server: &MiraServer, params: Value) -> Result<Value> {
     let session_id = params
@@ -879,42 +814,6 @@ pub async fn deactivate_team_session(server: &MiraServer, params: Value) -> Resu
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(json!({}))
-}
-
-/// Export memories to MEMORY.mira.md (auto memory).
-pub async fn write_auto_memory(server: &MiraServer, params: Value) -> Result<Value> {
-    let project_id = params
-        .get("project_id")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
-    let project_path = params
-        .get("project_path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: project_path"))?
-        .to_string();
-
-    let count = server
-        .pool
-        .interact(move |conn| {
-            if crate::tools::core::claude_local::auto_memory_dir_exists(&project_path) {
-                match crate::tools::core::claude_local::write_auto_memory_sync(
-                    conn,
-                    project_id,
-                    &project_path,
-                ) {
-                    Ok(count) => Ok::<_, anyhow::Error>(count),
-                    Err(e) => {
-                        tracing::warn!("[mira] Auto memory export failed: {}", e);
-                        Ok(0)
-                    }
-                }
-            } else {
-                Ok(0)
-            }
-        })
-        .await?;
-
-    Ok(json!({"count": count}))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1022,51 +921,4 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
     }))
 }
 
-/// Distill team session knowledge (extract findings from team work).
-pub async fn distill_team_session(server: &MiraServer, params: Value) -> Result<Value> {
-    let team_id = params
-        .get("team_id")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: team_id"))?;
-    let project_id = params.get("project_id").and_then(|v| v.as_i64());
 
-    let result = crate::background::knowledge_distillation::distill_team_session(
-        &server.pool,
-        team_id,
-        project_id,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    match result {
-        Some(r) => Ok(json!({
-            "distilled": true,
-            "findings_count": r.findings.len(),
-            "team_name": r.team_name,
-        })),
-        None => Ok(json!({"distilled": false})),
-    }
-}
-
-/// Mark memories referencing a file as stale when that file changes.
-pub async fn mark_memories_stale(server: &MiraServer, params: Value) -> Result<Value> {
-    let project_id = params
-        .get("project_id")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
-    let file_path = params
-        .get("file_path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("missing required param: file_path"))?
-        .to_string();
-
-    let count = server
-        .pool
-        .interact(move |conn| {
-            crate::db::mark_memories_stale_for_file_sync(conn, project_id, &file_path)
-                .map_err(|e| anyhow::anyhow!("{e}"))
-        })
-        .await?;
-
-    Ok(json!({"count": count}))
-}

@@ -4,17 +4,14 @@
 mod background;
 mod cartographer;
 mod config;
-pub mod cross_project;
 pub mod dependencies;
 mod diff_analysis;
 pub mod diff_outcomes;
 pub mod documentation;
 mod embeddings;
-pub mod entities;
 pub mod error_patterns;
 mod index;
 mod insights;
-mod memory;
 mod migration_helpers;
 mod milestones;
 pub mod observations;
@@ -24,7 +21,7 @@ pub mod retention;
 mod schema;
 pub use schema::vectors::{
     check_embedding_provider_change, ensure_code_embeddings_queued,
-    ensure_code_vec_table_dimensions, ensure_vec_table_dimensions, invalidate_code_embeddings,
+    ensure_code_vec_table_dimensions, invalidate_code_embeddings,
 };
 mod search;
 mod session;
@@ -36,11 +33,7 @@ pub mod team;
 #[macro_use]
 pub(crate) mod test_support;
 #[cfg(test)]
-mod cross_project_tests;
-#[cfg(test)]
 mod insights_tests;
-#[cfg(test)]
-mod memory_tests;
 #[cfg(test)]
 mod project_tests;
 #[cfg(test)]
@@ -56,7 +49,6 @@ mod usage;
 pub use background::{
     clear_health_issues_by_categories_sync,
     clear_old_health_issues_sync,
-    delete_memory_by_key_sync,
     delete_pending_embedding_sync,
     get_documented_by_category_sync,
     get_error_heavy_functions_sync,
@@ -82,11 +74,6 @@ pub use cartographer::{
     count_cached_modules_sync, count_symbols_in_path_sync, get_cached_modules_sync,
     get_external_deps_sync, get_module_dependencies_sync, get_module_exports_sync,
     get_modules_needing_summaries_sync, update_module_purposes_sync, upsert_module_sync,
-};
-pub use cross_project::{
-    CrossProjectMemory, CrossProjectPreference, find_solved_in_other_project_sync,
-    format_cross_project_context, format_cross_project_preferences,
-    get_cross_project_preferences_sync, recall_cross_project_sync,
 };
 pub use diff_analysis::{
     DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync,
@@ -120,34 +107,6 @@ pub use index::{
 };
 pub(crate) use insights::compute_age_days;
 pub use insights::{dismiss_insight_sync, get_health_history_sync, get_unified_insights_sync};
-pub use memory::{
-    MemoryScopeInfo,
-    RankedMemory,
-    RecallRow,
-    StoreMemoryParams,
-    clear_project_persona_sync,
-    count_facts_without_embeddings_sync,
-    delete_memory_sync,
-    fetch_ranked_memories_for_export_sync,
-    find_facts_without_embeddings_sync,
-    get_base_persona_sync,
-    get_global_memories_sync,
-    get_health_alerts_sync as get_health_alerts_memory_sync, // alias for callers using the old 3-param signature
-    get_memory_scope_sync,
-    get_memory_stats_sync,
-    get_preferences_sync as get_preferences_memory_sync,
-    get_project_persona_sync,
-    import_confirmed_memory_sync,
-    mark_fact_has_embedding_sync,
-    mark_memories_stale_for_file_sync,
-    parse_memory_fact_row,
-    recall_semantic_with_entity_boost_sync,
-    record_memory_access_sync,
-    search_memories_sync,
-    store_fact_embedding_sync,
-    // Sync functions for pool.interact() usage
-    store_memory_sync,
-};
 pub use milestones::{
     calculate_goal_progress_sync, complete_milestone_sync, create_milestone_sync,
     delete_milestone_sync, get_milestone_by_id_sync, get_milestones_for_goal_sync,
@@ -162,12 +121,12 @@ pub use observations::{
 };
 pub use project::{
     clear_active_project_sync, delete_server_state_sync, get_active_project_ids_sync,
-    get_active_projects_sync, get_health_alerts_sync, get_indexed_project_ids_sync,
+    get_active_projects_sync, get_indexed_project_ids_sync,
     get_indexed_projects_sync, get_last_active_project_sync, get_or_create_project_sync,
-    get_preferences_sync, get_project_briefing_sync, get_project_info_sync, get_project_path_sync,
+    get_project_briefing_sync, get_project_info_sync, get_project_path_sync,
     get_project_paths_by_ids_sync, get_projects_for_briefing_check_sync,
     get_projects_needing_suggestions_sync, get_server_state_sync, list_projects_sync,
-    mark_session_for_briefing_sync, save_active_project_sync, search_memories_text_sync,
+    mark_session_for_briefing_sync, save_active_project_sync,
     set_server_state_sync, update_project_briefing_sync, update_project_name_sync,
     upsert_session_sync, upsert_session_with_branch_sync,
 };

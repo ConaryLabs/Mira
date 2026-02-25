@@ -5,7 +5,7 @@ mod detection;
 mod formatting;
 mod session_start;
 
-use mira_types::{MemoryFact, ProjectContext};
+use mira_types::ProjectContext;
 
 use crate::db::{get_or_create_project_sync, save_active_project_sync, update_project_name_sync};
 use crate::error::MiraError;
@@ -21,11 +21,8 @@ pub use session_start::session_start;
 /// Session info tuple: (session_id, last_activity, summary, tool_count, tool_names)
 type SessionInfo = (String, String, Option<String>, usize, Vec<String>);
 
-/// Recap data: (preferences, memories, health_alerts, doc_task_counts, pending_interventions)
+/// Recap data: (doc_task_counts, pending_interventions)
 type RecapData = (
-    Vec<MemoryFact>,
-    Vec<MemoryFact>,
-    Vec<MemoryFact>,
     Vec<(String, i64)>,
     Vec<interventions::PendingIntervention>,
 );
@@ -177,28 +174,6 @@ mod tests {
         }
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
-    }
-
-    fn make_fact(content: &str, fact_type: &str, category: Option<&str>) -> MemoryFact {
-        MemoryFact {
-            id: 1,
-            project_id: Some(1),
-            key: None,
-            content: content.to_string(),
-            fact_type: fact_type.to_string(),
-            category: category.map(|s| s.to_string()),
-            confidence: 0.8,
-            created_at: "2026-01-01T00:00:00".to_string(),
-            session_count: 1,
-            first_session_id: None,
-            last_session_id: None,
-            status: "active".to_string(),
-            user_id: None,
-            scope: "project".to_string(),
-            team_id: None,
-            updated_at: None,
-            branch: None,
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -416,59 +391,22 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn test_format_insights_preferences() {
-        let prefs = vec![make_fact(
-            "Use tabs not spaces",
-            "preference",
-            Some("coding"),
-        )];
-        let result = format_session_insights(&prefs, &[], &[], &[], &[]);
-        assert!(result.contains("Preferences:"));
-        assert!(result.contains("[coding] Use tabs not spaces"));
-    }
-
-    #[test]
-    fn test_format_insights_filters_preferences_from_context() {
-        let memories = vec![
-            make_fact("I'm a preference", "preference", None),
-            make_fact("Actual context", "decision", None),
-        ];
-        let result = format_session_insights(&[], &memories, &[], &[], &[]);
-        assert!(result.contains("Recent context:"));
-        assert!(result.contains("Actual context"));
-        // Preferences should be filtered out from context section
-        assert!(!result.contains("I'm a preference"));
-    }
-
-    #[test]
-    fn test_format_insights_health_alerts() {
-        let alerts = vec![make_fact(
-            "[unused] dead function",
-            "health",
-            Some("unused"),
-        )];
-        let result = format_session_insights(&[], &[], &alerts, &[], &[]);
-        assert!(result.contains("Health alerts:"));
-        assert!(result.contains("[unused]"));
-    }
-
-    #[test]
     fn test_format_insights_doc_tasks() {
         let doc_counts = vec![("pending".to_string(), 5)];
-        let result = format_session_insights(&[], &[], &[], &[], &doc_counts);
+        let result = format_session_insights(&[], &doc_counts);
         assert!(result.contains("5 items need docs"));
     }
 
     #[test]
     fn test_format_insights_no_pending_docs() {
         let doc_counts = vec![("completed".to_string(), 3)];
-        let result = format_session_insights(&[], &[], &[], &[], &doc_counts);
+        let result = format_session_insights(&[], &doc_counts);
         assert!(!result.contains("items need docs"));
     }
 
     #[test]
     fn test_format_insights_all_empty() {
-        let result = format_session_insights(&[], &[], &[], &[], &[]);
+        let result = format_session_insights(&[], &[]);
         assert!(result.is_empty());
     }
 }

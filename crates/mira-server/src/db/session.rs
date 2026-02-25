@@ -164,32 +164,6 @@ pub fn get_absence_duration_sync(conn: &Connection, project_id: i64) -> Option<i
     .ok()
 }
 
-/// Get recent decisions from memory_facts.
-/// Returns `(content, created_at)` tuples ordered newest first.
-pub fn get_recent_decisions_sync(
-    conn: &Connection,
-    project_id: i64,
-    limit: i64,
-) -> Vec<(String, String)> {
-    let mut stmt = match conn.prepare(
-        "SELECT content, created_at FROM memory_facts
-         WHERE project_id = ? AND fact_type = 'decision'
-           AND status != 'archived'
-           AND COALESCE(suspicious, 0) = 0
-           AND (scope = 'project' OR scope IS NULL)
-         ORDER BY created_at DESC
-         LIMIT ?",
-    ) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-    stmt.query_map(params![project_id, limit], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-    .unwrap_or_default()
-}
-
 /// Get recently accessed file paths from session_behavior_log.
 /// Extracts unique file paths from `file_access` events in the most recent sessions.
 pub fn get_recent_file_activity_sync(
@@ -305,34 +279,12 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
         recap_parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
     }
 
-    // Recent decisions
-    if let Some(pid) = project_id {
-        let decisions = get_recent_decisions_sync(conn, pid, 5);
-        if !decisions.is_empty() {
-            let decision_lines: Vec<String> = decisions
-                .iter()
-                .map(|(content, _created_at)| format!("* {}", truncate(content, 120)))
-                .collect();
-            recap_parts.push(format!("Recent decisions:\n{}", decision_lines.join("\n")));
-        }
-    }
-
     // Recently active files
     if let Some(pid) = project_id {
         let files = get_recent_file_activity_sync(conn, pid, 10);
         if !files.is_empty() {
             recap_parts.push(format!("Recently active files:\n* {}", files.join(", ")));
         }
-    }
-
-    // Cross-project preferences (patterns used across multiple projects)
-    if let Some(pid) = project_id
-        && let Ok(prefs) = super::cross_project::get_cross_project_preferences_sync(conn, pid, 3)
-        && !prefs.is_empty()
-    {
-        recap_parts.push(super::cross_project::format_cross_project_preferences(
-            &prefs,
-        ));
     }
 
     // Insights digest (pondering + proactive + doc gaps)

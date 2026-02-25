@@ -8,8 +8,6 @@
 //! - analytics_days (default 180): llm_usage, embeddings_usage
 //! - behavior_days (default 365): behavior_patterns (non-insight)
 //! - observations_days (default 90): system_observations
-//! - memory_days (default 180): memory_facts (tiered: low-engagement <3 sessions at N days,
-//!   all memories at 2N days). Based on updated_at which is bumped on every recall.
 //!
 //! Retention is enabled by default. Orphan cleanup always runs.
 
@@ -140,20 +138,6 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             days: config.observations_days,
             extra_filter: "",
         },
-        // ── Memories: low-engagement stale memories decay first ──
-        RetentionRule {
-            table: "memory_facts",
-            time_column: "COALESCE(updated_at, created_at)",
-            days: config.memory_days,
-            extra_filter: "AND session_count < 3",
-        },
-        // ── Memories: even high-engagement memories expire eventually ──
-        RetentionRule {
-            table: "memory_facts",
-            time_column: "COALESCE(updated_at, created_at)",
-            days: config.memory_days * 2,
-            extra_filter: "",
-        },
     ]
 }
 
@@ -232,11 +216,6 @@ fn try_execute(conn: &Connection, sql: &str) -> usize {
 pub fn cleanup_orphans(conn: &Connection) -> Result<usize, String> {
     let mut total = 0;
 
-    // vec_memory orphans (virtual table, no FK cascade possible)
-    total += try_execute(
-        conn,
-        "DELETE FROM vec_memory WHERE fact_id NOT IN (SELECT id FROM memory_facts)",
-    );
     // session_snapshots without parent session
     total += try_execute(
         conn,
@@ -261,11 +240,6 @@ pub fn cleanup_orphans(conn: &Connection) -> Result<usize, String> {
     total += try_execute(
         conn,
         "DELETE FROM error_patterns WHERE project_id NOT IN (SELECT id FROM projects)",
-    );
-    // orphaned memory_entities (no links remaining)
-    total += try_execute(
-        conn,
-        "DELETE FROM memory_entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM memory_entity_links)",
     );
 
     // Reclaim space if we deleted a lot
@@ -319,12 +293,12 @@ mod tests {
         conn.execute_batch(
             "
             CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at TEXT);
-            CREATE TABLE memory_facts (id INTEGER PRIMARY KEY);
-            CREATE TABLE vec_memory (fact_id INTEGER);
             CREATE TABLE session_snapshots (id INTEGER PRIMARY KEY, session_id TEXT);
             CREATE TABLE tool_history (id INTEGER PRIMARY KEY, session_id TEXT, created_at TEXT);
-            CREATE TABLE memory_entities (id INTEGER PRIMARY KEY);
-            CREATE TABLE memory_entity_links (entity_id INTEGER);
+            CREATE TABLE goals (id INTEGER PRIMARY KEY);
+            CREATE TABLE session_goals (id INTEGER PRIMARY KEY, session_id TEXT, goal_id INTEGER);
+            CREATE TABLE projects (id INTEGER PRIMARY KEY);
+            CREATE TABLE error_patterns (id INTEGER PRIMARY KEY, project_id INTEGER, updated_at TEXT);
             ",
         )
         .unwrap();
@@ -375,17 +349,11 @@ mod tests {
             [],
         )
         .unwrap();
-        // vec_memory with no matching memory_facts
-        conn.execute("INSERT INTO vec_memory (fact_id) VALUES (99999)", [])
-            .unwrap();
-        // memory_entity with no links
-        conn.execute("INSERT INTO memory_entities (id) VALUES (1)", [])
-            .unwrap();
 
         let cleaned = cleanup_orphans(&conn).unwrap();
         assert!(
-            cleaned >= 4,
-            "should delete at least 4 orphaned rows, got {}",
+            cleaned >= 2,
+            "should delete at least 2 orphaned rows, got {}",
             cleaned
         );
 
@@ -399,11 +367,6 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM tool_history", [], |r| r.get(0))
             .unwrap();
         assert_eq!(tool_count, 0, "orphaned tool_history should be deleted");
-
-        let vec_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM vec_memory", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(vec_count, 0, "orphaned vec_memory should be deleted");
     }
 
     #[test]

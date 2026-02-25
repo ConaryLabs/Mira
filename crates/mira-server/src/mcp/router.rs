@@ -51,18 +51,6 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Persistent cross-session knowledge base. Actions: remember (store a fact), recall (search by similarity), forget (delete by ID), archive (exclude from auto-export, keep for history). Scope: personal, project (default), team.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::MemoryOutput>()
-            .expect("MemoryOutput schema")
-    )]
-    async fn memory(
-        &self,
-        Parameters(req): Parameters<McpMemoryRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_memory(self, req.into()).await)
-    }
-
-    #[tool(
         description = "Code intelligence: semantic search and call graph analysis. Actions: search (find code by meaning), symbols (list definitions in file), callers/callees (trace call graph).",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::CodeOutput>()
             .expect("CodeOutput schema")
@@ -484,9 +472,9 @@ mod tests {
 
     #[test]
     fn tool_result_err_produces_error_content() {
-        use crate::mcp::responses::MemoryOutput;
+        use crate::mcp::responses::ProjectOutput;
         let result: Result<CallToolResult, ErrorData> =
-            tool_result::<MemoryOutput, String>(Err("bad request".to_string()));
+            tool_result::<ProjectOutput, String>(Err("bad request".to_string()));
         // Should be Ok (not protocol error), but with error content
         let call_result = result.expect("tool_result Err should produce Ok(CallToolResult)");
         let text = call_result

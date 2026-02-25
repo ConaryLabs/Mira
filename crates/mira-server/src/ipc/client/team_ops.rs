@@ -1,6 +1,6 @@
 // crates/mira-server/src/ipc/client/team_ops.rs
 //! HookClient methods for team membership, file ownership, conflicts,
-//! deactivation, and knowledge distillation.
+//! and deactivation.
 
 use super::{Backend, FileConflictInfo, TeamMembershipInfo};
 use serde_json::json;
@@ -167,51 +167,4 @@ impl super::HookClient {
         }
     }
 
-    /// Distill team session knowledge. Returns (distilled, findings_count, team_name).
-    pub async fn distill_team_session(
-        &mut self,
-        team_id: i64,
-        project_id: Option<i64>,
-    ) -> (bool, usize, String) {
-        if self.is_ipc() {
-            let params = json!({"team_id": team_id, "project_id": project_id});
-            match self.call("distill_team_session", params).await {
-                Ok(v) => {
-                    let distilled = v
-                        .get("distilled")
-                        .and_then(|d| d.as_bool())
-                        .unwrap_or(false);
-                    let count = v
-                        .get("findings_count")
-                        .and_then(|c| c.as_u64())
-                        .unwrap_or(0) as usize;
-                    let name = v
-                        .get("team_name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    return (distilled, count, name);
-                }
-                Err(e) => {
-                    tracing::warn!("[mira] Knowledge distillation via IPC failed: {}", e);
-                    // fall through to Direct
-                }
-            }
-        }
-        if let Backend::Direct { pool } = &self.inner {
-            return match crate::background::knowledge_distillation::distill_team_session(
-                pool, team_id, project_id,
-            )
-            .await
-            {
-                Ok(Some(result)) => (true, result.findings.len(), result.team_name),
-                Ok(None) => (false, 0, String::new()),
-                Err(e) => {
-                    tracing::warn!("[mira] Knowledge distillation failed: {}", e);
-                    (false, 0, String::new())
-                }
-            };
-        }
-        (false, 0, String::new())
-    }
 }

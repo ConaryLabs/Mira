@@ -2,7 +2,7 @@
 // Shared test helpers and macros for database tests
 
 use super::pool::DatabasePool;
-use super::{StoreMemoryParams, get_or_create_project_sync, store_memory_sync};
+use super::get_or_create_project_sync;
 use rusqlite::Connection;
 use std::sync::Arc;
 
@@ -60,68 +60,6 @@ pub fn setup_test_connection() -> rusqlite::Connection {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     run_all_migrations(&conn).unwrap();
     conn
-}
-
-/// Store a test memory with common defaults
-pub fn store_memory_helper(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-    key: Option<&str>,
-    content: &str,
-    fact_type: &str,
-    category: Option<&str>,
-    confidence: f64,
-) -> anyhow::Result<i64> {
-    store_memory_sync(
-        conn,
-        StoreMemoryParams {
-            project_id,
-            key,
-            content,
-            fact_type,
-            category,
-            confidence,
-            session_id: None,
-            user_id: None,
-            scope: "project",
-            branch: None,
-            team_id: None,
-            suspicious: false,
-        },
-    )
-    .map_err(Into::into)
-}
-
-/// Store a test memory with session tracking
-#[allow(clippy::too_many_arguments)]
-pub fn store_memory_with_session_helper(
-    conn: &rusqlite::Connection,
-    project_id: Option<i64>,
-    key: Option<&str>,
-    content: &str,
-    fact_type: &str,
-    category: Option<&str>,
-    confidence: f64,
-    session_id: Option<&str>,
-) -> anyhow::Result<i64> {
-    store_memory_sync(
-        conn,
-        StoreMemoryParams {
-            project_id,
-            key,
-            content,
-            fact_type,
-            category,
-            confidence,
-            session_id,
-            user_id: None,
-            scope: "project",
-            branch: None,
-            team_id: None,
-            suspicious: false,
-        },
-    )
-    .map_err(Into::into)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -4,14 +4,12 @@
 use crate::cartographer;
 use crate::db::documentation::count_doc_tasks_by_status;
 use crate::db::{
-    StoreMemoryParams, StoreObservationParams, get_health_alerts_sync, get_preferences_sync,
-    get_project_briefing_sync, get_recent_sessions_sync, get_session_stats_sync,
-    mark_session_for_briefing_sync, search_memories_text_sync, set_server_state_sync,
-    store_memory_sync, store_observation_sync, upsert_session_with_branch_sync,
+    StoreObservationParams, get_project_briefing_sync, get_recent_sessions_sync,
+    get_session_stats_sync, mark_session_for_briefing_sync, set_server_state_sync,
+    store_observation_sync, upsert_session_with_branch_sync,
 };
 use crate::error::MiraError;
 use crate::git::get_git_branch;
-use crate::mcp::elicitation;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectOutput, ProjectStartData};
 use crate::proactive::{ProactiveConfig, interventions};
@@ -99,27 +97,10 @@ async fn load_recent_sessions<C: ToolContext>(
         .await
 }
 
-/// Load recap data: preferences, memories, health alerts, doc counts, interventions
+/// Load recap data: doc counts, interventions
 async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<RecapData, MiraError> {
-    let user_id = ctx.get_user_identity();
-    let team_id: Option<i64> = ctx.get_team_membership().map(|m| m.team_id);
     ctx.pool()
         .run(move |conn| {
-            let preferences =
-                get_preferences_sync(conn, Some(project_id), user_id.as_deref(), team_id)
-                    .unwrap_or_default();
-            let memories = search_memories_text_sync(
-                conn,
-                Some(project_id),
-                "",
-                10,
-                user_id.as_deref(),
-                team_id,
-            )
-            .unwrap_or_default();
-            let health_alerts =
-                get_health_alerts_sync(conn, Some(project_id), 5, user_id.as_deref(), team_id)
-                    .unwrap_or_default();
             let doc_task_counts =
                 count_doc_tasks_by_status(conn, Some(project_id)).unwrap_or_default();
             let config = ProactiveConfig::default();
@@ -127,13 +108,7 @@ async fn load_recap_data<C: ToolContext>(ctx: &C, project_id: i64) -> Result<Rec
                 interventions::get_pending_interventions_sync(conn, project_id, &config)
                     .unwrap_or_default();
 
-            Ok::<_, String>((
-                preferences,
-                memories,
-                health_alerts,
-                doc_task_counts,
-                interventions_list,
-            ))
+            Ok::<_, String>((doc_task_counts, interventions_list))
         })
         .await
 }
@@ -178,13 +153,10 @@ pub async fn session_start<C: ToolContext>(
         }
     }
 
-    let (preferences, memories, health_alerts, doc_task_counts, pending_interventions) =
+    let (doc_task_counts, pending_interventions) =
         load_recap_data(ctx, project_id).await?;
 
     response.push_str(&format_session_insights(
-        &preferences,
-        &memories,
-        &health_alerts,
         &pending_interventions,
         &doc_task_counts,
     ));
@@ -240,19 +212,7 @@ pub async fn session_start<C: ToolContext>(
         response.push_str(&format!("\nDatabase: {}\n", db_path.display()));
     }
 
-    // Status line: memory count, symbol count, active goal count
-    let memory_count: i64 = ctx
-        .pool()
-        .run(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?",
-                rusqlite::params![project_id],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .unwrap_or(0);
-
+    // Status line: symbol count, active goal count
     let symbol_count: i64 = ctx
         .code_pool()
         .run(move |conn| {
@@ -290,8 +250,8 @@ pub async fn session_start<C: ToolContext>(
     };
 
     response.push_str(&format!(
-        "\nMira: {} memories | {} symbols indexed | {} active goals | mode: {}\n",
-        memory_count, symbol_count, goal_count, mode
+        "\nMira: {} symbols indexed | {} active goals | mode: {}\n",
+        symbol_count, goal_count, mode
     ));
 
     if let Some(detail) = mode_detail {
@@ -389,68 +349,13 @@ pub async fn session_start<C: ToolContext>(
 
 /// Run first-session onboarding via elicitation.
 ///
-/// Asks the user a few optional questions and stores non-empty answers as memories.
-/// Returns `true` if at least one answer was stored, `false` otherwise.
-/// Failures are logged and swallowed — onboarding is strictly optional.
+/// Memory storage removed (Phase 4). Returns false (no-op).
 async fn run_first_session_onboarding<C: ToolContext>(
-    ctx: &C,
-    project_id: i64,
-    session_id: &str,
+    _ctx: &C,
+    _project_id: i64,
+    _session_id: &str,
 ) -> bool {
-    let client = match ctx.elicitation_client() {
-        Some(c) => c,
-        None => return false,
-    };
-
-    if !client.is_available().await {
-        return false;
-    }
-
-    let answers = elicitation::request_onboarding(&client).await;
-    if answers.is_empty() {
-        return false;
-    }
-
-    let user_id = ctx.get_user_identity();
-    let sid = session_id.to_string();
-    let stored = ctx
-        .pool()
-        .run(move |conn| {
-            let mut count = 0u32;
-            for answer in &answers {
-                let result = store_memory_sync(
-                    conn,
-                    StoreMemoryParams {
-                        project_id: Some(project_id),
-                        key: None,
-                        content: &format!("{}: {}", answer.field, answer.content),
-                        fact_type: "preference",
-                        category: Some("onboarding"),
-                        confidence: 0.9,
-                        session_id: Some(&sid),
-                        user_id: user_id.as_deref(),
-                        scope: "project",
-                        branch: None,
-                        team_id: None,
-                        suspicious: false,
-                    },
-                );
-                match result {
-                    Ok(_) => count += 1,
-                    Err(e) => tracing::warn!("Failed to store onboarding answer: {}", e),
-                }
-            }
-            Ok::<_, rusqlite::Error>(count)
-        })
-        .await
-        .unwrap_or(0);
-
-    tracing::info!(
-        "[onboarding] Stored {} preference(s) for project {}",
-        stored,
-        project_id
-    );
-    stored > 0
+    false
 }
 
 /// Validate that a string contains only characters safe for use as a git

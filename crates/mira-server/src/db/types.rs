@@ -1,9 +1,6 @@
 // db/types.rs
 // Data structures returned by database operations
 
-// Note: MemoryFact is in mira_types (shared crate)
-// Use parse_memory_fact_row() from db/memory.rs for row parsing
-
 /// Tool history entry
 #[derive(Debug, Clone)]
 pub struct ToolHistoryEntry {

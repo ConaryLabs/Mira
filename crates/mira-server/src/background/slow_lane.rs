@@ -5,7 +5,6 @@
 // When the previous cycle ran long, low-priority tasks are skipped.
 
 use crate::db::pool::DatabasePool;
-use crate::embeddings::EmbeddingClient;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,8 +12,8 @@ use tokio::sync::watch;
 use tokio::time::timeout;
 
 use super::{
-    briefings, code_health, documentation, entity_extraction, memory_embeddings, outcome_scanner,
-    pondering, session_summaries, summaries, team_monitor,
+    briefings, code_health, documentation, outcome_scanner, pondering, session_summaries, summaries,
+    team_monitor,
 };
 
 /// Delay before first cycle to let the service start up
@@ -48,7 +47,7 @@ const DATA_RETENTION_CYCLE_INTERVAL: u64 = 10;
 /// Priority level for background tasks. Lower numeric value = higher priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskPriority {
-    /// Must always run: session summaries, embeddings
+    /// Must always run: session summaries
     Critical = 0,
     /// Standard tasks: briefings, health, proactive
     Normal = 1,
@@ -62,12 +61,10 @@ enum TaskPriority {
 #[derive(Debug, Clone, Copy)]
 enum BackgroundTask {
     StaleSessions,
-    MemoryEmbeddings,
     Summaries,
     Briefings,
     HealthFastScans,
     HealthModuleAnalysis,
-    EntityBackfills,
     TeamMonitor,
     DocumentationTasks,
     PonderingInsights,
@@ -80,12 +77,10 @@ impl std::fmt::Display for BackgroundTask {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::StaleSessions => write!(f, "stale sessions"),
-            Self::MemoryEmbeddings => write!(f, "memory embeddings"),
             Self::Summaries => write!(f, "summaries"),
             Self::Briefings => write!(f, "briefings"),
             Self::HealthFastScans => write!(f, "health: fast scans"),
             Self::HealthModuleAnalysis => write!(f, "health: module analysis"),
-            Self::EntityBackfills => write!(f, "entity backfills"),
             Self::TeamMonitor => write!(f, "team monitor"),
             Self::DocumentationTasks => write!(f, "documentation tasks"),
             Self::PonderingInsights => write!(f, "pondering insights"),
@@ -124,11 +119,6 @@ fn task_schedule() -> Vec<ScheduledTask> {
             priority: TaskPriority::Critical,
             cycle_interval: None,
         },
-        ScheduledTask {
-            task: BackgroundTask::MemoryEmbeddings,
-            priority: TaskPriority::Critical,
-            cycle_interval: None,
-        },
         // Normal: standard cadence
         ScheduledTask {
             task: BackgroundTask::Summaries,
@@ -147,11 +137,6 @@ fn task_schedule() -> Vec<ScheduledTask> {
         },
         ScheduledTask {
             task: BackgroundTask::HealthModuleAnalysis,
-            priority: TaskPriority::Normal,
-            cycle_interval: None,
-        },
-        ScheduledTask {
-            task: BackgroundTask::EntityBackfills,
             priority: TaskPriority::Normal,
             cycle_interval: None,
         },
@@ -204,8 +189,6 @@ pub struct SlowLaneWorker {
     pool: Arc<DatabasePool>,
     /// Code index database pool (code_symbols, vec_code, codebase_modules, etc.)
     code_pool: Arc<DatabasePool>,
-    /// Embedding client for memory re-embedding
-    embeddings: Option<Arc<EmbeddingClient>>,
     shutdown: watch::Receiver<bool>,
     cycle_count: u64,
     /// Duration of the previous cycle, used to decide whether to skip low-priority tasks
@@ -218,13 +201,11 @@ impl SlowLaneWorker {
     pub fn new(
         pool: Arc<DatabasePool>,
         code_pool: Arc<DatabasePool>,
-        embeddings: Option<Arc<EmbeddingClient>>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         Self {
             pool,
             code_pool,
-            embeddings,
             shutdown,
             cycle_count: 0,
             last_cycle_duration: Duration::ZERO,
@@ -394,22 +375,6 @@ impl SlowLaneWorker {
             BackgroundTask::TeamMonitor => {
                 self.run_task(&name, team_monitor::process_team_monitor(&pool))
                     .await
-            }
-            BackgroundTask::EntityBackfills => {
-                self.run_task(&name, entity_extraction::process_entity_backfill(&pool))
-                    .await
-            }
-            BackgroundTask::MemoryEmbeddings => {
-                if let Some(ref emb) = self.embeddings {
-                    let emb = emb.clone();
-                    self.run_task(
-                        &name,
-                        memory_embeddings::process_memory_embeddings(&pool, &emb),
-                    )
-                    .await
-                } else {
-                    0
-                }
             }
             BackgroundTask::DataRetention => {
                 self.run_task(&name, async move {
@@ -631,12 +596,10 @@ mod tests {
         let names: Vec<String> = schedule.iter().map(|s| s.task.to_string()).collect();
 
         assert!(names.contains(&"stale sessions".to_string()));
-        assert!(names.contains(&"memory embeddings".to_string()));
         assert!(names.contains(&"summaries".to_string()));
         assert!(names.contains(&"briefings".to_string()));
         assert!(names.contains(&"health: fast scans".to_string()));
         assert!(names.contains(&"health: module analysis".to_string()));
-        assert!(names.contains(&"entity backfills".to_string()));
         assert!(names.contains(&"team monitor".to_string()));
         assert!(names.contains(&"documentation tasks".to_string()));
         assert!(names.contains(&"pondering insights".to_string()));
@@ -867,7 +830,6 @@ mod tests {
         SlowLaneWorker {
             pool,
             code_pool,
-            embeddings: None,
             shutdown: rx,
             cycle_count: 0,
             last_cycle_duration,

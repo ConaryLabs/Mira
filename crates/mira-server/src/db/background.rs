@@ -54,24 +54,6 @@ pub fn memory_key_exists_sync(conn: &Connection, project_id: i64, key: &str) -> 
     .unwrap_or(false)
 }
 
-/// Delete a memory by key (cleans up vec_memory orphans first)
-pub fn delete_memory_by_key_sync(
-    conn: &Connection,
-    project_id: i64,
-    key: &str,
-) -> rusqlite::Result<usize> {
-    // First delete orphaned vec_memory entries for facts matching this key
-    conn.execute(
-        "DELETE FROM vec_memory WHERE fact_id IN (SELECT id FROM memory_facts WHERE project_id = ?1 AND key = ?2)",
-        params![project_id, key],
-    )?;
-    // Then delete the facts themselves
-    conn.execute(
-        "DELETE FROM memory_facts WHERE project_id = ?1 AND key = ?2",
-        params![project_id, key],
-    )
-}
-
 /// Insert a system observation marker (for scan times, flags)
 pub fn insert_system_marker_sync(
     conn: &Connection,
@@ -821,27 +803,4 @@ mod tests {
         assert_eq!(count, 0);
     }
 
-    #[test]
-    fn test_delete_memory_by_key() {
-        let (conn, pid) = setup_conn_with_project();
-
-        // Store a memory fact with a key
-        crate::db::test_support::store_memory_helper(
-            &conn,
-            Some(pid),
-            Some("test_key"),
-            "test content",
-            "general",
-            None,
-            1.0,
-        )
-        .unwrap();
-
-        let deleted = delete_memory_by_key_sync(&conn, pid, "test_key").unwrap();
-        assert!(deleted > 0);
-
-        // Verify it's gone
-        let deleted_again = delete_memory_by_key_sync(&conn, pid, "test_key").unwrap();
-        assert_eq!(deleted_again, 0);
-    }
 }

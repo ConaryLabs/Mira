@@ -1,15 +1,15 @@
 # CLAUDE.md
 
-Mira is a Rust MCP server providing persistent memory and code intelligence for Claude Code.
+Mira is a Rust MCP server providing code intelligence and session management for Claude Code.
 
 ## Session Start
 
 Project context is **auto-initialized** from Claude Code's working directory.
-For full session context, call `session(action="recap")`. Use `memory(action="recall", query="preferences")` before writing code.
+For full session context, call `session(action="recap")`.
 
 **Automatic bridging:** Mira hooks capture session source (`startup` vs `resume`), pending tasks, and working directory. Session history shows `[startup]` or `[resume←previous_id]`.
 
-**Notation:** `tool(action="x", param="y")` refers to MCP tool calls. For example, `memory(action="recall", query="...")` calls the `memory` MCP tool with `action="recall"`. These are not shell commands.
+**Notation:** `tool(action="x", param="y")` refers to MCP tool calls. For example, `code(action="search", query="...")` calls the `code` MCP tool with `action="search"`. These are not shell commands.
 
 ## Anti-Patterns
 
@@ -18,9 +18,8 @@ For full session context, call `session(action="recap")`. Use `memory(action="re
 | Don't | Do Instead |
 |-------|------------|
 | Use `Database` directly | Use `DatabasePool` for all database access |
-| Store secrets in memories | Keep secrets in `.env` only |
+| Store secrets in code or config | Keep secrets in `.env` only |
 | Guess at MCP tool parameters | Check tool schema or existing usage first |
-| Add dependencies without checking | Run `memory(action="recall", query="dependencies")` first |
 | Change tool handler signatures in `mcp/router.rs` | Coordinate changes across all tool modules in `tools/core/` |
 
 ## Tool Selection
@@ -29,7 +28,6 @@ STOP before using Grep or Glob. Prefer Mira tools for semantic work:
 - **Code by intent** -> `code(action="search", query="...")` (not Grep)
 - **File structure** -> `code(action="symbols", file_path="...")` (not grepping for definitions)
 - **Call graph** -> `code(action="callers", ...)` / `code(action="callees", ...)` (not grepping function names)
-- **Past decisions** -> `memory(action="recall", query="...")` before architectural changes
 - **External libraries** -> Context7: `resolve-library-id` then `query-docs`
 
 Use Grep/Glob only for **literal strings**, **exact filename patterns**, or **simple one-off searches**.
@@ -44,7 +42,6 @@ See `.claude/rules/tool-selection.md` for the full decision guide.
 | File structure | `code(action="symbols", file_path="...")` |
 | What calls X? | `code(action="callers", function_name="...")` |
 | What does X call? | `code(action="callees", function_name="...")` |
-| Past decisions | `memory(action="recall", query="...")` |
 | Codebase overview | `project(action="start")` output |
 | External library API | Context7: `resolve-library-id` -> `query-docs` |
 | Literal string search | `Grep` (OK) |
@@ -93,8 +90,6 @@ See `.env.example` for all options.
 | `/mira:goals` | List and manage cross-session goals and milestones |
 | `/mira:recap` | Get session context, preferences, and active goals |
 | `/mira:search <query>` | Semantic code search by concept |
-| `/mira:remember <content>` | Quick memory storage |
-| `/mira:recall [query]` | Browse or search stored memories |
 | `/mira:insights` | Surface background analysis and predictions |
 | `/mira:diff` | Semantic analysis of code changes |
 | `/mira:experts` | Expert consultation via Agent Teams |
@@ -112,16 +107,16 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | Hook | What It Injects |
 |------|-----------------|
 | `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info, incomplete tasks from previous session |
-| `UserPromptSubmit` | Pending tasks, relevant memories, proactive predictions, pre-generated suggestions, team context |
-| `PreToolUse` | Relevant memories before Grep/Glob/Read (semantic search with keyword fallback); file reread advisory and symbol hints for Read |
+| `UserPromptSubmit` | Pending tasks, proactive predictions, pre-generated suggestions, team context |
+| `PreToolUse` | File reread advisory and symbol hints for Read |
 | `PostToolUse` | Tracks file modifications, team conflict detection |
 | `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |
-| `Stop` | Session snapshot, task export, goal progress check, auto-export to CLAUDE.local.md |
+| `Stop` | Session snapshot, task export, goal progress check |
 | `SessionEnd` | Snapshot tasks on user interrupt, team session cleanup |
-| `SubagentStart` | Injects relevant memories and active goals for subagent context |
+| `SubagentStart` | Injects active goals for subagent context |
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PermissionRequest` | Auto-approve tools based on stored rules |
-| `PostToolUseFailure` | Tracks tool failures, recalls relevant memories after 3+ repeated failures |
+| `PostToolUseFailure` | Tracks tool failures |
 | `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |
 | `TeammateIdle` | Logs teammate idle events for team activity tracking |
 
@@ -136,11 +131,9 @@ When summarizing this conversation, always preserve:
 - User preferences or constraints stated during the session
 - The current task's specific requirements, acceptance criteria, and remaining steps
 - Any errors encountered and how they were resolved (or if still unresolved)
-- Memory IDs stored via `memory(action="remember")` during this session
 
 ## What NOT to Do
 
 Beyond the anti-patterns above, avoid:
 - Manually fetching session context that `UserPromptSubmit` hook already injects
-- Creating memories for ephemeral info (hooks track file access automatically)
 - Duplicating goal/task state between Claude tasks and Mira goals

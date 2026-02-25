@@ -19,28 +19,16 @@ fn no_ann<T: AnnotateAble>(raw: T) -> Annotated<T> {
 impl MiraServer {
     /// Build the static list of available resources.
     fn resource_list() -> Vec<Annotated<RawResource>> {
-        vec![
-            no_ann(RawResource {
-                uri: "mira://goals".into(),
-                name: "goals".into(),
-                title: Some("Active Goals".into()),
-                description: Some("List of active goals with progress percentages".into()),
-                mime_type: Some("application/json".into()),
-                size: None,
-                icons: None,
-                meta: None,
-            }),
-            no_ann(RawResource {
-                uri: "mira://memories/recent".into(),
-                name: "memories-recent".into(),
-                title: Some("Recent Memories".into()),
-                description: Some("Most recent 20 memories".into()),
-                mime_type: Some("application/json".into()),
-                size: None,
-                icons: None,
-                meta: None,
-            }),
-        ]
+        vec![no_ann(RawResource {
+            uri: "mira://goals".into(),
+            name: "goals".into(),
+            title: Some("Active Goals".into()),
+            description: Some("List of active goals with progress percentages".into()),
+            mime_type: Some("application/json".into()),
+            size: None,
+            icons: None,
+            meta: None,
+        })]
     }
 
     /// Build the list of resource templates (parameterized URIs).
@@ -91,7 +79,6 @@ impl MiraServer {
 
         match uri.as_str() {
             "mira://goals" => self.read_goals_list().await,
-            "mira://memories/recent" => self.read_recent_memories().await,
             _ if uri.starts_with("mira://goals/") => {
                 let id_str = &uri["mira://goals/".len()..];
                 let id: i64 = id_str.parse().map_err(|_| {
@@ -218,70 +205,6 @@ impl MiraServer {
         })
     }
 
-    /// Read recent memories as JSON (scoped to active project, project-scope only).
-    async fn read_recent_memories(&self) -> Result<ReadResourceResult, rmcp::ErrorData> {
-        let project_id = self.project.read().await.as_ref().map(|p| p.id);
-
-        let Some(pid) = project_id else {
-            // No active project — return empty to avoid cross-project data leak
-            return Ok(ReadResourceResult {
-                contents: vec![ResourceContents::TextResourceContents {
-                    uri: "mira://memories/recent".into(),
-                    mime_type: Some("application/json".into()),
-                    text: "[]".into(),
-                    meta: None,
-                }],
-            });
-        };
-
-        let memories = self
-            .pool
-            .interact(move |conn| {
-                let sql = "SELECT id, content, fact_type, category, confidence, \
-                           created_at, status, scope
-                    FROM memory_facts
-                    WHERE project_id = ?1
-                      AND scope = 'project'
-                      AND status != 'archived'
-                      AND COALESCE(suspicious, 0) = 0
-                    ORDER BY updated_at DESC, id DESC
-                    LIMIT 20";
-                let mut stmt = conn.prepare(sql)?;
-                let rows = stmt.query_map(rusqlite::params![pid], |row| {
-                    Ok(serde_json::json!({
-                        "id": row.get::<_, i64>(0)?,
-                        "content": row.get::<_, String>(1)?,
-                        "fact_type": row.get::<_, String>(2)?,
-                        "category": row.get::<_, Option<String>>(3)?,
-                        "confidence": row.get::<_, f64>(4)?,
-                        "created_at": row.get::<_, String>(5)?,
-                        "status": row.get::<_, String>(6)?,
-                        "scope": row.get::<_, String>(7)?,
-                    }))
-                })?;
-
-                let results: rusqlite::Result<Vec<serde_json::Value>> = rows.collect();
-                results.map_err(|e| anyhow::anyhow!(e))
-            })
-            .await
-            .map_err(|e| {
-                rmcp::ErrorData::internal_error(
-                    format!("Failed to read recent memories: {e}"),
-                    None,
-                )
-            })?;
-
-        let json = serde_json::to_string_pretty(&memories).unwrap_or_else(|_| "[]".into());
-
-        Ok(ReadResourceResult {
-            contents: vec![ResourceContents::TextResourceContents {
-                uri: "mira://memories/recent".into(),
-                mime_type: Some("application/json".into()),
-                text: json,
-                meta: None,
-            }],
-        })
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -299,14 +222,11 @@ mod tests {
     #[test]
     fn resource_list_has_expected_entries() {
         let resources = MiraServer::resource_list();
-        assert_eq!(resources.len(), 2);
+        assert_eq!(resources.len(), 1);
 
         assert_eq!(resources[0].raw.uri, "mira://goals");
         assert_eq!(resources[0].raw.name, "goals");
         assert!(resources[0].raw.mime_type.as_deref() == Some("application/json"));
-
-        assert_eq!(resources[1].raw.uri, "mira://memories/recent");
-        assert_eq!(resources[1].raw.name, "memories-recent");
     }
 
     #[test]

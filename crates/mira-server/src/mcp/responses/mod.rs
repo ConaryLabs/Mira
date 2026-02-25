@@ -13,7 +13,6 @@ mod documentation;
 mod goal;
 mod index;
 mod insights;
-mod memory;
 mod project;
 mod recipe;
 mod session;
@@ -27,7 +26,6 @@ pub use documentation::*;
 pub use goal::*;
 pub use index::*;
 pub use insights::*;
-pub use memory::*;
 pub use project::*;
 pub use recipe::*;
 pub use session::*;
@@ -49,7 +47,7 @@ pub trait HasMessage {
 /// Generic tool output with action, message, and optional typed data.
 ///
 /// All MCP tools return this shape. Concrete output types are type aliases:
-/// `pub type MemoryOutput = ToolOutput<MemoryData>;`
+/// `pub type ProjectOutput = ToolOutput<ProjectData>;`
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ToolOutput<D> {
     pub action: String,
@@ -109,7 +107,6 @@ mod tests {
     #[test]
     fn all_schemas_are_valid_mcp_output() {
         // Each output type must produce a root type "object" schema
-        assert!(schema_for_output::<MemoryOutput>().is_ok(), "MemoryOutput");
         assert!(
             schema_for_output::<ProjectOutput>().is_ok(),
             "ProjectOutput"

@@ -102,61 +102,6 @@ pub struct ProjectRequest {
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum MemoryAction {
-    /// Store a fact for future recall
-    Remember,
-    /// Search memories using semantic similarity
-    Recall,
-    /// List all memories with pagination
-    List,
-    /// Delete a memory by ID
-    Forget,
-    /// Archive a memory (exclude from auto-export, keep for history)
-    Archive,
-    /// Export Mira memories to CLAUDE.local.md
-    ExportClaudeLocal,
-    /// Export all project memories as structured JSON
-    Export,
-    /// Delete all memories for the current project
-    Purge,
-    /// Query entity graph for the current project
-    Entities,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct MemoryRequest {
-    #[schemars(
-        description = "Action: remember, recall, list, forget, archive, export_claude_local, export, purge, entities"
-    )]
-    pub action: MemoryAction,
-    #[schemars(description = "Content to remember (required for remember)")]
-    pub content: Option<String>,
-    #[schemars(description = "Search query (required for recall)")]
-    pub query: Option<String>,
-    #[schemars(description = "Memory ID to delete (required for forget)")]
-    pub id: Option<i64>,
-    #[schemars(description = "Key for upsert")]
-    pub key: Option<String>,
-    #[schemars(description = "Type: preference/decision/context/general")]
-    pub fact_type: Option<String>,
-    #[schemars(description = "Category")]
-    pub category: Option<String>,
-    #[schemars(description = "Confidence score (0.0-1.0)")]
-    pub confidence: Option<f64>,
-    #[schemars(
-        description = "Visibility scope: personal (only creator), project (default, anyone with project access), team (team members only)"
-    )]
-    pub scope: Option<String>,
-    #[schemars(description = "Max results")]
-    pub limit: Option<i64>,
-    #[schemars(description = "Number of results to skip (for pagination)")]
-    pub offset: Option<i64>,
-    #[schemars(description = "Confirm destructive action (required for purge)")]
-    pub confirm: Option<bool>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum CodeAction {
     /// Search code by meaning
     Search,
@@ -372,14 +317,12 @@ pub enum TeamAction {
     Status,
     /// Review a teammate's modified files
     Review,
-    /// Distill key findings/decisions from team work into team-scoped memories
-    Distill,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TeamRequest {
     #[schemars(
-        description = "Action: status (team overview), review (teammate's work), distill (extract key findings)"
+        description = "Action: status (team overview), review (teammate's work)"
     )]
     pub action: TeamAction,
     #[schemars(description = "Teammate name (for review action, defaults to self)")]
@@ -438,87 +381,6 @@ pub struct McpProjectRequest {
     pub name: Option<String>,
     #[schemars(description = "Optional session ID (for start action)")]
     pub session_id: Option<String>,
-}
-
-// ── Memory (5 → 4 actions: removes ExportClaudeLocal) ────────────────────
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum McpMemoryAction {
-    /// Store a fact for future recall
-    Remember,
-    /// Search memories using semantic similarity
-    Recall,
-    /// List all memories with pagination
-    List,
-    /// Delete a memory by ID
-    Forget,
-    /// Archive a memory (exclude from auto-export, keep for history)
-    Archive,
-    /// Query entity graph for the current project
-    Entities,
-}
-
-impl From<McpMemoryAction> for MemoryAction {
-    fn from(a: McpMemoryAction) -> Self {
-        match a {
-            McpMemoryAction::Remember => MemoryAction::Remember,
-            McpMemoryAction::Recall => MemoryAction::Recall,
-            McpMemoryAction::List => MemoryAction::List,
-            McpMemoryAction::Forget => MemoryAction::Forget,
-            McpMemoryAction::Archive => MemoryAction::Archive,
-            McpMemoryAction::Entities => MemoryAction::Entities,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct McpMemoryRequest {
-    #[schemars(
-        description = "Action: remember (store a fact), recall (search by similarity), list (paginated browse), forget (delete by ID), archive (exclude from auto-export, keep for history), entities (query entity graph)"
-    )]
-    pub action: McpMemoryAction,
-    #[schemars(description = "Content to remember (required for remember)")]
-    pub content: Option<String>,
-    #[schemars(description = "Search query (required for recall)")]
-    pub query: Option<String>,
-    #[schemars(description = "Memory ID (required for forget/archive)")]
-    pub id: Option<i64>,
-    #[schemars(description = "Key for upsert")]
-    pub key: Option<String>,
-    #[schemars(description = "Type: preference/decision/context/general")]
-    pub fact_type: Option<String>,
-    #[schemars(description = "Category")]
-    pub category: Option<String>,
-    #[schemars(description = "Confidence score (0.0-1.0)")]
-    pub confidence: Option<f64>,
-    #[schemars(
-        description = "Visibility scope: personal (only creator), project (default, anyone with project access), team (team members only)"
-    )]
-    pub scope: Option<String>,
-    #[schemars(description = "Max results")]
-    pub limit: Option<i64>,
-    #[schemars(description = "Number of results to skip (for pagination)")]
-    pub offset: Option<i64>,
-}
-
-impl From<McpMemoryRequest> for MemoryRequest {
-    fn from(r: McpMemoryRequest) -> Self {
-        Self {
-            action: r.action.into(),
-            content: r.content,
-            query: r.query,
-            id: r.id,
-            key: r.key,
-            fact_type: r.fact_type,
-            category: r.category,
-            confidence: r.confidence,
-            scope: r.scope,
-            limit: r.limit,
-            offset: r.offset,
-            confirm: None, // CLI-only field, not exposed via MCP
-        }
-    }
 }
 
 // ── Code (8 → 5 actions: removes Dependencies, Patterns, TechDebt) ──────
@@ -809,20 +671,6 @@ mod tests {
         assert!(matches!(a, McpProjectAction::Get));
     }
 
-    // ── McpMemoryAction deserialization ───────────────────────────────
-
-    #[test]
-    fn memory_action_remember() {
-        let a: McpMemoryAction = serde_json::from_value(json!("remember")).unwrap();
-        assert!(matches!(a, McpMemoryAction::Remember));
-    }
-
-    #[test]
-    fn memory_action_recall() {
-        let a: McpMemoryAction = serde_json::from_value(json!("recall")).unwrap();
-        assert!(matches!(a, McpMemoryAction::Recall));
-    }
-
     // ── McpCodeAction deserialization ─────────────────────────────────
 
     #[test]
@@ -866,39 +714,6 @@ mod tests {
     fn project_action_rejects_set() {
         let result = serde_json::from_value::<McpProjectAction>(json!("set"));
         assert!(result.is_err(), "McpProjectAction should reject 'set'");
-    }
-
-    #[test]
-    fn memory_action_rejects_export_claude_local() {
-        let result = serde_json::from_value::<McpMemoryAction>(json!("export_claude_local"));
-        assert!(
-            result.is_err(),
-            "McpMemoryAction should reject 'export_claude_local'"
-        );
-    }
-
-    #[test]
-    fn memory_action_rejects_export() {
-        let result = serde_json::from_value::<McpMemoryAction>(json!("export"));
-        assert!(
-            result.is_err(),
-            "McpMemoryAction should reject 'export' (CLI-only)"
-        );
-    }
-
-    #[test]
-    fn memory_action_rejects_purge() {
-        let result = serde_json::from_value::<McpMemoryAction>(json!("purge"));
-        assert!(
-            result.is_err(),
-            "McpMemoryAction should reject 'purge' (CLI-only)"
-        );
-    }
-
-    #[test]
-    fn memory_action_entities() {
-        let a: McpMemoryAction = serde_json::from_value(json!("entities")).unwrap();
-        assert!(matches!(a, McpMemoryAction::Entities));
     }
 
     #[test]
@@ -1098,47 +913,6 @@ mod tests {
         assert!(full.group_by.is_none());
         assert!(full.dry_run.is_none());
         assert!(full.category.is_none());
-    }
-
-    // ── From<McpMemoryRequest> for MemoryRequest ─────────────────────
-
-    #[test]
-    fn memory_request_conversion() {
-        let mcp = McpMemoryRequest {
-            action: McpMemoryAction::Remember,
-            content: Some("test content".into()),
-            query: Some("test query".into()),
-            id: Some(99),
-            key: Some("test-key".into()),
-            fact_type: Some("decision".into()),
-            category: Some("patterns".into()),
-            confidence: Some(0.95),
-            scope: Some("project".into()),
-            limit: Some(25),
-            offset: Some(10),
-        };
-
-        let full: MemoryRequest = mcp.into();
-
-        assert!(matches!(full.action, MemoryAction::Remember));
-        assert_eq!(full.content.as_deref(), Some("test content"));
-        assert_eq!(full.query.as_deref(), Some("test query"));
-        assert_eq!(full.id, Some(99));
-        assert_eq!(full.key.as_deref(), Some("test-key"));
-        assert_eq!(full.fact_type.as_deref(), Some("decision"));
-        assert_eq!(full.category.as_deref(), Some("patterns"));
-        assert_eq!(full.confidence, Some(0.95));
-        assert_eq!(full.scope.as_deref(), Some("project"));
-        assert_eq!(full.limit, Some(25));
-        assert_eq!(full.offset, Some(10));
-        // CLI-only fields are None when coming from MCP
-        assert!(full.confirm.is_none());
-    }
-
-    #[test]
-    fn memory_action_list() {
-        let a: McpMemoryAction = serde_json::from_value(json!("list")).unwrap();
-        assert!(matches!(a, McpMemoryAction::List));
     }
 
     // ── From<McpCodeRequest> for CodeRequest ─────────────────────────

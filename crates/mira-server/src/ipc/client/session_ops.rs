@@ -292,47 +292,4 @@ impl super::HookClient {
         }
     }
 
-    /// Auto-export memories to CLAUDE.local.md. Fire-and-forget.
-    pub async fn write_claude_local_md(&mut self, project_id: i64) {
-        if self.is_ipc() {
-            let params = json!({"project_id": project_id});
-            if let Ok(v) = self.call("write_claude_local_md", params).await {
-                let count = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
-                if count > 0 {
-                    tracing::debug!("[mira] Auto-exported {} memories to CLAUDE.local.md", count);
-                }
-                return;
-            }
-            // fall through to Direct
-        }
-        if let Backend::Direct { pool } = &self.inner {
-            let pool = pool.clone();
-            pool.try_interact_warn("CLAUDE.local.md export", move |conn| {
-                let path = crate::db::get_last_active_project_sync(conn).unwrap_or_else(|e| {
-                    tracing::warn!("Failed to get last active project: {e}");
-                    None
-                });
-                if let Some(project_path) = path {
-                    match crate::tools::core::claude_local::write_claude_local_md_sync(
-                        conn,
-                        project_id,
-                        &project_path,
-                    ) {
-                        Ok(count) if count > 0 => {
-                            tracing::debug!(
-                                "[mira] Auto-exported {} memories to CLAUDE.local.md",
-                                count
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("[mira] CLAUDE.local.md export failed: {}", e);
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(())
-            })
-            .await;
-        }
-    }
 }

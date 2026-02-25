@@ -16,7 +16,6 @@ pub async fn handle_team<C: ToolContext + ?Sized>(
     match req.action {
         TeamAction::Status => team_status(ctx).await,
         TeamAction::Review => team_review(ctx, req.teammate).await,
-        TeamAction::Distill => team_distill(ctx).await,
     }
 }
 
@@ -181,65 +180,6 @@ async fn team_review<C: ToolContext + ?Sized>(
     }))
 }
 
-/// Distill key findings/decisions from team work into team-scoped memories.
-async fn team_distill<C: ToolContext + ?Sized>(ctx: &C) -> Result<Json<TeamOutput>, MiraError> {
-    let membership = match ctx.get_team_membership() {
-        Some(m) => m,
-        None => {
-            return Ok(Json(ToolOutput {
-                action: "distill".to_string(),
-                message: "Not in a team. Team tools require an active Agent Teams session."
-                    .to_string(),
-                data: None,
-            }));
-        }
-    };
-
-    let pool = ctx.pool().clone();
-    let tid = membership.team_id;
-    let project_id = ctx.project_id().await;
-
-    let result =
-        crate::background::knowledge_distillation::distill_team_session(&pool, tid, project_id)
-            .await?;
-
-    match result {
-        Some(result) => {
-            let message =
-                crate::background::knowledge_distillation::format_distillation_result(&result);
-            let findings: Vec<DistilledFindingSummary> = result
-                .findings
-                .iter()
-                .map(|f| DistilledFindingSummary {
-                    category: f.category.clone(),
-                    content: f.content.clone(),
-                    source_count: f.source_count,
-                })
-                .collect();
-
-            Ok(Json(ToolOutput {
-                action: "distill".to_string(),
-                message,
-                data: Some(TeamData::Distill(TeamDistillData {
-                    team_name: result.team_name,
-                    findings_count: findings.len(),
-                    memories_processed: result.total_memories_processed,
-                    files_touched: result.total_files_touched,
-                    findings,
-                })),
-            }))
-        }
-        None => Ok(Json(ToolOutput {
-            action: "distill".to_string(),
-            message: format!(
-                "No findings to distill for team '{}'. Insufficient data (need at least {} memories or file activity).",
-                membership.team_name, 2,
-            ),
-            data: None,
-        })),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,8 +192,5 @@ mod tests {
 
         let review: TeamAction = serde_json::from_str(r#""review""#).unwrap();
         assert!(matches!(review, TeamAction::Review));
-
-        let distill: TeamAction = serde_json::from_str(r#""distill""#).unwrap();
-        assert!(matches!(distill, TeamAction::Distill));
     }
 }

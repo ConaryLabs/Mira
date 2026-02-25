@@ -17,13 +17,8 @@ fn op_timeout(op: &str) -> Duration {
         "get_user_prompt_context"
         | "close_session"
         | "get_startup_context"
-        | "get_resume_context"
-        | "distill_team_session" => Duration::from_secs(30),
-        "recall_memories"
-        | "get_active_goals"
-        | "snapshot_tasks"
-        | "write_claude_local_md"
-        | "write_auto_memory" => Duration::from_secs(10),
+        | "get_resume_context" => Duration::from_secs(30),
+        "get_active_goals" | "snapshot_tasks" => Duration::from_secs(10),
         _ => Duration::from_secs(5),
     }
 }
@@ -31,7 +26,7 @@ fn op_timeout(op: &str) -> Duration {
 /// Handle a single IPC connection: loop reading request lines until EOF.
 ///
 /// Hooks typically need 2-3 operations per invocation (e.g., resolve_project
-/// then recall_memories), so we support multiple requests per connection.
+/// then log_behavior), so we support multiple requests per connection.
 /// The client closes the connection when done (sends EOF).
 ///
 /// Generic over the stream type to support different transports (Unix sockets,
@@ -143,7 +138,6 @@ async fn dispatch(
 ) -> anyhow::Result<serde_json::Value> {
     match op {
         "resolve_project" => super::ops::resolve_project(server, params).await,
-        "recall_memories" => super::ops::recall_memories(server, params).await,
         "log_behavior" => super::ops::log_behavior(server, params).await,
         "store_observation" => super::ops::store_observation(server, params).await,
         "get_active_goals" => super::ops::get_active_goals(server, params).await,
@@ -163,14 +157,9 @@ async fn dispatch(
         "get_resume_context" => super::ops::get_resume_context(server, params).await,
         "close_session" => super::ops::close_session(server, params).await,
         "snapshot_tasks" => super::ops::snapshot_tasks(server, params).await,
-        "write_claude_local_md" => super::ops::write_claude_local_md(server, params).await,
         "deactivate_team_session" => super::ops::deactivate_team_session(server, params).await,
-        "write_auto_memory" => super::ops::write_auto_memory(server, params).await,
-        "distill_team_session" => super::ops::distill_team_session(server, params).await,
         // Phase 4: UserPromptSubmit
         "get_user_prompt_context" => super::ops::get_user_prompt_context(server, params).await,
-        // Memory staleness
-        "mark_memories_stale" => super::ops::mark_memories_stale(server, params).await,
         _ => anyhow::bail!("unknown op: {op}"),
     }
 }

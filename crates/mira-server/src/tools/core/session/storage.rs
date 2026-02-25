@@ -12,7 +12,6 @@ use crate::tools::core::ToolContext;
 /// Prevents SQL injection via table name interpolation.
 #[allow(dead_code)]
 pub(super) enum AllowedTable {
-    MemoryFacts,
     Sessions,
     ToolHistory,
     LlmUsage,
@@ -26,7 +25,6 @@ pub(super) enum AllowedTable {
 impl AllowedTable {
     pub(super) fn as_str(&self) -> &'static str {
         match self {
-            AllowedTable::MemoryFacts => "memory_facts",
             AllowedTable::Sessions => "sessions",
             AllowedTable::ToolHistory => "tool_history",
             AllowedTable::LlmUsage => "llm_usage",
@@ -79,7 +77,6 @@ pub(super) async fn storage_status<C: ToolContext>(
     let counts = ctx
         .pool()
         .run(move |conn| {
-            let memories = count_table(conn, AllowedTable::MemoryFacts);
             let sessions = count_table(conn, AllowedTable::Sessions);
             let tool_history = count_table(conn, AllowedTable::ToolHistory);
             let llm_usage = count_table(conn, AllowedTable::LlmUsage);
@@ -89,7 +86,6 @@ pub(super) async fn storage_status<C: ToolContext>(
             let observations = count_table(conn, AllowedTable::SystemObservations);
 
             Ok::<_, String>((
-                memories,
                 sessions,
                 tool_history,
                 llm_usage,
@@ -101,7 +97,7 @@ pub(super) async fn storage_status<C: ToolContext>(
         })
         .await?;
 
-    let (memories, sessions, tool_history, llm_usage, embed_usage, behavior, goals, observations) =
+    let (sessions, tool_history, llm_usage, embed_usage, behavior, goals, observations) =
         counts;
 
     // Load retention config and count candidates
@@ -128,7 +124,6 @@ pub(super) async fn storage_status<C: ToolContext>(
     ));
 
     report.push_str("### Row Counts\n");
-    report.push_str(&format!("- Memories: {}\n", memories));
     report.push_str(&format!("- Sessions: {}\n", sessions));
     report.push_str(&format!("- Tool history: {}\n", tool_history));
     report.push_str(&format!(
@@ -172,7 +167,7 @@ pub(super) async fn storage_status<C: ToolContext>(
     }
 
     report.push_str("\n### Protected (never auto-deleted)\n");
-    report.push_str("- Memories, Goals, Code index\n");
+    report.push_str("- Goals, Code index\n");
 
     Ok(Json(SessionOutput {
         action: "storage_status".into(),
@@ -249,7 +244,7 @@ pub(super) async fn cleanup<C: ToolContext>(
         }
 
         report.push_str("\n### Protected (never deleted)\n");
-        report.push_str("- Memories, Goals, Code index\n");
+        report.push_str("- Goals, Code index\n");
         report.push_str("\nTo execute cleanup, call: session(action=\"cleanup\", dry_run=false)\n");
 
         Ok(Json(SessionOutput {

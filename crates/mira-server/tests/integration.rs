@@ -8,9 +8,9 @@ mod test_utils;
 use mira::mcp::requests::{GoalAction, GoalRequest, IndexAction, RecipeAction, RecipeRequest};
 use mira::mcp::responses::*;
 use mira::tools::core::{
-    ToolContext, archive, ensure_session, find_function_callees, find_function_callers, forget,
-    get_project, get_session_recap, get_symbols, goal, handle_recipe, handle_session, index,
-    recall, remember, search_code, session_start, set_project, summarize_codebase,
+    ToolContext, ensure_session, find_function_callees, find_function_callers, get_project,
+    get_session_recap, get_symbols, goal, handle_recipe, handle_session, index, search_code,
+    session_start, set_project, summarize_codebase,
 };
 use mira::tools::tasks::TaskAction;
 use std::sync::Arc;
@@ -166,136 +166,6 @@ async fn test_session_start_twice_different_projects() {
 
     // Verify session ID changed (new session for new project)
     assert_ne!(session_id1, session_id2);
-}
-
-#[tokio::test]
-async fn test_remember_basic() {
-    let ctx = TestContext::new().await;
-
-    // Need a project for memory operations
-    let project_path = "/tmp/test_memory_project".to_string();
-    session_start(
-        &ctx,
-        project_path.clone(),
-        Some("Memory Test Project".to_string()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // Store a memory
-    let content = "We decided to use Rust for the backend.";
-    let result = remember(
-        &ctx,
-        content.to_string(),
-        None, // key
-        Some("decision".to_string()),
-        Some("architecture".to_string()),
-        Some(0.9),
-        None, // scope (default to project)
-    )
-    .await;
-
-    assert!(result.is_ok(), "remember failed: {:?}", result.err());
-    let output = result.unwrap();
-    assert!(
-        msg!(output).contains("Stored memory"),
-        "Output: {}",
-        msg!(output)
-    );
-    assert!(
-        msg!(output).contains("id:"),
-        "Output should contain memory ID"
-    );
-
-    // Extract memory ID from output (optional)
-    // We'll just verify that recall can find it
-    let recall_result = recall(&ctx, "Rust backend".to_string(), Some(5), None, None).await;
-    assert!(
-        recall_result.is_ok(),
-        "recall failed: {:?}",
-        recall_result.err()
-    );
-    let recall_output = recall_result.unwrap();
-    // Since embeddings are disabled, fallback to keyword search may find the memory
-    // We'll just ensure no error
-    assert!(
-        msg!(recall_output).contains("memories") || msg!(recall_output).contains("No memories")
-    );
-}
-
-#[tokio::test]
-async fn test_remember_with_key() {
-    let ctx = TestContext::new().await;
-
-    let project_path = "/tmp/test_memory_key".to_string();
-    session_start(
-        &ctx,
-        project_path.clone(),
-        Some("Memory Key Test".to_string()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // Store a memory with a key
-    let content = "API key is stored in .env file";
-    let key = "api_key_location".to_string();
-    let result = remember(
-        &ctx,
-        content.to_string(),
-        Some(key.clone()),
-        Some("preference".to_string()),
-        Some("security".to_string()),
-        Some(1.0),
-        None, // scope (default to project)
-    )
-    .await;
-
-    assert!(result.is_ok(), "remember failed: {:?}", result.err());
-    let output = result.unwrap();
-    assert!(
-        msg!(output).contains("Stored memory"),
-        "Output: {}",
-        msg!(output)
-    );
-    assert!(
-        msg!(output).contains("with key"),
-        "Output should indicate key"
-    );
-    assert!(
-        msg!(output).contains("id:"),
-        "Output should contain memory ID"
-    );
-
-    // Extract memory ID from structured data
-    let memory_id = match &output.0.data {
-        Some(MemoryData::Remember(data)) => data.id,
-        other => panic!("Expected Remember data, got: {:?}", other),
-    };
-
-    // Try to forget the memory
-    let forget_result = forget(&ctx, memory_id).await;
-    assert!(
-        forget_result.is_ok(),
-        "forget failed: {:?}",
-        forget_result.err()
-    );
-    let forget_output = forget_result.unwrap();
-    assert!(msg!(forget_output).contains("deleted") || msg!(forget_output).contains("not found"));
-}
-
-#[tokio::test]
-async fn test_forget_invalid_id() {
-    let ctx = TestContext::new().await;
-
-    // Forget with negative ID
-    let result = forget(&ctx, -5).await;
-    assert!(result.is_err(), "Expected error for negative ID");
-
-    // Forget with zero ID
-    let result = forget(&ctx, 0).await;
-    assert!(result.is_err(), "Expected error for zero ID");
 }
 
 #[tokio::test]
@@ -798,6 +668,8 @@ async fn test_get_session_recap() {
 
 #[tokio::test]
 async fn test_pool_concurrent_access() {
+    use mira::tools::core::ToolContext;
+
     let ctx = TestContext::new().await;
 
     // Set up a project first
@@ -811,23 +683,32 @@ async fn test_pool_concurrent_access() {
     .await
     .expect("session_start failed");
 
-    // Run multiple concurrent memory operations.
-    // Stagger starts to avoid thundering herd on in-memory shared-cache DB,
-    // where SQLITE_LOCKED (table-level lock) isn't retried by busy_timeout.
-    // Real requests don't arrive at the same nanosecond either.
+    let project_id = ctx.project_id().await.expect("Should have project_id");
+
+    // Run multiple concurrent goal operations to verify pool handles concurrency.
+    // Stagger starts to avoid thundering herd on in-memory shared-cache DB.
     let futures: Vec<_> = (0..5)
         .map(|i| {
             let ctx_ref = &ctx;
             async move {
                 tokio::time::sleep(std::time::Duration::from_millis(i * 50)).await;
-                remember(
+                goal(
                     ctx_ref,
-                    format!("Concurrent memory {}", i),
-                    Some(format!("concurrent_key_{}", i)),
-                    Some("general".to_string()),
-                    None,
-                    Some(0.8),
-                    None, // scope (default to project)
+                    GoalRequest {
+                        action: GoalAction::Create,
+                        title: Some(format!("Concurrent goal {}", i)),
+                        description: None,
+                        status: None,
+                        priority: None,
+                        progress_percent: None,
+                        include_finished: None,
+                        goal_id: None,
+                        milestone_id: None,
+                        milestone_title: None,
+                        weight: None,
+                        limit: None,
+                        goals: None,
+                    },
                 )
                 .await
             }
@@ -840,25 +721,27 @@ async fn test_pool_concurrent_access() {
     for (i, result) in results.iter().enumerate() {
         assert!(
             result.is_ok(),
-            "Concurrent remember {} failed: {:?}",
+            "Concurrent goal create {} failed: {:?}",
             i,
             result.as_ref().err()
         );
     }
 
-    // Verify all memories were stored
-    let recall_result = recall(&ctx, "Concurrent memory".to_string(), Some(10), None, None).await;
-    assert!(
-        recall_result.is_ok(),
-        "recall failed: {:?}",
-        recall_result.err()
-    );
-    let output = recall_result.unwrap();
-    assert!(
-        msg!(output).contains("memories"),
-        "Should find memories: {}",
-        msg!(output)
-    );
+    // Verify all goals were stored
+    let count: i64 = ctx
+        .pool()
+        .interact(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM goals WHERE project_id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| anyhow::anyhow!(e))
+        })
+        .await
+        .unwrap();
+
+    assert!(count >= 5, "Should have at least 5 goals, got {}", count);
 }
 
 #[tokio::test]
@@ -898,27 +781,36 @@ async fn test_pool_and_database_share_state() {
 
     assert!(project_exists, "Project created via pool should be visible");
 
-    // Create a memory via pool
-    remember(
+    // Create a goal via pool
+    goal(
         &ctx,
-        "Pool-created memory".to_string(),
-        Some("pool_share_test".to_string()),
-        Some("general".to_string()),
-        None,
-        Some(0.9),
-        None, // scope (default to project)
+        GoalRequest {
+            action: GoalAction::Create,
+            title: Some("Pool-created goal".to_string()),
+            description: None,
+            status: None,
+            priority: None,
+            progress_percent: None,
+            include_finished: None,
+            goal_id: None,
+            milestone_id: None,
+            milestone_title: None,
+            weight: None,
+            limit: None,
+            goals: None,
+        },
     )
     .await
-    .expect("remember failed");
+    .expect("goal create failed");
 
-    // Verify memory exists via pool
-    let memory_exists = ctx
+    // Verify goal exists via pool
+    let goal_exists = ctx
         .pool()
-        .interact(|conn| {
+        .interact(move |conn| {
             Ok::<bool, anyhow::Error>(
                 conn.query_row(
-                    "SELECT 1 FROM memory_facts WHERE key = ?",
-                    ["pool_share_test"],
+                    "SELECT 1 FROM goals WHERE project_id = ?",
+                    [project_id],
                     |_row| Ok(true),
                 )
                 .unwrap_or(false),
@@ -927,30 +819,7 @@ async fn test_pool_and_database_share_state() {
         .await
         .unwrap();
 
-    assert!(memory_exists, "Memory created via pool should be visible");
-}
-
-#[tokio::test]
-async fn test_pool_error_handling() {
-    let ctx = TestContext::new().await;
-
-    // Try to recall without a project (should still work, just return no results)
-    let result = recall(&ctx, "nonexistent".to_string(), Some(5), None, None).await;
-    assert!(
-        result.is_ok(),
-        "recall should handle missing project gracefully"
-    );
-
-    // Try forget with non-existent ID (should return Err with not-found message)
-    let result = forget(&ctx, 999999).await;
-    match result {
-        Err(ref err) => assert!(
-            err.to_string().contains("not found"),
-            "Should indicate memory not found: {}",
-            err
-        ),
-        Ok(_) => panic!("forget should return error for non-existent ID"),
-    }
+    assert!(goal_exists, "Goal created via pool should be visible");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2820,243 +2689,6 @@ async fn test_goal_progress_update() {
         }
         other => panic!("Expected Get data, got: {:?}", other),
     }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Memory Tests (Phase 2)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_memory_archive() {
-    let ctx = TestContext::new().await;
-    session_start(
-        &ctx,
-        "/tmp/test_memory_archive".into(),
-        Some("Memory Archive".into()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // Store a memory
-    let remember_output = remember(
-        &ctx,
-        "Archivable memory content".to_string(),
-        None,
-        Some("general".to_string()),
-        None,
-        Some(0.8),
-        None,
-    )
-    .await
-    .expect("remember failed");
-
-    let memory_id = match &remember_output.0.data {
-        Some(MemoryData::Remember(data)) => data.id,
-        other => panic!("Expected Remember data, got: {:?}", other),
-    };
-
-    // Archive it
-    let archive_output = archive(&ctx, memory_id).await.expect("archive failed");
-
-    assert!(
-        msg!(archive_output).contains("archived") || msg!(archive_output).contains("Archive"),
-        "Output: {}",
-        msg!(archive_output)
-    );
-
-    // Verify status in DB
-    let status: String = ctx
-        .pool()
-        .run(move |conn| {
-            conn.query_row(
-                "SELECT status FROM memory_facts WHERE id = ?",
-                [memory_id],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .expect("Failed to query status");
-
-    assert_eq!(status, "archived", "Memory status should be 'archived'");
-}
-
-#[tokio::test]
-async fn test_memory_secret_rejection() {
-    let ctx = TestContext::new().await;
-    session_start(
-        &ctx,
-        "/tmp/test_memory_secret".into(),
-        Some("Memory Secret".into()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // Try to store an AWS key
-    let result = remember(
-        &ctx,
-        "My AWS key is AKIAIOSFODNN7EXAMPLE".to_string(),
-        None,
-        Some("general".to_string()),
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    assert!(result.is_err(), "Should reject content with AWS key");
-    let err = result.err().expect("should be Err");
-    assert!(
-        err.to_string().contains("secret") || err.to_string().contains("Secret"),
-        "Error should mention secret: {}",
-        err
-    );
-    assert!(
-        err.to_string().contains("AWS key"),
-        "Error should identify pattern as AWS key: {}",
-        err
-    );
-}
-
-#[tokio::test]
-async fn test_memory_remember_with_scope() {
-    let ctx = TestContext::new().await;
-    session_start(
-        &ctx,
-        "/tmp/test_memory_scope".into(),
-        Some("Memory Scope".into()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    // Store with personal scope
-    let output = remember(
-        &ctx,
-        "Personal preference: dark mode".to_string(),
-        Some("personal_pref".to_string()),
-        Some("preference".to_string()),
-        None,
-        Some(0.9),
-        Some("personal".to_string()),
-    )
-    .await
-    .expect("remember with scope failed");
-
-    assert!(
-        msg!(output).contains("Stored memory"),
-        "Output: {}",
-        msg!(output)
-    );
-
-    let memory_id = match &output.0.data {
-        Some(MemoryData::Remember(data)) => data.id,
-        other => panic!("Expected Remember data, got: {:?}", other),
-    };
-
-    // Verify scope in DB
-    let scope: String = ctx
-        .pool()
-        .run(move |conn| {
-            conn.query_row(
-                "SELECT scope FROM memory_facts WHERE id = ?",
-                [memory_id],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .expect("Failed to query scope");
-
-    assert_eq!(scope, "personal", "Scope should be 'personal'");
-}
-
-#[tokio::test]
-async fn test_memory_remember_upsert() {
-    let ctx = TestContext::new().await;
-    session_start(
-        &ctx,
-        "/tmp/test_memory_upsert".into(),
-        Some("Memory Upsert".into()),
-        None,
-    )
-    .await
-    .expect("session_start failed");
-
-    let key = "upsert_test_key".to_string();
-
-    // Store first version
-    let output1 = remember(
-        &ctx,
-        "First version of this memory".to_string(),
-        Some(key.clone()),
-        Some("general".to_string()),
-        None,
-        Some(0.8),
-        None,
-    )
-    .await
-    .expect("first remember failed");
-
-    let _id1 = match &output1.0.data {
-        Some(MemoryData::Remember(data)) => data.id,
-        other => panic!("Expected Remember data, got: {:?}", other),
-    };
-
-    // Store second version with same key (should upsert)
-    let output2 = remember(
-        &ctx,
-        "Updated version of this memory".to_string(),
-        Some(key.clone()),
-        Some("general".to_string()),
-        None,
-        Some(0.9),
-        None,
-    )
-    .await
-    .expect("second remember (upsert) failed");
-
-    let id2 = match &output2.0.data {
-        Some(MemoryData::Remember(data)) => data.id,
-        other => panic!("Expected Remember data, got: {:?}", other),
-    };
-
-    // Verify only 1 memory with this key exists (status is 'candidate' for new memories)
-    let count: i64 = ctx
-        .pool()
-        .run(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM memory_facts WHERE key = ?",
-                [&key],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .expect("Failed to count memories");
-
-    assert_eq!(
-        count, 1,
-        "Should have exactly 1 memory with this key (upsert)"
-    );
-
-    // The ID may or may not change depending on implementation, but content should be updated
-    let content: String = ctx
-        .pool()
-        .run(move |conn| {
-            conn.query_row(
-                "SELECT content FROM memory_facts WHERE id = ?",
-                [id2],
-                |row| row.get(0),
-            )
-        })
-        .await
-        .expect("Failed to query content");
-
-    assert!(
-        content.contains("Updated version"),
-        "Content should be the updated version: {}",
-        content
-    );
 }
 
 // ============================================================================

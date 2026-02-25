@@ -68,18 +68,6 @@ fn query_goals(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Count memories stored for a project (excludes system/internal types).
-fn query_memories(conn: &Connection, project_id: i64) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1 \
-         AND fact_type NOT IN ('health','persona','system','session_event',\
-         'extracted','tool_outcome','convergence_alert','distilled')",
-        [project_id],
-        |r| r.get(0),
-    )
-    .unwrap_or(0)
-}
-
 /// Count distinct indexed files for a project (uses code DB).
 fn query_indexed_files(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
@@ -176,7 +164,6 @@ pub fn run() -> Result<()> {
 
     // Query stats from main DB
     let goals = query_goals(&main_conn, project_id);
-    let memories = query_memories(&main_conn, project_id);
     let alerts = query_alerts(&main_conn, project_id);
 
     // Query stats from code DB
@@ -190,15 +177,11 @@ pub fn run() -> Result<()> {
         .map(|c| query_pending(c, project_id))
         .unwrap_or(0);
 
-    // Build output parts in order: goals, memories, indexed, alerts, pending
+    // Build output parts in order: goals, indexed, alerts, pending
     let mut parts = Vec::new();
 
     if goals > 0 {
         parts.push(format!("{GREEN}{goals}{RESET} goals"));
-    }
-
-    if memories > 0 {
-        parts.push(format!("{DIM}{memories}{RESET} memories"));
     }
 
     if indexed > 0 {

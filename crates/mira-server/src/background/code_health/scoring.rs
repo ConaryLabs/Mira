@@ -54,7 +54,7 @@ pub async fn compute_tech_debt_scores(
         return Ok(0);
     }
 
-    // Step 2: Gather findings from main DB (memory_facts)
+    // Step 2: Gather findings from main DB (system_observations)
     let module_ids: Vec<String> = modules.iter().map(|m| m.module_id.clone()).collect();
     let module_paths: Vec<String> = modules.iter().map(|m| m.path.clone()).collect();
     let findings = main_pool

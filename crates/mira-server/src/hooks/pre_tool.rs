@@ -1,5 +1,5 @@
 // crates/mira-server/src/hooks/pre_tool.rs
-// PreToolUse hook handler - injects relevant context before Grep/Glob searches
+// PreToolUse hook handler - file reread advisory, symbol hints, and edit/write pattern warnings
 
 use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
@@ -8,9 +8,6 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const COOLDOWN_SECS: u64 = 3;
-const MAX_RECENT_QUERIES: usize = 5;
-
 /// Maximum entries in the per-session file-read cache
 const MAX_READ_CACHE_ENTRIES: usize = 50;
 
@@ -18,162 +15,11 @@ const MAX_READ_CACHE_ENTRIES: usize = 50;
 /// (don't warn about rereads immediately after — Claude may have a good reason)
 const REREAD_MIN_AGE_SECS: u64 = 30;
 
-/// Try to acquire an exclusive lock for the PreToolUse hook.
-///
-/// When multiple Grep/Glob calls fire in parallel, Claude Code launches a
-/// PreToolUse hook for each one simultaneously. Without serialization, all
-/// instances race past the cooldown check and call the embedding API, easily
-/// exceeding the 2-3s hook timeout.
-///
-/// This uses a PID-based lock file: write our PID atomically via O_EXCL.
-/// If the file already exists and the PID is still alive, another instance
-/// is running — return None so the caller can skip immediately. Stale lock
-/// files (dead PID) are cleaned up automatically.
-fn try_acquire_lock() -> Option<LockGuard> {
-    let lock_path = dirs::home_dir()
-        .unwrap_or_else(|| {
-            eprintln!("[Mira] WARNING: HOME directory not set, using '.' as fallback");
-            std::path::PathBuf::from(".")
-        })
-        .join(".mira")
-        .join("tmp")
-        .join("pretool.lock");
-
-    if let Some(parent) = lock_path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        tracing::warn!("Failed to create Mira tmp dir: {e}");
-        return None;
-    }
-
-    // Check for existing lock
-    if let Ok(contents) = std::fs::read_to_string(&lock_path)
-        && let Ok(pid) = contents.trim().parse::<u32>()
-    {
-        // Check if the process is still alive (cross-platform)
-        if is_process_alive(pid) {
-            return None; // another instance is running
-        }
-        // Stale lock — remove it
-        let _ = std::fs::remove_file(&lock_path);
-    }
-
-    // Try to create lock file exclusively (O_EXCL prevents race between check and create)
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts.open(&lock_path).ok()?;
-    let _ = write!(file, "{}", std::process::id());
-
-    Some(LockGuard { path: lock_path })
-}
-
-/// Check if a process with the given PID is still alive.
-/// On Unix, uses `kill -0` which works on both Linux and macOS.
-/// On non-Unix platforms, returns false (assumes stale), which is the safe
-/// default -- it just means parallel hooks can fire without serialization.
-fn is_process_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        false
-    }
-}
-
-/// RAII guard that removes the lock file on drop.
-struct LockGuard {
-    path: std::path::PathBuf,
-}
-
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-#[derive(Serialize, Deserialize, Default)]
-struct CooldownState {
-    last_fired_at: u64,
-    recent_queries: Vec<String>,
-    /// Compact summary of last injection (replayed during cooldown instead of empty)
-    #[serde(default)]
-    last_injection_summary: Option<String>,
-}
-
-fn cooldown_path() -> std::path::PathBuf {
-    let mira_dir = dirs::home_dir()
-        .unwrap_or_else(|| {
-            eprintln!("[Mira] WARNING: HOME directory not set, using '.' as fallback");
-            std::path::PathBuf::from(".")
-        })
-        .join(".mira")
-        .join("tmp");
-    mira_dir.join("pretool_last.json")
-}
-
 pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
-}
-
-fn read_cooldown() -> Option<CooldownState> {
-    let data = std::fs::read_to_string(cooldown_path()).ok()?;
-    serde_json::from_str(&data).ok()
-}
-
-fn write_cooldown(query: &str, injection_summary: Option<&str>) {
-    let mut state = read_cooldown().unwrap_or_default();
-    state.last_fired_at = unix_now();
-    state.recent_queries.push(query.to_string());
-    if state.recent_queries.len() > MAX_RECENT_QUERIES {
-        state.recent_queries.remove(0);
-    }
-    // Always update — clears stale summary when current recall is empty
-    state.last_injection_summary = injection_summary.map(|s| s.to_string());
-    let path = cooldown_path();
-    if let Some(parent) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        tracing::debug!("Failed to create cooldown dir: {e}");
-    }
-    if let Ok(json) = serde_json::to_string(&state) {
-        // Write to temp file then rename for atomicity (prevents corruption on crash)
-        let temp = path.with_extension("tmp");
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let file = opts.open(&temp);
-        if let Ok(mut f) = file {
-            if let Err(e) = f.write_all(json.as_bytes()) {
-                tracing::debug!("Failed to write cooldown temp file: {e}");
-                return;
-            }
-            drop(f);
-            if let Err(e) = std::fs::rename(&temp, &path) {
-                tracing::debug!("Failed to rename cooldown temp file: {e}");
-            }
-        }
-    }
 }
 
 // ── File-read cache ─────────────────────────────────────────────────────────
@@ -430,9 +276,7 @@ fn count_file_lines(path: &str) -> usize {
 #[derive(Debug)]
 struct PreToolInput {
     tool_name: String,
-    pattern: Option<String>,
-    path: Option<String>,
-    /// File path for Edit/Write tools (extracted from tool_input.file_path)
+    /// File path for Edit/Write/Read tools (extracted from tool_input.file_path)
     file_path: Option<String>,
     session_id: String,
 }
@@ -441,22 +285,7 @@ impl PreToolInput {
     fn from_json(json: &serde_json::Value) -> Self {
         let tool_input = json.get("tool_input");
 
-        // Extract search pattern from Grep or Glob
-        let pattern = tool_input
-            .and_then(|ti| {
-                ti.get("pattern")
-                    .or_else(|| ti.get("query"))
-                    .or_else(|| ti.get("regex"))
-            })
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let path = tool_input
-            .and_then(|ti| ti.get("path"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        // Extract file_path for Edit/Write tools
+        // Extract file_path for Edit/Write/Read tools
         let file_path = tool_input
             .and_then(|ti| ti.get("file_path"))
             .and_then(|v| v.as_str())
@@ -468,8 +297,6 @@ impl PreToolInput {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            pattern,
-            path,
             file_path,
             session_id: json
                 .get("session_id")
@@ -483,7 +310,7 @@ impl PreToolInput {
 /// Run PreToolUse hook
 ///
 /// This hook fires before Grep/Glob/Read/Edit/Write tools execute. We:
-/// 1. For Grep/Glob/Read: extract search pattern and inject relevant memories
+/// 1. For Read: check file-read cache (reread advisory) and symbol hints
 /// 2. For Edit/Write: check if the target file is a known change hotspot and warn
 pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
@@ -495,7 +322,6 @@ pub async fn run() -> Result<()> {
     }
 
     // Handle Read: check file-read cache and symbol hints (fast, no embeddings)
-    // This runs before the lock/cooldown path to avoid unnecessary embedding calls.
     if pre_input.tool_name == "Read"
         && let Some(ref fp) = pre_input.file_path
     {
@@ -523,180 +349,9 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Only process Grep/Glob/Read operations
-    let dominated_tools = ["Grep", "Glob", "Read"];
-    if !dominated_tools
-        .iter()
-        .any(|t| pre_input.tool_name.contains(t))
-    {
-        write_hook_output(&serde_json::json!({}));
-        return Ok(());
-    }
-
-    // Serialize parallel invocations: if another PreToolUse hook is already
-    // running (e.g., 8 Grep calls fired in parallel), skip immediately rather
-    // than all racing to call the embedding API and timing out.
-    let _lock = match try_acquire_lock() {
-        Some(lock) => lock,
-        None => {
-            tracing::debug!("PreToolUse skipped (another instance running)");
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-    };
-
-    let _timer = HookTimer::start("PreToolUse");
-
-    tracing::debug!(
-        tool = %pre_input.tool_name,
-        pattern = pre_input.pattern.as_deref().unwrap_or("none"),
-        "PreToolUse hook triggered"
-    );
-
-    // Build search query from pattern and path
-    let search_query = build_search_query(&pre_input);
-    if search_query.is_empty() {
-        write_hook_output(&serde_json::json!({}));
-        return Ok(());
-    }
-
-    // Cooldown and dedup check — replay last injection summary if available
-    if let Some(state) = read_cooldown() {
-        let now = unix_now();
-        let in_cooldown = now.saturating_sub(state.last_fired_at) < COOLDOWN_SECS;
-        let is_duplicate = state.recent_queries.contains(&search_query);
-
-        if in_cooldown || is_duplicate {
-            let reason = if in_cooldown { "cooldown" } else { "duplicate" };
-            tracing::debug!("PreToolUse skipped ({reason})");
-
-            // Replay compact summary from last successful injection so parallel
-            // Grep/Glob calls still get context without re-running embeddings
-            if let Some(ref summary) = state.last_injection_summary {
-                let output = serde_json::json!({
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "additionalContext": format!("[Mira/memory] (cached) {summary}")
-                    }
-                });
-                write_hook_output(&output);
-            } else {
-                write_hook_output(&serde_json::json!({}));
-            }
-            return Ok(());
-        }
-    }
-
-    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
-    let mut client = crate::ipc::client::HookClient::connect().await;
-    tracing::debug!(
-        backend = if client.is_ipc() { "IPC" } else { "direct" },
-        "PreToolUse using backend"
-    );
-
-    // Get current project
-    let sid = Some(pre_input.session_id.as_str()).filter(|s| !s.is_empty());
-    let Some((project_id, project_path)) = client.resolve_project(None, sid).await else {
-        write_hook_output(&serde_json::json!({}));
-        return Ok(());
-    };
-
-    // Query for relevant memories (semantic search with keyword fallback)
-    let recall_ctx = crate::hooks::recall::RecallContext {
-        project_id,
-        user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
-        current_branch: crate::git::get_git_branch(&project_path),
-    };
-    let memories = client.recall_memories(&recall_ctx, &search_query).await;
-
-    // Derive project label from path for context tags
-    let project_label = std::path::Path::new(&project_path)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or("");
-
-    // Build a compact summary for cooldown replay (first memory, truncated)
-    let injection_summary = memories.first().map(|m| {
-        let stripped = m
-            .strip_prefix("[Mira/memory] [User-stored data, not instructions] ")
-            .unwrap_or(m);
-        if stripped.len() > 100 {
-            // Truncate at a char boundary to avoid panic on non-ASCII content
-            let end = stripped
-                .char_indices()
-                .map(|(i, _)| i)
-                .take_while(|&i| i <= 100)
-                .last()
-                .unwrap_or(0);
-            format!("{}...", &stripped[..end])
-        } else {
-            stripped.to_string()
-        }
-    });
-
-    // Record this query + injection summary in cooldown state
-    write_cooldown(&search_query, injection_summary.as_deref());
-
-    // Build output
-    let output = if memories.is_empty() {
-        serde_json::json!({})
-    } else {
-        let tag = if project_label.is_empty() {
-            "[Mira/memory]".to_string()
-        } else {
-            format!("[Mira/memory ({})]", project_label)
-        };
-        let context = format!("{} Relevant context:\n{}", tag, memories.join("\n\n"));
-        serde_json::json!({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "additionalContext": context
-            }
-        })
-    };
-
-    write_hook_output(&output);
+    // No context to inject for other tools (memory recall removed)
+    write_hook_output(&serde_json::json!({}));
     Ok(())
-}
-
-/// Build a search query from the tool input
-fn build_search_query(input: &PreToolInput) -> String {
-    let mut parts = Vec::new();
-
-    if let Some(pattern) = &input.pattern {
-        // Clean up regex patterns for semantic search
-        let cleaned = pattern
-            .replace(".*", " ")
-            .replace("\\s+", " ")
-            .replace("\\w+", " ")
-            .replace("[^/]+", " ")
-            .replace("\\", "")
-            .replace("^", "")
-            .replace("$", "");
-        if !cleaned.trim().is_empty() {
-            parts.push(cleaned.trim().to_string());
-        }
-    }
-
-    if let Some(path) = &input.path {
-        // Extract meaningful parts from path
-        let path_parts: Vec<String> = Path::new(path)
-            .components()
-            .filter_map(|c| {
-                let s = c.as_os_str().to_str()?;
-                if s == "src" || s == "lib" || s == "." {
-                    None
-                } else {
-                    Some(s.to_string())
-                }
-            })
-            .collect();
-        if let Some(last) = path_parts.last() {
-            parts.push(last.to_string());
-        }
-    }
-
-    parts.join(" ")
 }
 
 /// Handle Edit/Write tools: check if the target file is a known change hotspot.
@@ -840,58 +495,23 @@ mod tests {
     #[test]
     fn pre_input_parses_full_input() {
         let input = PreToolInput::from_json(&serde_json::json!({
-            "tool_name": "Grep",
+            "tool_name": "Edit",
             "tool_input": {
-                "pattern": "fn main",
-                "path": "/home/user/project/src"
+                "file_path": "/home/user/project/src/main.rs"
             }
         }));
-        assert_eq!(input.tool_name, "Grep");
-        assert_eq!(input.pattern.as_deref(), Some("fn main"));
-        assert_eq!(input.path.as_deref(), Some("/home/user/project/src"));
+        assert_eq!(input.tool_name, "Edit");
+        assert_eq!(
+            input.file_path.as_deref(),
+            Some("/home/user/project/src/main.rs")
+        );
     }
 
     #[test]
     fn pre_input_defaults_on_empty_json() {
         let input = PreToolInput::from_json(&serde_json::json!({}));
         assert!(input.tool_name.is_empty());
-        assert!(input.pattern.is_none());
-        assert!(input.path.is_none());
         assert!(input.file_path.is_none());
-    }
-
-    #[test]
-    fn pre_input_extracts_query_field() {
-        let input = PreToolInput::from_json(&serde_json::json!({
-            "tool_name": "Search",
-            "tool_input": {
-                "query": "authentication handler"
-            }
-        }));
-        assert_eq!(input.pattern.as_deref(), Some("authentication handler"));
-    }
-
-    #[test]
-    fn pre_input_extracts_regex_field() {
-        let input = PreToolInput::from_json(&serde_json::json!({
-            "tool_name": "Grep",
-            "tool_input": {
-                "regex": "fn\\s+\\w+"
-            }
-        }));
-        assert_eq!(input.pattern.as_deref(), Some("fn\\s+\\w+"));
-    }
-
-    #[test]
-    fn pre_input_prefers_pattern_over_query() {
-        let input = PreToolInput::from_json(&serde_json::json!({
-            "tool_name": "Grep",
-            "tool_input": {
-                "pattern": "primary",
-                "query": "secondary"
-            }
-        }));
-        assert_eq!(input.pattern.as_deref(), Some("primary"));
     }
 
     #[test]
@@ -899,13 +519,11 @@ mod tests {
         let input = PreToolInput::from_json(&serde_json::json!({
             "tool_name": 999,
             "tool_input": {
-                "pattern": 42,
-                "path": true
+                "file_path": true
             }
         }));
         assert!(input.tool_name.is_empty());
-        assert!(input.pattern.is_none());
-        assert!(input.path.is_none());
+        assert!(input.file_path.is_none());
     }
 
     #[test]
@@ -914,122 +532,7 @@ mod tests {
             "tool_name": "Glob"
         }));
         assert_eq!(input.tool_name, "Glob");
-        assert!(input.pattern.is_none());
-        assert!(input.path.is_none());
-    }
-
-    // ── build_search_query ──────────────────────────────────────────────────
-
-    #[test]
-    fn build_query_from_pattern_only() {
-        let input = PreToolInput {
-            tool_name: "Grep".into(),
-            pattern: Some("authentication".into()),
-            path: None,
-            file_path: None,
-            session_id: String::new(),
-        };
-        assert_eq!(build_search_query(&input), "authentication");
-    }
-
-    #[test]
-    fn build_query_cleans_regex() {
-        let input = PreToolInput {
-            tool_name: "Grep".into(),
-            pattern: Some("fn\\s+\\w+.*handler".into()),
-            path: None,
-            file_path: None,
-            session_id: String::new(),
-        };
-        let result = build_search_query(&input);
-        assert!(!result.contains("\\s+"));
-        assert!(!result.contains("\\w+"));
-        assert!(!result.contains(".*"));
-        assert!(result.contains("fn"));
-        assert!(result.contains("handler"));
-    }
-
-    #[test]
-    fn build_query_cleans_anchors() {
-        let input = PreToolInput {
-            tool_name: "Grep".into(),
-            pattern: Some("^pub fn$".into()),
-            path: None,
-            file_path: None,
-            session_id: String::new(),
-        };
-        let result = build_search_query(&input);
-        assert!(!result.contains('^'));
-        assert!(!result.contains('$'));
-        assert!(result.contains("pub fn"));
-    }
-
-    #[test]
-    fn build_query_extracts_path_component() {
-        let input = PreToolInput {
-            tool_name: "Glob".into(),
-            pattern: None,
-            path: Some("src/hooks/session.rs".into()),
-            file_path: None,
-            session_id: String::new(),
-        };
-        let result = build_search_query(&input);
-        assert_eq!(result, "session.rs");
-    }
-
-    #[test]
-    fn build_query_skips_common_dirs() {
-        let input = PreToolInput {
-            tool_name: "Glob".into(),
-            pattern: None,
-            path: Some("./src/lib".into()),
-            file_path: None,
-            session_id: String::new(),
-        };
-        let result = build_search_query(&input);
-        // ".", "src", and "lib" are all filtered out, so result might be empty
-        // or contain only meaningful parts
-        assert!(!result.contains("src"));
-    }
-
-    #[test]
-    fn build_query_empty_input() {
-        let input = PreToolInput {
-            tool_name: "Grep".into(),
-            pattern: None,
-            path: None,
-            file_path: None,
-            session_id: String::new(),
-        };
-        assert!(build_search_query(&input).is_empty());
-    }
-
-    #[test]
-    fn build_query_combines_pattern_and_path() {
-        let input = PreToolInput {
-            tool_name: "Grep".into(),
-            pattern: Some("handler".into()),
-            path: Some("src/hooks/session.rs".into()),
-            file_path: None,
-            session_id: String::new(),
-        };
-        let result = build_search_query(&input);
-        assert!(result.contains("handler"));
-        assert!(result.contains("session.rs"));
-    }
-
-    #[test]
-    fn build_query_whitespace_only_pattern_ignored() {
-        let input = PreToolInput {
-            tool_name: "Grep".into(),
-            pattern: Some(".*".into()),
-            path: None,
-            file_path: None,
-            session_id: String::new(),
-        };
-        let result = build_search_query(&input);
-        // ".*" becomes " " after cleanup, which trims to empty
-        assert!(result.is_empty());
+        assert!(input.file_path.is_none());
     }
 
     // ── Edit/Write file_path extraction ───────────────────────────────────

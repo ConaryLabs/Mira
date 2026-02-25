@@ -12,10 +12,7 @@ pub mod code_health;
 pub mod diff_analysis;
 pub mod documentation;
 mod embeddings;
-pub(crate) mod entity_extraction;
 mod fast_lane;
-pub(crate) mod knowledge_distillation;
-pub(crate) mod memory_embeddings;
 pub(crate) mod outcome_scanner;
 mod pondering;
 pub mod session_summaries;
@@ -112,13 +109,11 @@ pub fn spawn_with_pools(
     {
         let code_pool = code_pool.clone();
         let main_pool = main_pool.clone();
-        let embeddings = embeddings.clone();
         tokio::spawn(async move {
             supervise_worker("slow_lane", shutdown_rx.clone(), || {
                 let worker = SlowLaneWorker::new(
                     main_pool.clone(),
                     code_pool.clone(),
-                    embeddings.clone(),
                     shutdown_rx.clone(),
                 );
                 tokio::spawn(async move { worker.run().await })

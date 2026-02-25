@@ -7,7 +7,6 @@ pub mod post_tool;
 pub mod post_tool_failure;
 pub mod pre_tool;
 pub mod precompact;
-pub mod recall;
 pub mod session;
 pub mod stop;
 pub mod subagent;

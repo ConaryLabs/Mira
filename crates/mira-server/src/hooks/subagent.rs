@@ -9,10 +9,6 @@ use std::path::PathBuf;
 /// Maximum total characters for full-capability subagents (Plan, general-purpose)
 const MAX_CONTEXT_CHARS_FULL: usize = 2000;
 
-/// Reduced budget for narrow/exploratory subagents (Explore, code-reviewer, etc.)
-/// These agents do focused lookups and have direct MCP access if they need more.
-const MAX_CONTEXT_CHARS_NARROW: usize = 800;
-
 /// Minimum entities to consider subagent output significant
 const MIN_SIGNIFICANT_ENTITIES: usize = 3;
 
@@ -137,13 +133,9 @@ pub async fn run_start() -> Result<()> {
 
     let mut context_parts: Vec<String> = Vec::new();
     let narrow = is_narrow_subagent(&start_input.subagent_type);
-    let context_cap = if narrow {
-        MAX_CONTEXT_CHARS_NARROW
-    } else {
-        MAX_CONTEXT_CHARS_FULL
-    };
+    let context_cap = MAX_CONTEXT_CHARS_FULL;
 
-    // Get active goals — skip for narrow/exploratory subagents (goals are
+    // Get active goals -- skip for narrow/exploratory subagents (goals are
     // strategic context, not useful for focused search/review tasks)
     if !narrow {
         let goal_lines = client.get_active_goals(project_id, 3).await;
@@ -157,28 +149,6 @@ pub async fn run_start() -> Result<()> {
                 "{} Active goals:\n{}",
                 label,
                 goal_lines.join("\n")
-            ));
-        }
-    }
-
-    // Get relevant memories based on task description (semantic with keyword fallback)
-    if let Some(task) = &start_input.task_description {
-        let recall_ctx = crate::hooks::recall::RecallContext {
-            project_id,
-            user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
-            current_branch: crate::git::get_git_branch(&project_path),
-        };
-        let memories = client.recall_memories(&recall_ctx, task).await;
-        if !memories.is_empty() {
-            let label = if project_label.is_empty() {
-                "[Mira/memory]".to_string()
-            } else {
-                format!("[Mira/memory ({})]", project_label)
-            };
-            context_parts.push(format!(
-                "{} Relevant context:\n{}",
-                label,
-                memories.join("\n")
             ));
         }
     }

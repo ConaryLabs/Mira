@@ -1,5 +1,5 @@
 // crates/mira-server/src/fuzzy/mod.rs
-// Nucleo-based fuzzy search for code chunks and memories
+// Nucleo-based fuzzy search for code chunks
 
 use crate::db::pool::DatabasePool;
 use crate::tools::core::NO_ACTIVE_PROJECT_ERROR;
@@ -13,12 +13,8 @@ use tokio::sync::{Mutex, RwLock};
 
 /// Default refresh interval for code chunk cache
 const CODE_CACHE_TTL: Duration = Duration::from_secs(60);
-/// Default refresh interval for memory cache
-const MEMORY_CACHE_TTL: Duration = Duration::from_secs(30);
 /// Hard cap on code chunks held in fuzzy cache
 const MAX_CODE_ITEMS: usize = 200_000;
-/// Hard cap on memory facts held in fuzzy cache
-const MAX_MEMORY_ITEMS: usize = 50_000;
 
 struct FuzzyCodeItem {
     file_path: String,
@@ -26,17 +22,6 @@ struct FuzzyCodeItem {
     start_line: u32,
     /// Pre-computed "{file_path} {content}" to avoid repeated allocation during fuzzy matching.
     search_text: String,
-}
-
-struct FuzzyMemoryItem {
-    id: i64,
-    project_id: Option<i64>,
-    content: String,
-    fact_type: String,
-    category: Option<String>,
-    scope: Option<String>,
-    user_id: Option<String>,
-    team_id: Option<i64>,
 }
 
 struct FuzzyIndex<T> {
@@ -70,7 +55,7 @@ impl<T> FuzzyIndex<T> {
     }
 }
 
-/// Normalize raw nucleo scores to 0.0–1.0 relative to the max score in the set.
+/// Normalize raw nucleo scores to 0.0-1.0 relative to the max score in the set.
 fn normalize_scores(matches: &[(usize, u32)]) -> Vec<(usize, f32)> {
     let max_score = matches.iter().map(|(_, s)| *s).max().unwrap_or(1).max(1);
     matches
@@ -79,15 +64,13 @@ fn normalize_scores(matches: &[(usize, u32)]) -> Vec<(usize, f32)> {
         .collect()
 }
 
-/// Fuzzy cache for code chunks and memories.
+/// Fuzzy cache for code chunks.
 /// Rebuilt on-demand and refreshed with a TTL.
+/// Memory search removed (Phase 4 of memory system removal).
 pub struct FuzzyCache {
     code_index: RwLock<FuzzyIndex<FuzzyCodeItem>>,
-    memory_index: RwLock<FuzzyIndex<FuzzyMemoryItem>>,
     /// Guards against concurrent refresh of the code index
     code_refresh: Mutex<()>,
-    /// Guards against concurrent refresh of the memory index
-    memory_refresh: Mutex<()>,
 }
 
 impl Default for FuzzyCache {
@@ -100,9 +83,7 @@ impl FuzzyCache {
     pub fn new() -> Self {
         Self {
             code_index: RwLock::new(FuzzyIndex::default()),
-            memory_index: RwLock::new(FuzzyIndex::default()),
             code_refresh: Mutex::new(()),
-            memory_refresh: Mutex::new(()),
         }
     }
 
@@ -113,12 +94,8 @@ impl FuzzyCache {
         }
     }
 
-    pub async fn invalidate_memory(&self, project_id: Option<i64>) {
-        let mut idx = self.memory_index.write().await;
-        if project_id.is_none() || idx.project_id == project_id {
-            idx.loaded_at = None;
-        }
-    }
+    /// No-op: memory index removed (Phase 4).
+    pub async fn invalidate_memory(&self, _project_id: Option<i64>) {}
 
     async fn ensure_code_index(
         &self,
@@ -136,7 +113,7 @@ impl FuzzyCache {
         // Serialize refreshes so only one task loads from DB
         let _guard = self.code_refresh.lock().await;
 
-        // Re-check after acquiring the refresh lock — another task may have refreshed
+        // Re-check after acquiring the refresh lock -- another task may have refreshed
         {
             let idx = self.code_index.read().await;
             if !idx.is_stale(project_id, CODE_CACHE_TTL) {
@@ -173,80 +150,6 @@ impl FuzzyCache {
             .str_err()?;
 
         let mut idx = self.code_index.write().await;
-        idx.project_id = project_id;
-        idx.loaded_at = Some(Instant::now());
-        idx.items = items;
-        Ok(())
-    }
-
-    async fn ensure_memory_index(
-        &self,
-        pool: &Arc<DatabasePool>,
-        project_id: Option<i64>,
-    ) -> Result<(), String> {
-        // Fast path
-        {
-            let idx = self.memory_index.read().await;
-            if !idx.is_stale(project_id, MEMORY_CACHE_TTL) {
-                return Ok(());
-            }
-        }
-
-        // Serialize refreshes
-        let _guard = self.memory_refresh.lock().await;
-
-        // Re-check after acquiring lock
-        {
-            let idx = self.memory_index.read().await;
-            if !idx.is_stale(project_id, MEMORY_CACHE_TTL) {
-                return Ok(());
-            }
-        }
-
-        let project_id_for_query = project_id;
-        let items: Vec<FuzzyMemoryItem> = pool
-            .run(move |conn| {
-                let cols = "id, project_id, content, fact_type, category, scope, user_id, team_id";
-                let parse_row = |row: &rusqlite::Row| {
-                    Ok(FuzzyMemoryItem {
-                        id: row.get(0)?,
-                        project_id: row.get(1)?,
-                        content: row.get(2)?,
-                        fact_type: row.get(3)?,
-                        category: row.get(4)?,
-                        scope: row.get(5)?,
-                        user_id: row.get(6)?,
-                        team_id: row.get(7)?,
-                    })
-                };
-                let lim = MAX_MEMORY_ITEMS as i64;
-                let user_type_filter = "AND fact_type IN ('general','preference','decision','pattern','context','persona') AND status != 'archived' AND COALESCE(suspicious, 0) = 0";
-                match project_id_for_query {
-                    Some(pid) => {
-                        let sql = format!(
-                            "SELECT {cols} FROM memory_facts WHERE project_id = ?1 {user_type_filter} \
-                             UNION ALL \
-                             SELECT {cols} FROM memory_facts WHERE project_id IS NULL {user_type_filter} \
-                             LIMIT ?2"
-                        );
-                        let mut stmt = conn.prepare(&sql)?;
-                        stmt.query_map(params![pid, lim], parse_row)?
-                            .collect::<Result<Vec<_>, _>>()
-                    }
-                    None => {
-                        let sql = format!(
-                            "SELECT {cols} FROM memory_facts WHERE project_id IS NULL {user_type_filter} LIMIT ?1"
-                        );
-                        let mut stmt = conn.prepare(&sql)?;
-                        stmt.query_map(params![lim], parse_row)?
-                            .collect::<Result<Vec<_>, _>>()
-                    }
-                }
-            })
-            .await
-            .str_err()?;
-
-        let mut idx = self.memory_index.write().await;
         idx.project_id = project_id;
         idx.loaded_at = Some(Instant::now());
         idx.items = items;
@@ -307,62 +210,17 @@ impl FuzzyCache {
         Ok(results)
     }
 
+    /// Memory search removed (Phase 4 of memory system removal). Returns empty results.
     pub async fn search_memories(
         &self,
-        pool: &Arc<DatabasePool>,
-        project_id: Option<i64>,
-        user_id: Option<&str>,
-        team_id: Option<i64>,
-        query: &str,
-        limit: usize,
+        _pool: &Arc<DatabasePool>,
+        _project_id: Option<i64>,
+        _user_id: Option<&str>,
+        _team_id: Option<i64>,
+        _query: &str,
+        _limit: usize,
     ) -> Result<Vec<FuzzyMemoryResult>, String> {
-        if query.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        self.ensure_memory_index(pool, project_id).await?;
-        let idx = self.memory_index.read().await;
-        if idx.items.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-
-        let candidates: Vec<CandidateKey<'_>> = idx
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| memory_visible(item, project_id, user_id, team_id))
-            .map(|(i, item)| CandidateKey {
-                idx: i,
-                text: &item.content,
-            })
-            .collect();
-
-        let raw_matches: Vec<(usize, u32)> = pattern
-            .match_list(candidates, &mut matcher)
-            .into_iter()
-            .take(limit)
-            .map(|(c, score)| (c.idx, score))
-            .collect();
-
-        let normalized = normalize_scores(&raw_matches);
-
-        let results = normalized
-            .into_iter()
-            .map(|(item_idx, score)| {
-                let item = &idx.items[item_idx];
-                FuzzyMemoryResult {
-                    id: item.id,
-                    content: item.content.clone(),
-                    fact_type: item.fact_type.clone(),
-                    category: item.category.clone(),
-                    score,
-                }
-            })
-            .collect();
-
-        Ok(results)
+        Ok(Vec::new())
     }
 }
 
@@ -377,25 +235,6 @@ impl<'a> AsRef<str> for CandidateKey<'a> {
     }
 }
 
-fn memory_visible(
-    item: &FuzzyMemoryItem,
-    project_id: Option<i64>,
-    user_id: Option<&str>,
-    team_id: Option<i64>,
-) -> bool {
-    // Match the SQL filtering in scope_filter_sql
-    if item.project_id.is_some() && item.project_id != project_id {
-        return false;
-    }
-
-    match item.scope.as_deref() {
-        Some("personal") => user_id.is_some() && item.user_id.as_deref() == user_id,
-        Some("team") => team_id.is_some() && item.team_id == team_id,
-        Some("project") | None => true,
-        Some(_) => true,
-    }
-}
-
 /// Result type for fuzzy code search
 pub struct FuzzyCodeResult {
     pub file_path: String,
@@ -404,7 +243,7 @@ pub struct FuzzyCodeResult {
     pub score: f32,
 }
 
-/// Result type for fuzzy memory search
+/// Result type for fuzzy memory search (kept for API compatibility, always empty)
 pub struct FuzzyMemoryResult {
     pub id: i64,
     pub content: String,
@@ -449,77 +288,6 @@ mod tests {
         let normalized = normalize_scores(&matches);
         assert_eq!(normalized.len(), 2);
         assert!((normalized[0].1 - 0.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_memory_visible_project_scope() {
-        let item = FuzzyMemoryItem {
-            id: 1,
-            project_id: Some(10),
-            content: "test".into(),
-            fact_type: "general".into(),
-            category: None,
-            scope: Some("project".into()),
-            user_id: None,
-            team_id: None,
-        };
-        assert!(memory_visible(&item, Some(10), None, None));
-        assert!(!memory_visible(&item, Some(99), None, None));
-        assert!(!memory_visible(&item, None, None, None));
-    }
-
-    #[test]
-    fn test_memory_visible_personal_scope() {
-        let item = FuzzyMemoryItem {
-            id: 1,
-            project_id: Some(10),
-            content: "test".into(),
-            fact_type: "preference".into(),
-            category: None,
-            scope: Some("personal".into()),
-            user_id: Some("alice".into()),
-            team_id: None,
-        };
-        assert!(memory_visible(&item, Some(10), Some("alice"), None));
-        assert!(!memory_visible(&item, Some(10), Some("bob"), None));
-        assert!(!memory_visible(&item, Some(10), None, None));
-    }
-
-    #[test]
-    fn test_memory_visible_global_memory() {
-        let item = FuzzyMemoryItem {
-            id: 1,
-            project_id: None,
-            content: "global fact".into(),
-            fact_type: "general".into(),
-            category: None,
-            scope: None,
-            user_id: None,
-            team_id: None,
-        };
-        // Global memories (project_id=None) are visible to any project
-        assert!(memory_visible(&item, Some(10), None, None));
-        assert!(memory_visible(&item, None, None, None));
-    }
-
-    #[test]
-    fn test_memory_visible_team_scope() {
-        let item = FuzzyMemoryItem {
-            id: 1,
-            project_id: Some(10),
-            content: "team knowledge".into(),
-            fact_type: "general".into(),
-            category: None,
-            scope: Some("team".into()),
-            user_id: None,
-            team_id: Some(42),
-        };
-        // Same team: visible
-        assert!(memory_visible(&item, Some(10), None, Some(42)));
-        // Different team: not visible
-        assert!(!memory_visible(&item, Some(10), None, Some(99)));
-        // No team: not visible
-        assert!(!memory_visible(&item, Some(10), None, None));
     }
 
     #[test]

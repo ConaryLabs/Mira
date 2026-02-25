@@ -6,7 +6,6 @@ use rusqlite::Connection;
 use std::collections::HashSet;
 
 pub mod code;
-mod entities;
 mod fts;
 mod intelligence;
 mod memory;
@@ -50,12 +49,12 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 5,
             name: "memory_facts_has_embedding",
-            func: memory::migrate_memory_facts_has_embedding,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
         },
         Migration {
             version: 6,
             name: "memory_facts_evidence_tracking",
-            func: memory::migrate_memory_facts_evidence_tracking,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
         },
         Migration {
             version: 7,
@@ -85,7 +84,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 12,
             name: "memory_user_scope",
-            func: memory::migrate_memory_user_scope,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
         },
         Migration {
             version: 13,
@@ -135,7 +134,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 22,
             name: "memory_facts_branch",
-            func: memory::migrate_memory_facts_branch,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
         },
         Migration {
             version: 23,
@@ -145,7 +144,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 24,
             name: "remove_capability_data",
-            func: memory::migrate_remove_capability_data,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
         },
         Migration {
             version: 25,
@@ -160,7 +159,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 27,
             name: "entity_tables",
-            func: entities::migrate_entity_tables,
+            func: |_| Ok(()), // no-op: entity tables dropped in v47
         },
         Migration {
             version: 28,
@@ -195,7 +194,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 34,
             name: "migrate_memory_facts_to_observations",
-            func: memory::migrate_memory_facts_to_observations,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
         },
         Migration {
             version: 35,
@@ -215,7 +214,7 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 38,
             name: "memory_facts_suspicious",
-            func: memory::migrate_memory_facts_suspicious,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
         },
         Migration {
             version: 39,
@@ -255,7 +254,12 @@ fn migration_registry() -> Vec<Migration> {
         Migration {
             version: 46,
             name: "memory_facts_staleness",
-            func: memory::migrate_memory_facts_staleness,
+            func: |_| Ok(()), // no-op: memory_facts dropped in v47
+        },
+        Migration {
+            version: 47,
+            name: "drop_memory_tables",
+            func: drop_memory_tables,
         },
     ]
 }
@@ -555,6 +559,19 @@ fn migrate_milestones_temporal_tracking(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Drop memory system tables: memory_facts, vec_memory, memory_entities,
+/// memory_entity_links. These tables are no longer used after the memory
+/// system removal.
+fn drop_memory_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS memory_entity_links;
+         DROP TABLE IF EXISTS memory_entities;
+         DROP TABLE IF EXISTS vec_memory;
+         DROP TABLE IF EXISTS memory_facts;",
+    )?;
+    Ok(())
+}
+
 /// Database schema SQL
 pub const SCHEMA: &str = r#"
 -- =======================================
@@ -566,36 +583,6 @@ CREATE TABLE IF NOT EXISTS projects (
     name TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
-
--- =======================================
--- MEMORY: Semantic Facts
--- =======================================
-CREATE TABLE IF NOT EXISTS memory_facts (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER REFERENCES projects(id),
-    key TEXT,
-    content TEXT NOT NULL,
-    fact_type TEXT DEFAULT 'general',
-    category TEXT,
-    confidence REAL DEFAULT 0.5,
-    has_embedding INTEGER DEFAULT 0,  -- 1 if fact has embedding in vec_memory
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    -- Evidence-based memory tracking
-    session_count INTEGER DEFAULT 1,       -- number of sessions where this was seen/used
-    first_session_id TEXT,                 -- session when first created
-    last_session_id TEXT,                  -- most recent session that referenced this
-    status TEXT DEFAULT 'candidate',        -- 'candidate' or 'confirmed'
-    user_id TEXT,
-    scope TEXT DEFAULT 'project',
-    branch TEXT,
-    team_id INTEGER,
-    has_entities INTEGER DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
-CREATE INDEX IF NOT EXISTS idx_memory_key ON memory_facts(key);
-CREATE INDEX IF NOT EXISTS idx_memory_no_embedding ON memory_facts(has_embedding) WHERE has_embedding = 0;
--- Note: idx_memory_status is created in migrate_memory_facts_evidence_tracking() for compatibility with existing databases
 
 -- =======================================
 -- SESSIONS & HISTORY
@@ -684,15 +671,6 @@ CREATE TABLE IF NOT EXISTS server_state (
     key TEXT PRIMARY KEY,
     value TEXT,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
--- =======================================
--- VECTOR TABLES (sqlite-vec)
--- =======================================
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
-    embedding float[1536],
-    +fact_id INTEGER,
-    +content TEXT
 );
 
 -- =======================================

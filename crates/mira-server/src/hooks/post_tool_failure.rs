@@ -67,7 +67,7 @@ pub async fn run() -> Result<()> {
 
     // Get current project
     let sid = Some(failure_input.session_id.as_str()).filter(|s| !s.is_empty());
-    let Some((project_id, project_path)) = client.resolve_project(None, sid).await else {
+    let Some((project_id, _project_path)) = client.resolve_project(None, sid).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -128,31 +128,6 @@ pub async fn run() -> Result<()> {
                 failure_input.tool_name,
                 failure_count,
                 crate::utils::truncate(&fix_description, 300),
-            );
-            let output = serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PostToolUseFailure",
-                    "additionalContext": context,
-                }
-            });
-            write_hook_output(&output);
-            return Ok(());
-        }
-
-        // Fall back to memory recall if no resolved pattern found
-        let recall_ctx = crate::hooks::recall::RecallContext {
-            project_id,
-            user_id: std::env::var("MIRA_USER_ID").ok().filter(|s| !s.is_empty()),
-            current_branch: crate::git::get_git_branch(&project_path),
-        };
-        let memories = client.recall_memories(&recall_ctx, &error_summary).await;
-
-        if !memories.is_empty() {
-            let context = format!(
-                "[Mira/failure] Tool '{}' has failed {} times. Relevant memories:\n{}",
-                failure_input.tool_name,
-                failure_count,
-                memories.join("\n"),
             );
             let output = serde_json::json!({
                 "hookSpecificOutput": {

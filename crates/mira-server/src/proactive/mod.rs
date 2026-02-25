@@ -124,38 +124,13 @@ impl Default for ProactiveConfig {
 
 /// Get proactive config for a user/project.
 ///
-/// Starts from defaults (`enabled: false`) and checks `memory_facts` for a
-/// stored preference to opt in. Matches the exact canonical key
-/// `proactive:enabled` to avoid false positives from negated or ambiguous
-/// phrases. Accepts both `confirmed` and `candidate` status since
-/// `remember()` inserts as `candidate`.
+/// Memory-based opt-in removed (Phase 4). Returns default config (disabled).
 pub fn get_proactive_config(
-    conn: &rusqlite::Connection,
+    _conn: &rusqlite::Connection,
     _user_id: Option<&str>,
-    project_id: i64,
+    _project_id: i64,
 ) -> ProactiveConfig {
-    let mut config = ProactiveConfig::default();
-
-    // Look for the canonical opt-in key. This avoids fuzzy LIKE matching that
-    // can false-positive on negated phrases like "never enable proactive".
-    let enabled: bool = conn
-        .query_row(
-            r#"
-            SELECT 1 FROM memory_facts
-            WHERE (project_id = ?1 OR project_id IS NULL)
-              AND fact_type = 'preference'
-              AND status IN ('confirmed', 'candidate')
-              AND COALESCE(suspicious, 0) = 0
-              AND key = 'proactive:enabled'
-            LIMIT 1
-            "#,
-            [project_id],
-            |_row| Ok(true),
-        )
-        .unwrap_or(false);
-
-    config.enabled = enabled;
-    config
+    ProactiveConfig::default()
 }
 
 #[cfg(test)]

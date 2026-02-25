@@ -5,8 +5,6 @@
 1. **Searching for code by intent** - `code(action="search", query="authentication")` finds auth code even if the word "authentication" isn't used
 2. **Understanding file structure** - `code(action="symbols", file_path="file.rs")` lists all definitions
 3. **Tracing call relationships** - `code(action="callers", function_name="fn_name")` / `code(action="callees", function_name="fn_name")` for actual call graph
-4. **Recalling past decisions** - `memory(action="recall", query="topic")` before making architectural changes
-5. **Storing decisions** - `memory(action="remember", content="...", category="decision")` after important choices
 
 ## Use Grep/Glob When
 

@@ -119,19 +119,7 @@ async fn init_server_context() -> Result<ServerContext> {
 
     // Ensure vec dimensions and provider are consistent (needed by both MCP and CLI paths)
     if let Some(ref emb) = embeddings {
-        let dims = emb.dimensions();
-        let dim_pool = pool.clone();
-        if let Err(e) = dim_pool
-            .interact(move |conn| {
-                mira::db::ensure_vec_table_dimensions(conn, dims)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            })
-            .await
-        {
-            warn!("Failed to ensure vec_memory dimensions: {}", e);
-        }
-
-        // Also ensure vec_code (code database) has matching dimensions.
+        // Ensure vec_code (code database) has matching dimensions.
         // vec_code is created by run_code_migrations with a hardcoded dim; this
         // detects mismatches at server startup and recreates with the correct dim.
         let dims_code = emb.dimensions();

@@ -315,7 +315,7 @@ mod tests {
             .run(|conn| {
                 Ok::<_, rusqlite::Error>(storage::count_table(
                     conn,
-                    storage::AllowedTable::MemoryFacts,
+                    storage::AllowedTable::Sessions,
                 ))
             })
             .await
@@ -995,12 +995,12 @@ mod tests {
         let ctx = MockToolContext::with_project().await;
         let pid = ctx.project_id().await.unwrap();
 
-        // Insert some memories so recap has content
+        // Insert a goal so recap has content (memory_facts removed in Phase 4)
         ctx.pool
             .run(move |conn| {
                 conn.execute(
-                    "INSERT INTO memory_facts (content, fact_type, category, confidence, project_id, created_at, updated_at)
-                     VALUES ('Test preference', 'preference', 'general', 0.9, ?1, datetime('now'), datetime('now'))",
+                    "INSERT INTO goals (project_id, title, status, priority, progress_percent, created_at, updated_at)
+                     VALUES (?1, 'Test goal', 'in_progress', 'high', 50, datetime('now'), datetime('now'))",
                     rusqlite::params![pid],
                 )?;
                 Ok::<_, rusqlite::Error>(())

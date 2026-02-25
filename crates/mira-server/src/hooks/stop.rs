@@ -89,9 +89,6 @@ pub async fn run() -> Result<()> {
     // Log session injection efficiency stats
     log_injection_telemetry(project_id).await;
 
-    // Auto-export ranked memories to CLAUDE.local.md
-    client.write_claude_local_md(project_id).await;
-
     write_hook_output(&output);
     Ok(())
 }
@@ -115,25 +112,6 @@ pub async fn run_session_end() -> Result<()> {
     // Deactivate team session if we're in a team
     if !session_id.is_empty() {
         if let Some(membership) = client.get_team_membership(session_id).await {
-            // Trigger knowledge distillation before deactivating
-            let end_sid = Some(session_id).filter(|s| !s.is_empty());
-            let distill_project_id = client
-                .resolve_project(None, end_sid)
-                .await
-                .map(|(id, _)| id);
-            let (distilled, findings_count, team_name) = client
-                .distill_team_session(membership.team_id, distill_project_id)
-                .await;
-            if distilled {
-                tracing::info!(
-                    findings = findings_count,
-                    team = %team_name,
-                    "Distilled findings from team"
-                );
-            } else {
-                tracing::debug!("No findings to distill for team session");
-            }
-
             client.deactivate_team_session(session_id).await;
             tracing::debug!(
                 team = %membership.team_name,
@@ -157,19 +135,14 @@ pub async fn run_session_end() -> Result<()> {
     // Get current project (id and path) — must happen BEFORE per-session cleanup
     // so resolve_project can still read the per-session cwd file
     let end_sid = Some(session_id).filter(|s| !s.is_empty());
-    let (project_id, project_path) = match client.resolve_project(None, end_sid).await {
-        Some((id, path)) => (Some(id), Some(path)),
-        None => (None, None),
-    };
+    let project_id = client
+        .resolve_project(None, end_sid)
+        .await
+        .map(|(id, _)| id);
 
-    if let Some(project_id) = project_id
-        && let Some(ref project_path) = project_path
-    {
+    if let Some(project_id) = project_id {
         // Snapshot native Claude Code tasks
         snapshot_tasks(&mut client, project_id, session_id, true).await;
-
-        // Auto-export to Claude Code's auto memory (if feature available)
-        client.write_auto_memory(project_id, project_path).await;
     }
 
     // Clean up per-session directory AFTER all project resolution is done

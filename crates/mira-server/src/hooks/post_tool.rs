@@ -137,13 +137,6 @@ pub async fn run() -> Result<()> {
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit"
     );
 
-    // Mark memories referencing this file as stale
-    if is_write_tool {
-        client
-            .mark_memories_stale_for_file(project_id, &file_path)
-            .await;
-    }
-
     if is_write_tool
         && let Some(membership) = client.get_team_membership(&post_input.session_id).await
     {
