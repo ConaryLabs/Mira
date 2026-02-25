@@ -6,11 +6,23 @@ use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-/// Maximum total characters for injected context (~500 tokens)
-const MAX_CONTEXT_CHARS: usize = 2000;
+/// Maximum total characters for full-capability subagents (Plan, general-purpose)
+const MAX_CONTEXT_CHARS_FULL: usize = 2000;
+
+/// Reduced budget for narrow/exploratory subagents (Explore, code-reviewer, etc.)
+/// These agents do focused lookups and have direct MCP access if they need more.
+const MAX_CONTEXT_CHARS_NARROW: usize = 800;
 
 /// Minimum entities to consider subagent output significant
 const MIN_SIGNIFICANT_ENTITIES: usize = 3;
+
+/// Check if a subagent type is narrow/exploratory (smaller context budget, skip goals).
+fn is_narrow_subagent(subagent_type: &str) -> bool {
+    matches!(
+        subagent_type.to_lowercase().as_str(),
+        "explore" | "code-reviewer" | "code-simplifier" | "haiku"
+    )
+}
 
 /// SubagentStart hook input
 #[derive(Debug)]
@@ -124,20 +136,29 @@ pub async fn run_start() -> Result<()> {
         .unwrap_or("");
 
     let mut context_parts: Vec<String> = Vec::new();
+    let narrow = is_narrow_subagent(&start_input.subagent_type);
+    let context_cap = if narrow {
+        MAX_CONTEXT_CHARS_NARROW
+    } else {
+        MAX_CONTEXT_CHARS_FULL
+    };
 
-    // Get active goals
-    let goal_lines = client.get_active_goals(project_id, 3).await;
-    if !goal_lines.is_empty() {
-        let label = if project_label.is_empty() {
-            "[Mira/goals]".to_string()
-        } else {
-            format!("[Mira/goals ({})]", project_label)
-        };
-        context_parts.push(format!(
-            "{} Active goals:\n{}",
-            label,
-            goal_lines.join("\n")
-        ));
+    // Get active goals — skip for narrow/exploratory subagents (goals are
+    // strategic context, not useful for focused search/review tasks)
+    if !narrow {
+        let goal_lines = client.get_active_goals(project_id, 3).await;
+        if !goal_lines.is_empty() {
+            let label = if project_label.is_empty() {
+                "[Mira/goals]".to_string()
+            } else {
+                format!("[Mira/goals ({})]", project_label)
+            };
+            context_parts.push(format!(
+                "{} Active goals:\n{}",
+                label,
+                goal_lines.join("\n")
+            ));
+        }
     }
 
     // Get relevant memories based on task description (semantic with keyword fallback)
@@ -170,9 +191,9 @@ pub async fn run_start() -> Result<()> {
             "[Mira/context] Subagent context:\n\n{}",
             context_parts.join("\n\n")
         );
-        if context.len() > MAX_CONTEXT_CHARS {
+        if context.len() > context_cap {
             // UTF-8 safe truncation
-            context = truncate_at_boundary(&context, MAX_CONTEXT_CHARS).to_string();
+            context = truncate_at_boundary(&context, context_cap).to_string();
             // Find last newline to avoid mid-line truncation
             if let Some(pos) = context.rfind('\n') {
                 context.truncate(pos);

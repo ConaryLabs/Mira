@@ -86,6 +86,9 @@ pub async fn run() -> Result<()> {
     // Snapshot native Claude Code tasks
     snapshot_tasks(&mut client, project_id, &stop_input.session_id, false).await;
 
+    // Log session injection efficiency stats
+    log_injection_telemetry(project_id).await;
+
     // Auto-export ranked memories to CLAUDE.local.md
     client.write_claude_local_md(project_id).await;
 
@@ -450,6 +453,71 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
     );
 
     Ok(())
+}
+
+/// Log injection efficiency stats at session end.
+///
+/// Queries injection_feedback for this session's hit/miss rate and logs it.
+/// Pure telemetry — never blocks or modifies the stop flow.
+async fn log_injection_telemetry(project_id: i64) {
+    let db_path = crate::hooks::get_db_path();
+    let pool = match crate::db::pool::DatabasePool::open_hook(std::path::Path::new(&db_path)).await
+    {
+        Ok(p) => std::sync::Arc::new(p),
+        Err(_) => return,
+    };
+
+    let stats = pool
+        .interact(move |conn| {
+            // Get injection feedback stats
+            let (total, referenced, avg_overlap): (i64, i64, f64) = conn
+                .query_row(
+                    "SELECT
+                        COUNT(*),
+                        SUM(CASE WHEN was_referenced = 1 THEN 1 ELSE 0 END),
+                        COALESCE(AVG(CASE WHEN was_referenced IS NOT NULL THEN overlap_ratio END), 0.0)
+                     FROM injection_feedback
+                     WHERE project_id = ?1
+                       AND created_at > datetime('now', '-24 hours')",
+                    rusqlite::params![project_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap_or((0, 0, 0.0));
+
+            // Get aggregate totals from server_state
+            let total_injections: i64 = crate::db::get_server_state_sync(conn, "injection_total_count")
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let total_chars: i64 = crate::db::get_server_state_sync(conn, "injection_total_chars")
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+
+            Ok::<_, anyhow::Error>((total, referenced, avg_overlap, total_injections, total_chars))
+        })
+        .await;
+
+    if let Ok((total, referenced, avg_overlap, total_injections, total_chars)) = stats {
+        if total > 0 {
+            let hit_rate = if total > 0 {
+                (referenced as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            tracing::info!(
+                total_24h = total,
+                referenced = referenced,
+                hit_rate = format!("{:.0}%", hit_rate),
+                avg_overlap = format!("{:.2}", avg_overlap),
+                lifetime_injections = total_injections,
+                lifetime_chars = total_chars,
+                "[mira] Injection efficiency"
+            );
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

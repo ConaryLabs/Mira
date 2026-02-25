@@ -11,8 +11,13 @@ use crate::hooks::{
 use crate::proactive::behavior::BehaviorTracker;
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
+
+/// Maximum number of recent injection hashes to track for cross-prompt dedup
+const MAX_INJECTION_HISTORY: usize = 5;
 
 /// Get embeddings client if available (with pool for usage tracking)
 fn get_embeddings(pool: Option<Arc<DatabasePool>>) -> Option<Arc<EmbeddingClient>> {
@@ -149,6 +154,176 @@ fn get_task_context(project_label: &str) -> Option<String> {
     }
 }
 
+// ── Cross-prompt injection dedup ─────────────────────────────────────────
+// Tracks content hashes of recently injected context per session to avoid
+// re-injecting identical context on consecutive prompts.
+
+#[derive(Serialize, Deserialize, Default)]
+struct InjectionDedupState {
+    /// Ring buffer of recent context hashes (u64 FNV/default hasher output)
+    recent_hashes: Vec<u64>,
+}
+
+fn injection_dedup_path(session_id: &str) -> std::path::PathBuf {
+    let mira_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".mira")
+        .join("tmp");
+    let sid = if session_id.len() > 16 {
+        &session_id[..16]
+    } else {
+        session_id
+    };
+    mira_dir.join(format!("inj_dedup_{}.json", sid))
+}
+
+fn load_injection_dedup(session_id: &str) -> InjectionDedupState {
+    if session_id.is_empty() {
+        return InjectionDedupState::default();
+    }
+    std::fs::read_to_string(injection_dedup_path(session_id))
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_default()
+}
+
+fn save_injection_dedup(session_id: &str, state: &InjectionDedupState) {
+    if session_id.is_empty() {
+        return;
+    }
+    let path = injection_dedup_path(session_id);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string(state) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Compute a content hash of context string for dedup comparison
+fn context_hash(context: &str) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    context.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Check if this context was recently injected and record it.
+/// Returns true if the context is a duplicate (should be suppressed).
+fn check_and_record_injection(session_id: &str, context: &str) -> bool {
+    if session_id.is_empty() || context.is_empty() {
+        return false;
+    }
+    let hash = context_hash(context);
+    let mut state = load_injection_dedup(session_id);
+
+    let is_dup = state.recent_hashes.contains(&hash);
+
+    // Record this hash
+    state.recent_hashes.push(hash);
+    if state.recent_hashes.len() > MAX_INJECTION_HISTORY {
+        state.recent_hashes.remove(0);
+    }
+    save_injection_dedup(session_id, &state);
+
+    is_dup
+}
+
+/// Check for post-compaction state and return a recovery context string.
+/// Consumes the flag only after successful extraction so a failed DB lookup
+/// doesn't lose the recovery opportunity.
+async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
+    if !crate::hooks::precompact::check_post_compaction_flag(session_id) {
+        return None;
+    }
+
+    tracing::debug!("[mira] Post-compaction recovery: loading saved context");
+
+    // Query the latest session snapshot for this session's compaction_context.
+    // compaction_context lives inside the snapshot JSON blob, not as a column.
+    let db_path = crate::hooks::get_db_path();
+    let pool = Arc::new(
+        crate::db::pool::DatabasePool::open_hook(&db_path)
+            .await
+            .ok()?,
+    );
+
+    let sid_owned = session_id.to_string();
+    let result = pool
+        .interact(move |conn| {
+            let snapshot_json: Option<String> = conn
+                .query_row(
+                    "SELECT snapshot FROM session_snapshots
+                     WHERE session_id = ?1
+                     ORDER BY created_at DESC LIMIT 1",
+                    rusqlite::params![sid_owned],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            let Some(snapshot_json) = snapshot_json else {
+                return Ok::<Option<String>, anyhow::Error>(None);
+            };
+
+            // Parse snapshot JSON and extract the compaction_context field
+            let snapshot: serde_json::Value = match serde_json::from_str(&snapshot_json) {
+                Ok(v) => v,
+                Err(_) => return Ok(None),
+            };
+            let cc_value = match snapshot.get("compaction_context") {
+                Some(v) if !v.is_null() => v,
+                _ => return Ok(None),
+            };
+            let ctx: crate::hooks::precompact::CompactionContext =
+                match serde_json::from_value(cc_value.clone()) {
+                    Ok(c) => c,
+                    Err(_) => return Ok(None),
+                };
+
+            if ctx.is_empty() {
+                return Ok(None);
+            }
+
+            // Format as a concise recovery summary
+            let mut lines = Vec::new();
+            lines.push(
+                "[Mira/recovery] Context was just compacted. Key points from before:".to_string(),
+            );
+
+            if let Some(ref intent) = ctx.user_intent {
+                lines.push(format!("  Intent: {}", intent));
+            }
+            for d in ctx.decisions.iter().take(3) {
+                lines.push(format!("  Decision: {}", d));
+            }
+            for w in ctx.active_work.iter().take(2) {
+                lines.push(format!("  Active: {}", w));
+            }
+            for i in ctx.issues.iter().take(2) {
+                lines.push(format!("  Issue: {}", i));
+            }
+            if !ctx.files_referenced.is_empty() {
+                let files: Vec<&str> = ctx
+                    .files_referenced
+                    .iter()
+                    .take(5)
+                    .map(|s| s.as_str())
+                    .collect();
+                lines.push(format!("  Files: {}", files.join(", ")));
+            }
+
+            Ok(Some(lines.join("\n")))
+        })
+        .await
+        .ok()
+        .flatten();
+
+    // Always consume the flag after attempting recovery — prevents stale
+    // flag files from persisting when the DB lookup fails or returns nothing.
+    crate::hooks::precompact::consume_post_compaction_flag(session_id);
+
+    result
+}
+
 /// Run UserPromptSubmit hook
 pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
@@ -173,6 +348,9 @@ pub async fn run() -> Result<()> {
         input.as_object().map(|obj| obj.keys().collect::<Vec<_>>())
     );
 
+    // Check for post-compaction recovery (lightweight flag check)
+    let recovery_context = get_post_compaction_recovery(session_id).await;
+
     // Try IPC first — single composite call runs everything server-side
     let mut client = crate::ipc::client::HookClient::connect().await;
 
@@ -180,15 +358,19 @@ pub async fn run() -> Result<()> {
         .get_user_prompt_context(user_message, session_id)
         .await
     {
-        return assemble_output_from_ipc(ctx);
+        return assemble_output_from_ipc(ctx, session_id, recovery_context.as_deref());
     }
 
     // Direct fallback: open local pools and run full logic
-    run_direct(user_message, session_id).await
+    run_direct(user_message, session_id, recovery_context.as_deref()).await
 }
 
 /// Assemble hook output from the composite IPC result.
-fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) -> Result<()> {
+fn assemble_output_from_ipc(
+    ctx: crate::ipc::client::UserPromptContextResult,
+    session_id: &str,
+    recovery_context: Option<&str>,
+) -> Result<()> {
     use crate::context::{
         BudgetEntry, BudgetManager, PRIORITY_CROSS_PROJECT, PRIORITY_PROACTIVE, PRIORITY_REACTIVE,
         PRIORITY_TASKS, PRIORITY_TEAM,
@@ -208,6 +390,12 @@ fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) ->
     }
 
     let mut budget_entries: Vec<BudgetEntry> = Vec::new();
+
+    // Post-compaction recovery gets highest priority (10) so it's always included
+    if let Some(rc) = recovery_context {
+        budget_entries.push(BudgetEntry::new(10.0, rc.to_string(), "recovery"));
+        tracing::debug!("[mira] Added post-compaction recovery context");
+    }
 
     if !ctx.reactive_context.is_empty() {
         budget_entries.push(BudgetEntry::new(
@@ -256,6 +444,13 @@ fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) ->
     let final_context = budget_result.content;
 
     if !final_context.is_empty() {
+        // Cross-prompt dedup: suppress if identical context was recently injected
+        if check_and_record_injection(session_id, &final_context) {
+            tracing::debug!("[mira] Context injection suppressed (cross-prompt dedup)");
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+
         let mut output = serde_json::json!({});
         output["metadata"] = serde_json::json!({
             "sources": ctx.reactive_sources,
@@ -278,7 +473,11 @@ fn assemble_output_from_ipc(ctx: crate::ipc::client::UserPromptContextResult) ->
 }
 
 /// Direct-pool fallback when IPC is unavailable.
-async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
+async fn run_direct(
+    user_message: &str,
+    session_id: &str,
+    recovery_context: Option<&str>,
+) -> Result<()> {
     // Open database pools (main + code index)
     let db_path = get_db_path();
     let pool = Arc::new(DatabasePool::open_hook(std::path::Path::new(&db_path)).await?);
@@ -385,6 +584,12 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
 
     let mut budget_entries: Vec<BudgetEntry> = Vec::new();
 
+    // Post-compaction recovery gets highest priority so it's always included
+    if let Some(rc) = recovery_context {
+        budget_entries.push(BudgetEntry::new(10.0, rc.to_string(), "recovery"));
+        tracing::debug!("[mira] Added post-compaction recovery context");
+    }
+
     if !result.context.is_empty() {
         budget_entries.push(BudgetEntry::new(
             PRIORITY_REACTIVE,
@@ -431,6 +636,13 @@ async fn run_direct(user_message: &str, session_id: &str) -> Result<()> {
     let final_context = budget_result.content;
 
     if !final_context.is_empty() {
+        // Cross-prompt dedup: suppress if identical context was recently injected
+        if check_and_record_injection(session_id, &final_context) {
+            tracing::debug!("[mira] Context injection suppressed (cross-prompt dedup)");
+            write_hook_output(&serde_json::json!({}));
+            return Ok(());
+        }
+
         let mut output = serde_json::json!({});
         output["metadata"] = serde_json::json!({
             "sources": result.sources,
@@ -786,5 +998,76 @@ mod tests {
         assert!(check(
             "how does the authentication module work in this project?"
         ));
+    }
+
+    // ── Cross-prompt injection dedup ────────────────────────────────────────
+
+    #[test]
+    fn injection_dedup_first_time_not_duplicate() {
+        let sid = format!("test_dedup_{}", std::process::id());
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+
+        let is_dup = check_and_record_injection(&sid, "some unique context");
+        assert!(!is_dup, "First injection should not be a duplicate");
+
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+    }
+
+    #[test]
+    fn injection_dedup_detects_repeat() {
+        let sid = format!("test_dedup_rep_{}", std::process::id());
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+
+        let context = "repeated context string for testing";
+        let _ = check_and_record_injection(&sid, context);
+        let is_dup = check_and_record_injection(&sid, context);
+        assert!(is_dup, "Second identical injection should be detected as duplicate");
+
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+    }
+
+    #[test]
+    fn injection_dedup_different_context_not_duplicate() {
+        let sid = format!("test_dedup_diff_{}", std::process::id());
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+
+        let _ = check_and_record_injection(&sid, "context A");
+        let is_dup = check_and_record_injection(&sid, "context B");
+        assert!(!is_dup, "Different context should not be a duplicate");
+
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+    }
+
+    #[test]
+    fn injection_dedup_empty_session_or_context() {
+        assert!(!check_and_record_injection("", "some context"));
+        assert!(!check_and_record_injection("some_session", ""));
+    }
+
+    #[test]
+    fn injection_dedup_evicts_old_hashes() {
+        let sid = format!("test_dedup_evict_{}", std::process::id());
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+
+        // Fill beyond MAX_INJECTION_HISTORY with unique contexts
+        for i in 0..MAX_INJECTION_HISTORY + 2 {
+            let _ = check_and_record_injection(&sid, &format!("unique context {}", i));
+        }
+
+        // The oldest context should have been evicted
+        let is_dup = check_and_record_injection(&sid, "unique context 0");
+        assert!(!is_dup, "Evicted context should not be detected as duplicate");
+
+        let _ = std::fs::remove_file(injection_dedup_path(&sid));
+    }
+
+    #[test]
+    fn context_hash_deterministic() {
+        let h1 = context_hash("same content");
+        let h2 = context_hash("same content");
+        assert_eq!(h1, h2);
+
+        let h3 = context_hash("different content");
+        assert_ne!(h1, h3);
     }
 }

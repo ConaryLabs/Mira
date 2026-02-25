@@ -35,6 +35,7 @@ That's it. Mira auto-configures itself, starts injecting context on every prompt
 - **Agent teams share a brain.** File ownership tracking, conflict detection, and built-in recipes for expert review, QA hardening, and safe refactoring.
 - **Knowledge compounds.** Memories gain confidence through repeated use and get distilled into higher-level insights over time.
 - **Cross-project knowledge.** Mira surfaces relevant solutions from your other projects when applicable.
+- **Token-efficient by design.** Hooks inject only what matters: tight semantic thresholds, cross-prompt dedup, type-aware subagent budgets, file-read caching, and symbol hints for large files. Context that isn't used gets tracked and suppressed. Run `/mira:efficiency` to see injection hit rates.
 
 ## How It Works
 

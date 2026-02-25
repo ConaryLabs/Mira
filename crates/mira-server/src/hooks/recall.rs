@@ -134,6 +134,10 @@ async fn try_semantic_recall(
 }
 
 /// Keyword-based memory matching (fallback when embeddings are unavailable).
+///
+/// Requires at least 2 keywords (>3 chars each) and uses AND-join for tighter
+/// matching. This prevents the single-word OR-join problem where queries like
+/// "run" match any memory mentioning "run", returning irrelevant results.
 async fn keyword_recall(pool: &Arc<DatabasePool>, project_id: i64, query: &str) -> Vec<String> {
     let pool_clone = pool.clone();
     let query = query.to_string();
@@ -146,7 +150,9 @@ async fn keyword_recall(pool: &Arc<DatabasePool>, project_id: i64, query: &str) 
         .map(|s| s.to_string())
         .collect();
 
-    if keywords.is_empty() {
+    // Require at least 2 keywords for hook context injection.
+    // Single-keyword LIKE matching is too broad and injects irrelevant memories.
+    if keywords.len() < 2 {
         return Vec::new();
     }
 
@@ -166,7 +172,7 @@ async fn keyword_recall(pool: &Arc<DatabasePool>, project_id: i64, query: &str) 
                 .iter()
                 .map(|_| "content LIKE '%' || ? || '%' ESCAPE '\\'".to_string())
                 .collect();
-            let where_clause = like_clauses.join(" OR ");
+            let where_clause = like_clauses.join(" AND ");
 
             let sql = format!(
                 r#"

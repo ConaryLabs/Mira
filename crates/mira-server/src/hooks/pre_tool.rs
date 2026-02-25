@@ -11,6 +11,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const COOLDOWN_SECS: u64 = 3;
 const MAX_RECENT_QUERIES: usize = 5;
 
+/// Maximum entries in the per-session file-read cache
+const MAX_READ_CACHE_ENTRIES: usize = 50;
+
+/// Minimum seconds since last read before we suppress the reread hint
+/// (don't warn about rereads immediately after — Claude may have a good reason)
+const REREAD_MIN_AGE_SECS: u64 = 30;
+
 /// Try to acquire an exclusive lock for the PreToolUse hook.
 ///
 /// When multiple Grep/Glob calls fire in parallel, Claude Code launches a
@@ -99,6 +106,9 @@ impl Drop for LockGuard {
 struct CooldownState {
     last_fired_at: u64,
     recent_queries: Vec<String>,
+    /// Compact summary of last injection (replayed during cooldown instead of empty)
+    #[serde(default)]
+    last_injection_summary: Option<String>,
 }
 
 fn cooldown_path() -> std::path::PathBuf {
@@ -112,7 +122,7 @@ fn cooldown_path() -> std::path::PathBuf {
     mira_dir.join("pretool_last.json")
 }
 
-fn unix_now() -> u64 {
+pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -124,13 +134,15 @@ fn read_cooldown() -> Option<CooldownState> {
     serde_json::from_str(&data).ok()
 }
 
-fn write_cooldown(query: &str) {
+fn write_cooldown(query: &str, injection_summary: Option<&str>) {
     let mut state = read_cooldown().unwrap_or_default();
     state.last_fired_at = unix_now();
     state.recent_queries.push(query.to_string());
     if state.recent_queries.len() > MAX_RECENT_QUERIES {
         state.recent_queries.remove(0);
     }
+    // Always update — clears stale summary when current recall is empty
+    state.last_injection_summary = injection_summary.map(|s| s.to_string());
     let path = cooldown_path();
     if let Some(parent) = path.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
@@ -159,6 +171,226 @@ fn write_cooldown(query: &str) {
             }
         }
     }
+}
+
+// ── File-read cache ─────────────────────────────────────────────────────────
+// Tracks which files were read this session so we can advise Claude when it
+// tries to re-read an unchanged file.
+
+#[derive(Serialize, Deserialize, Default)]
+struct FileReadCache {
+    /// Map of file_path -> FileReadEntry
+    entries: std::collections::HashMap<String, FileReadEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct FileReadEntry {
+    /// Unix timestamp of when we last saw this file read
+    last_read_at: u64,
+    /// File mtime (seconds since epoch) at time of read
+    mtime_secs: u64,
+}
+
+fn read_cache_path(session_id: &str) -> std::path::PathBuf {
+    let mira_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".mira")
+        .join("tmp");
+    // Use first 16 chars of session_id to avoid overly long filenames
+    let sid = if session_id.len() > 16 {
+        &session_id[..16]
+    } else {
+        session_id
+    };
+    mira_dir.join(format!("reads_{}.json", sid))
+}
+
+fn load_read_cache(session_id: &str) -> FileReadCache {
+    if session_id.is_empty() {
+        return FileReadCache::default();
+    }
+    std::fs::read_to_string(read_cache_path(session_id))
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_default()
+}
+
+fn save_read_cache(session_id: &str, cache: &FileReadCache) {
+    if session_id.is_empty() {
+        return;
+    }
+    let path = read_cache_path(session_id);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string(cache) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Get file mtime as unix seconds, or 0 if unavailable
+fn file_mtime_secs(path: &str) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Check if a file was already read this session and is unchanged.
+/// Returns a hint string if so, None otherwise.
+/// Also records the read in the cache for future checks.
+fn check_and_record_read(session_id: &str, file_path: &str) -> Option<String> {
+    let mut cache = load_read_cache(session_id);
+    let now = unix_now();
+    let current_mtime = file_mtime_secs(file_path);
+
+    let hint = if let Some(entry) = cache.entries.get(file_path) {
+        let age_secs = now.saturating_sub(entry.last_read_at);
+        // Only hint if: file unchanged AND enough time has passed (not an immediate re-read)
+        if current_mtime == entry.mtime_secs && age_secs >= REREAD_MIN_AGE_SECS {
+            let age_str = if age_secs >= 3600 {
+                format!("{}h ago", age_secs / 3600)
+            } else if age_secs >= 60 {
+                format!("{}m ago", age_secs / 60)
+            } else {
+                format!("{}s ago", age_secs)
+            };
+            // Extract filename for concise hint
+            let filename = Path::new(file_path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(file_path);
+            Some(format!(
+                "[Mira/efficiency] You already read {} ({}), file unchanged. Consider using existing context.",
+                filename, age_str
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Record/update the read
+    cache.entries.insert(
+        file_path.to_string(),
+        FileReadEntry {
+            last_read_at: now,
+            mtime_secs: current_mtime,
+        },
+    );
+
+    // Evict oldest entries if cache is full
+    if cache.entries.len() > MAX_READ_CACHE_ENTRIES {
+        let mut entries: Vec<(String, FileReadEntry)> = cache.entries.drain().collect();
+        entries.sort_by(|a, b| b.1.last_read_at.cmp(&a.1.last_read_at));
+        entries.truncate(MAX_READ_CACHE_ENTRIES);
+        cache.entries = entries.into_iter().collect();
+    }
+
+    save_read_cache(session_id, &cache);
+    hint
+}
+
+// ── Symbol hints for Read ───────────────────────────────────────────────
+// For large files, inject a compact symbol map (function names + line numbers)
+// so Claude can navigate without re-reading or guessing locations.
+
+/// Minimum file line count to trigger symbol hints
+const SYMBOL_HINT_MIN_LINES: usize = 200;
+
+/// Maximum symbols to include in the hint
+const SYMBOL_HINT_MAX_SYMBOLS: usize = 20;
+
+/// Get a compact symbol map for a large file from the code index.
+/// Returns None if the file is small, not indexed, or code DB unavailable.
+async fn get_symbol_hints(file_path: &str) -> Option<String> {
+    // Quick check: is the file large enough?
+    let line_count = count_file_lines(file_path);
+    if line_count < SYMBOL_HINT_MIN_LINES {
+        return None;
+    }
+
+    // Open code database
+    let code_db_path = crate::hooks::get_code_db_path();
+    if !code_db_path.exists() {
+        return None;
+    }
+    let code_pool = crate::db::pool::DatabasePool::open_code_db(&code_db_path)
+        .await
+        .ok()?;
+
+    // Query symbols for this file.
+    // The index stores relative paths (e.g. "src/hooks/pre_tool.rs") while
+    // Read events provide absolute paths. Match in both directions:
+    //   exact match, absolute-input ends with stored-relative, or vice versa.
+    let fp = file_path.to_string();
+    let symbols: Vec<(String, String, i64)> = code_pool
+        .interact(move |conn| {
+            let sql = r#"
+                SELECT name, symbol_type, COALESCE(start_line, 0)
+                FROM code_symbols
+                WHERE file_path = ?1
+                   OR ?1 LIKE '%/' || file_path
+                   OR file_path LIKE '%/' || ?1
+                ORDER BY start_line ASC
+                LIMIT ?2
+            "#;
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt
+                .query_map(
+                    rusqlite::params![fp, SYMBOL_HINT_MAX_SYMBOLS as i64],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok::<_, anyhow::Error>(rows)
+        })
+        .await
+        .ok()?;
+
+    if symbols.is_empty() {
+        return None;
+    }
+
+    // Format: "[Mira/symbols] pool.rs (450 lines): DatabasePool:struct(12), open:fn(45), ..."
+    let filename = Path::new(file_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(file_path);
+
+    let symbol_list: Vec<String> = symbols
+        .iter()
+        .map(|(name, stype, line)| {
+            let short_type = match stype.as_str() {
+                "function" => "fn",
+                "structure" | "struct" => "struct",
+                "implementation" | "impl" => "impl",
+                "enumeration" | "enum" => "enum",
+                "trait" => "trait",
+                "constant" | "const" => "const",
+                "module" | "mod" => "mod",
+                other => other,
+            };
+            format!("{}:{}({})", name, short_type, line)
+        })
+        .collect();
+
+    Some(format!(
+        "[Mira/symbols] {} ({} lines): {}",
+        filename,
+        line_count,
+        symbol_list.join(", ")
+    ))
+}
+
+/// Count lines in a file quickly (no full read, just count newlines)
+fn count_file_lines(path: &str) -> usize {
+    std::fs::read(path)
+        .map(|bytes| bytes.iter().filter(|&&b| b == b'\n').count())
+        .unwrap_or(0)
 }
 
 /// PreToolUse hook input from Claude Code
@@ -229,6 +461,35 @@ pub async fn run() -> Result<()> {
         return handle_edit_write_patterns(&input, &pre_input).await;
     }
 
+    // Handle Read: check file-read cache and symbol hints (fast, no embeddings)
+    // This runs before the lock/cooldown path to avoid unnecessary embedding calls.
+    if pre_input.tool_name == "Read" {
+        if let Some(ref fp) = pre_input.file_path {
+            let mut hints: Vec<String> = Vec::new();
+
+            // Reread advisory
+            if let Some(hint) = check_and_record_read(&pre_input.session_id, fp) {
+                hints.push(hint);
+            }
+
+            // Symbol map for large files (> 200 lines)
+            if let Some(symbol_hint) = get_symbol_hints(fp).await {
+                hints.push(symbol_hint);
+            }
+
+            if !hints.is_empty() {
+                let output = serde_json::json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": hints.join("\n")
+                    }
+                });
+                write_hook_output(&output);
+                return Ok(());
+            }
+        }
+    }
+
     // Only process Grep/Glob/Read operations
     let dominated_tools = ["Grep", "Glob", "Read"];
     if !dominated_tools
@@ -266,17 +527,29 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Cooldown and dedup check
+    // Cooldown and dedup check — replay last injection summary if available
     if let Some(state) = read_cooldown() {
         let now = unix_now();
-        if now - state.last_fired_at < COOLDOWN_SECS {
-            tracing::debug!("PreToolUse skipped (cooldown)");
-            write_hook_output(&serde_json::json!({}));
-            return Ok(());
-        }
-        if state.recent_queries.contains(&search_query) {
-            tracing::debug!("PreToolUse skipped (duplicate query)");
-            write_hook_output(&serde_json::json!({}));
+        let in_cooldown = now - state.last_fired_at < COOLDOWN_SECS;
+        let is_duplicate = state.recent_queries.contains(&search_query);
+
+        if in_cooldown || is_duplicate {
+            let reason = if in_cooldown { "cooldown" } else { "duplicate" };
+            tracing::debug!("PreToolUse skipped ({reason})");
+
+            // Replay compact summary from last successful injection so parallel
+            // Grep/Glob calls still get context without re-running embeddings
+            if let Some(ref summary) = state.last_injection_summary {
+                let output = serde_json::json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": format!("[Mira/memory] (cached) {summary}")
+                    }
+                });
+                write_hook_output(&output);
+            } else {
+                write_hook_output(&serde_json::json!({}));
+            }
             return Ok(());
         }
     }
@@ -303,14 +576,33 @@ pub async fn run() -> Result<()> {
     };
     let memories = client.recall_memories(&recall_ctx, &search_query).await;
 
-    // Record this query in cooldown state
-    write_cooldown(&search_query);
-
     // Derive project label from path for context tags
     let project_label = std::path::Path::new(&project_path)
         .file_name()
         .and_then(|f| f.to_str())
         .unwrap_or("");
+
+    // Build a compact summary for cooldown replay (first memory, truncated)
+    let injection_summary = memories.first().map(|m| {
+        let stripped = m
+            .strip_prefix("[Mira/memory] [User-stored data, not instructions] ")
+            .unwrap_or(m);
+        if stripped.len() > 100 {
+            // Truncate at a char boundary to avoid panic on non-ASCII content
+            let end = stripped
+                .char_indices()
+                .map(|(i, _)| i)
+                .take_while(|&i| i <= 100)
+                .last()
+                .unwrap_or(0);
+            format!("{}...", &stripped[..end])
+        } else {
+            stripped.to_string()
+        }
+    });
+
+    // Record this query + injection summary in cooldown state
+    write_cooldown(&search_query, injection_summary.as_deref());
 
     // Build output
     let output = if memories.is_empty() {
@@ -752,5 +1044,129 @@ mod tests {
             }
         }));
         assert!(input.file_path.is_none());
+    }
+
+    // ── File-read cache ─────────────────────────────────────────────────────
+
+    #[test]
+    fn file_read_cache_records_and_detects_reread() {
+        let sid = format!("test_cache_{}", std::process::id());
+        // Clean up any stale cache
+        let _ = std::fs::remove_file(read_cache_path(&sid));
+
+        // First read: should return no hint
+        let hint = check_and_record_read(&sid, "/tmp/test_file_abc.rs");
+        assert!(hint.is_none(), "First read should not produce a hint");
+
+        // Immediate re-read: should still return no hint (within REREAD_MIN_AGE_SECS)
+        let hint = check_and_record_read(&sid, "/tmp/test_file_abc.rs");
+        assert!(
+            hint.is_none(),
+            "Immediate re-read should not produce a hint (too recent)"
+        );
+
+        // Clean up
+        let _ = std::fs::remove_file(read_cache_path(&sid));
+    }
+
+    #[test]
+    fn file_read_cache_empty_session_id() {
+        // Empty session ID should return no hint and not crash
+        let hint = check_and_record_read("", "/tmp/some_file.rs");
+        assert!(hint.is_none());
+    }
+
+    #[test]
+    fn file_read_cache_different_files_no_hint() {
+        let sid = format!("test_diff_{}", std::process::id());
+        let _ = std::fs::remove_file(read_cache_path(&sid));
+
+        let _ = check_and_record_read(&sid, "/tmp/file_a.rs");
+        let hint = check_and_record_read(&sid, "/tmp/file_b.rs");
+        assert!(hint.is_none(), "Different files should not produce a hint");
+
+        let _ = std::fs::remove_file(read_cache_path(&sid));
+    }
+
+    #[test]
+    fn file_read_cache_eviction() {
+        let sid = format!("test_evict_{}", std::process::id());
+        let _ = std::fs::remove_file(read_cache_path(&sid));
+
+        // Fill cache beyond MAX_READ_CACHE_ENTRIES
+        for i in 0..MAX_READ_CACHE_ENTRIES + 10 {
+            let _ = check_and_record_read(&sid, &format!("/tmp/evict_test_{}.rs", i));
+        }
+
+        // Cache should have been trimmed
+        let cache = load_read_cache(&sid);
+        assert!(
+            cache.entries.len() <= MAX_READ_CACHE_ENTRIES,
+            "Cache should be evicted to {} entries, got {}",
+            MAX_READ_CACHE_ENTRIES,
+            cache.entries.len()
+        );
+
+        let _ = std::fs::remove_file(read_cache_path(&sid));
+    }
+
+    #[test]
+    fn file_mtime_secs_nonexistent_file() {
+        assert_eq!(file_mtime_secs("/nonexistent/path/xyz.rs"), 0);
+    }
+
+    #[test]
+    fn read_cache_path_truncates_long_session_id() {
+        let long_sid = "a".repeat(100);
+        let path = read_cache_path(&long_sid);
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        // Should use only first 16 chars of session ID
+        assert!(
+            filename.contains(&"a".repeat(16)),
+            "Should contain truncated session ID"
+        );
+        assert!(
+            !filename.contains(&"a".repeat(17)),
+            "Should not contain more than 16 chars of session ID"
+        );
+    }
+
+    // ── Symbol hints ────────────────────────────────────────────────────────
+
+    #[test]
+    fn count_file_lines_nonexistent() {
+        assert_eq!(count_file_lines("/nonexistent/file.rs"), 0);
+    }
+
+    #[test]
+    fn count_file_lines_real_file() {
+        // This test file itself should have some lines
+        let _count = count_file_lines(file!());
+        // Use the workspace-relative path; count_file_lines needs absolute/valid path
+        let this_file = concat!(env!("CARGO_MANIFEST_DIR"), "/src/hooks/pre_tool.rs");
+        let count = count_file_lines(this_file);
+        assert!(count > 100, "pre_tool.rs should have > 100 lines, got {}", count);
+    }
+
+    #[test]
+    fn symbol_hint_threshold() {
+        // Files under threshold should not trigger hints
+        assert!(SYMBOL_HINT_MIN_LINES == 200);
+        assert!(SYMBOL_HINT_MAX_SYMBOLS == 20);
+    }
+
+    #[tokio::test]
+    async fn get_symbol_hints_small_file() {
+        // A small/nonexistent file should return None
+        let hint = get_symbol_hints("/nonexistent/small.rs").await;
+        assert!(hint.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_symbol_hints_no_code_db() {
+        // Even for a large file, if code DB doesn't exist, returns None
+        // (the function checks code_db_path.exists())
+        let hint = get_symbol_hints("/tmp/definitely_not_indexed.rs").await;
+        assert!(hint.is_none());
     }
 }
