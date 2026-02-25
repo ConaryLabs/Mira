@@ -4,281 +4,91 @@
 [![Release](https://img.shields.io/github/v/release/ConaryLabs/Mira)](https://github.com/ConaryLabs/Mira/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**The intelligence layer that makes Claude Code dangerous.**
+**Persistent memory and code intelligence for Claude Code.**
 
-Claude Code is powerful but amnesiac. Every session starts from scratch — architecture decisions gone, codebase reduced to what it can grep. You spend the first ten minutes re-explaining things it knew yesterday.
+Claude Code is powerful but amnesiac. Every session starts from scratch --
+architecture decisions forgotten, codebase reduced to what it can grep. You
+spend the first ten minutes of every conversation re-explaining context it
+had yesterday.
 
-Mira eliminates that. It's a local Rust MCP server that gives Claude Code persistent context, deep code understanding, and background analysis. Runs on your machine, stored in SQLite, 13 hooks that make it all automatic.
+Mira is a local MCP server that fixes this. It gives Claude Code persistent
+memory, semantic code search, and background codebase analysis. Everything
+runs on your machine, stored in SQLite. Install it and forget about it --
+lifecycle hooks make context injection automatic.
 
-## The Short Version
+## Install
 
 ```bash
 claude plugin install mira
-mira setup  # optional: configure API keys for enhanced features
+mira setup  # optional: configure API keys for semantic search
 ```
 
-That's it. Mira auto-configures itself, starts injecting context on every prompt, and indexes your codebase in the background.
+Start a new Claude Code session. Mira begins injecting context automatically.
 
-## What Changes
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for alternative methods (cargo install, manual binary, build from source).
 
-### Before Mira
-- Every session starts cold. Claude doesn't know your preferences, your patterns, your past decisions.
-- Code search is grep. "Find the authentication logic" returns nothing if nobody wrote the word "authentication."
-- Agent teams work in isolation. No shared context, no conflict detection.
-- You are the memory. Every conversation requires re-establishing context.
+## What Mira Does
 
-### With Mira
-- **Sessions have continuity.** Decisions, preferences, and context persist and surface automatically on every prompt.
-- **Search works by meaning.** "Where do we handle auth?" finds `verify_credentials` in `middleware.rs`. Hybrid semantic + keyword search with call graph traversal.
-- **The codebase is always understood.** Background workers detect compiler warnings, unused functions, doc gaps, and surface cross-session insights — without you asking.
-- **Changes are analyzed, not just diffed.** Factual stats, call graph impact tracing, and cross-session change tracking.
-- **Agent teams share a brain.** File ownership tracking, conflict detection, and built-in recipes for expert review, QA hardening, and safe refactoring.
-- **Knowledge compounds.** Session context, decisions, and goals persist and compound across sessions.
-- **Token-efficient by design.** Hooks inject only what matters: tight semantic thresholds, cross-prompt dedup, type-aware subagent budgets, file-read caching, and symbol hints for large files. Context that isn't used gets tracked and suppressed.
+- **Session memory.** Decisions, preferences, and context persist across sessions and surface automatically on every prompt. Memories are evidence-based -- they earn trust through repeated cross-session use, not blind storage.
+- **Semantic code search.** "Where do we handle auth?" finds `verify_credentials` in `middleware.rs`, even when the word "auth" never appears. Falls back to keyword search without API keys.
+- **Background analysis.** Indexes your codebase with tree-sitter, detects unused functions, doc gaps, and error patterns without being asked. Learns how errors were fixed and surfaces solutions in future sessions.
+- **Change intelligence.** Diff analysis with call graph impact tracing and cross-session change tracking.
+- **Agent team coordination.** File ownership tracking and conflict detection across concurrent agents. Built-in recipes for expert review, QA hardening, and safe refactoring.
+- **Goal tracking.** Multi-session objectives with weighted milestones and automatic progress updates.
+
+## Design Principles
+
+- **Local-first.** Two SQLite databases in `~/.mira/`. No cloud services, no accounts, no external databases required.
+- **Evidence-based.** Memories start as candidates and are promoted through cross-session use. What surfaces in your session is traceable and earnable, not just whatever was written last.
+- **Zero-config defaults.** Memory, code intelligence, goal tracking, and background analysis all work without API keys. Add OpenAI embeddings for semantic search when you want it.
+- **Honest tooling.** Context injection is conservative -- tight relevance thresholds, cross-prompt deduplication, suppression of signals that aren't being used. Mira tells Claude what it actually knows.
 
 ## How It Works
 
 ```
 Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
     |                             |
-    +--13 lifecycle hooks         +--->  OpenAI (embeddings, optional)
-    +--MCP Sampling (host LLM)
+    +--lifecycle hooks            +--->  OpenAI (embeddings, optional)
 ```
 
-Everything runs locally. Two SQLite databases in `~/.mira/`: one for sessions, goals, and observations; one for the code index. No cloud, no accounts, no external databases.
+Mira runs as a local process spawned by Claude Code over stdio. Two databases: one for sessions, goals, and memories; one for the code index. Lifecycle hooks capture context at key moments (session start, prompt submit, tool use, compaction, stop) and inject relevant information back automatically.
 
-**No API keys required.** Memory, code intelligence, goal tracking, and documentation detection all work out of the box — search falls back to keyword/fuzzy matching, analysis uses heuristic parsers. OpenAI embeddings upgrade search to semantic when configured.
+## Quick Start
 
-## Installation
+After installing, these slash commands are available in Claude Code:
 
-### Quick Install (Recommended)
-
-```bash
-claude plugin install mira
+```
+/mira:recap           -- session context, preferences, and active goals
+/mira:search <query>  -- semantic code search
+/mira:goals           -- manage cross-session goals and milestones
+/mira:diff            -- semantic analysis of recent changes
+/mira:insights        -- surface background analysis
+/mira:remember <text> -- store a decision or fact
+/mira:help            -- full command list
 ```
 
-Then optionally configure providers:
-```bash
-mira setup          # interactive wizard with live validation + Ollama auto-detection
-mira setup --yes    # non-interactive (CI/scripted installs)
-mira setup --check  # read-only validation
-```
+## Capabilities With and Without API Keys
 
-To verify: start a new Claude Code session in any project. You should see "Mira: Loading session context..." in the status bar.
-
-### Alternative: Script Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ConaryLabs/Mira/main/install.sh | bash
-```
-
-Detects your OS, downloads the binary, installs the Claude Code plugin (auto-configures all hooks and skills), and creates `~/.mira/`.
-
-### Manual Install
-
-<details>
-<summary>Click to expand manual installation options</summary>
-
-#### Download Binary
-
-**Linux/macOS:**
-```bash
-# Linux (x86_64)
-curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv mira /usr/local/bin/
-
-# macOS (Apple Silicon)
-curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv mira /usr/local/bin/
-
-# macOS (Intel)
-curl -L https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv mira /usr/local/bin/
-```
-
-**Windows (PowerShell):**
-```powershell
-Invoke-WebRequest -Uri "https://github.com/ConaryLabs/Mira/releases/latest/download/mira-x86_64-pc-windows-msvc.zip" -OutFile mira.zip
-Expand-Archive mira.zip -DestinationPath .
-Remove-Item mira.zip
-Move-Item mira.exe C:\Tools\  # Or another directory in your PATH
-```
-
-#### Install Plugin
-
-```bash
-claude plugin install ConaryLabs/Mira
-```
-
-</details>
-
-### Install via Cargo (MCP Server Only)
-
-```bash
-cargo install --git https://github.com/ConaryLabs/Mira.git
-```
-
-Then add to your project's `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "mira": {
-      "command": "mira",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-If you use Codex CLI, add Mira to `.codex/config.toml`:
-
-```toml
-#:schema https://developers.openai.com/codex/config-schema.json
-project_doc_fallback_filenames = ["CLAUDE.md"]
-
-[mcp_servers.mira]
-command = "mira"
-args = ["serve"]
-required = true
-startup_timeout_sec = 20
-tool_timeout_sec = 90
-```
-
-### Build from Source
-
-```bash
-git clone https://github.com/ConaryLabs/Mira.git
-cd Mira
-cargo build --release
-```
-
-Binary lands at `target/release/mira`. Add to `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "mira": {
-      "command": "/path/to/mira",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-### Enable Hooks (Manual Installs Only)
-
-Plugin install handles this automatically. For MCP-only installs, add to `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 8}]}],
-    "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 3}]}],
-    "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5}]}],
-    "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30, "async": true}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "mira hook stop", "timeout": 8}]}],
-    "SessionEnd": [{"hooks": [{"type": "command", "command": "mira hook session-end", "timeout": 15}]}],
-    "SubagentStart": [{"hooks": [{"type": "command", "command": "mira hook subagent-start", "timeout": 3}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "mira hook subagent-stop", "timeout": 3, "async": true}]}],
-    "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "mira hook post-tool-failure", "timeout": 5, "async": true}]}],
-    "TaskCompleted": [{"hooks": [{"type": "command", "command": "mira hook task-completed", "timeout": 5}]}],
-    "TeammateIdle": [{"hooks": [{"type": "command", "command": "mira hook teammate-idle", "timeout": 5}]}]
-  }
-}
-```
-
-### Plugin vs MCP Server
-
-The **plugin** (quick install) is the full experience — hooks and skills auto-configured, context injected on every prompt.
-
-The **MCP server** (cargo install / build from source) gives you the core tools. Add hooks manually for context injection and session tracking.
-
-### Add Mira Instructions to Your Project
-
-See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CLAUDE.md` layout that teaches Claude Code how to use Mira's tools. The structure:
-
-- `CLAUDE.md` — Core identity, anti-patterns, build commands (always loaded)
-- `.claude/rules/` — Tool selection, memory, tasks (always loaded)
-
-## Slash Commands
-
-| Command | What it does |
-|---------|-------------|
-| `/mira:recap` | Session context, preferences, and active goals |
-| `/mira:goals` | List and manage cross-session goals |
-| `/mira:search <query>` | Semantic code search |
-| `/mira:remember <text>` | Quick memory storage |
-| `/mira:recall [query]` | Browse or search stored memories |
-| `/mira:diff` | Semantic analysis of recent changes |
-| `/mira:insights` | Surface background analysis |
-| `/mira:experts` | Expert consultation via Agent Teams |
-| `/mira:full-cycle` | End-to-end review, implementation, and QA |
-| `/mira:qa-hardening` | Production readiness review |
-| `/mira:refactor` | Safe code restructuring with validation |
-| `/mira:help` | Show all available Mira commands and tools |
-| `/mira:status` | Quick health check: index, storage, goals |
-
-## Capabilities at a Glance
-
-| Capability | Without API Keys | With API Keys |
-|-----------|-----------------|---------------|
-| Memory & recall | Keyword/fuzzy search | Semantic search (OpenAI embeddings) |
+| Capability | Without API Keys | With OpenAI Key |
+|-----------|-----------------|-----------------|
+| Memory and recall | Keyword/fuzzy search | Semantic search |
 | Code search | FTS5 + fuzzy matching | Hybrid semantic + keyword |
 | Code intelligence | Tree-sitter symbols, call graph | Same |
-| Diff analysis | Heuristic pattern detection | Same |
-| Module summaries | File counts, symbol names | Same |
-| Background insights | Tool usage analysis, friction detection | Same |
+| Background analysis | Heuristic pattern detection | Same |
 | Goal tracking | Full | Full |
-| Agent team coordination | Full | Full |
-| Error pattern learning | Remembers how errors were fixed across sessions — Claude gets the solution faster next time | Same |
-| Memory poisoning defense | Prompt injection attempts in memory writes are detected and flagged | Same |
+| Agent coordination | Full | Full |
 
-OpenAI embeddings use text-embedding-3-small, which typically costs less than $1/month for normal development usage.
-
-## Troubleshooting
-
-### Semantic search not working
-
-Make sure `OPENAI_API_KEY` is set in `~/.mira/.env`. Without it, search falls back to keyword and fuzzy matching.
-
-### MCP connection issues
-
-1. Check the binary path in `.mcp.json` is absolute
-2. Run `mira serve` directly and confirm it starts without errors
-3. Check Claude Code logs for MCP errors
-
-### Memory not persisting
-
-Project context is auto-initialized from Claude Code's working directory. Use the project tool with `action="get"` to verify Mira is running and that the working directory matches your project root.
-
-### CLI Commands
-
-```bash
-mira setup                # Interactive configuration wizard
-mira setup --check        # Validate current configuration
-mira index                # Index current project for semantic code search
-mira index --no-embed     # Index without embeddings (faster, keyword-only search)
-mira debug-session        # Debug project(action="start") output
-mira debug-carto          # Debug cartographer module detection
-mira config show          # Display current configuration
-mira config set <k> <v>   # Update a configuration value
-mira statusline           # Formatted status line for Claude Code's status bar (installed automatically)
-mira cleanup              # Data retention dry-run (sessions, analytics, behavior)
-mira cleanup --execute    # Actually delete accumulated data (add --yes to skip confirmation)
-```
+OpenAI embeddings use text-embedding-3-small (~$1/month for typical usage).
 
 ## Documentation
 
-- [Design Philosophy](docs/DESIGN.md) — Architecture decisions and tradeoffs
-- [Core Concepts](docs/CONCEPTS.md) — Memory, intelligence, sessions explained
-- [Configuration](docs/CONFIGURATION.md) — All options and hooks
-- [Database](docs/DATABASE.md) — Schema and storage details
-- [Testing](docs/TESTING.md) — Test infrastructure and patterns
-- [Tool Reference](docs/tools/) — Per-tool documentation (memory, code, goal, etc.)
-- [Module Reference](docs/modules/) — Internal module documentation
-- [Changelog](CHANGELOG.md) — Version history
+- [Installation](docs/INSTALLATION.md) -- All install methods, CLI reference, troubleshooting
+- [Design Philosophy](docs/DESIGN.md) -- Architecture decisions and tradeoffs
+- [Core Concepts](docs/CONCEPTS.md) -- Memory, intelligence, sessions explained
+- [Configuration](docs/CONFIGURATION.md) -- Environment variables, hooks, providers
+- [Database](docs/DATABASE.md) -- Schema and storage details
+- [Tool Reference](docs/tools/) -- Per-tool documentation
+- [Changelog](CHANGELOG.md) -- Version history
 
 ## Contributing
 
