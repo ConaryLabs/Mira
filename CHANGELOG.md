@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.1] - 2026-02-25
+
+### Removed
+- **Proactive system** -- Deleted entire proactive/ module (predictor, interventions, behavior, feedback, patterns, background mining). ~10,000 lines removed.
+- **Code health subsystems** -- Removed conventions, dependencies, patterns, scoring sub-modules. Only cargo check warnings and call graph unused function detection remain.
+- **Tech debt tracking** -- Removed tech_debt DB module and scoring.
+- **Permission hook** -- Removed PermissionRequest hook handler.
+- **Memory system** -- Removed memory_facts, vec_memory, entities DB, CLAUDE.local.md export.
+- **InjectionAnalytics** -- Removed meta-instrumentation tracking injection counts.
+- **Heuristic risk levels** -- Removed calculate_risk_level, SemanticChange detection, security/breaking keyword scanning from diff analysis. Only factual stats and call graph impact remain.
+- **Pattern mining chain** -- Removed change_patterns.rs, file_sequence/tool_chain/session_flow/query_pattern mining, compute_historical_risk pipeline.
+- **Keyword heuristic gating** -- Removed is_code_related() 50+ keyword function from context injection.
+- **Health trends** -- Removed HealthTrends session action and dead HealthTrendsData/HealthSnapshotItem types.
+- **Dead types** -- Removed ChatMessage, ChatSummary, PRIORITY_MEMORY, trend/change_summary fields from UnifiedInsight/InsightItem.
+
+### Changed
+- **Pondering confidence scores** -- Flattened from dynamic heuristic values to fixed constants. The factual DB signals (stale goals, fragile modules, revert clusters, recurring errors) speak for themselves.
+- **Context injection gating** -- Replaced is_code_related() keyword heuristic with simple is_simple_command() check.
+- **IPC module rename** -- Renamed memory_ops.rs to state_ops.rs to reflect actual contents (behavior logging, observations, compaction context).
+
+### Documentation
+- Updated all docs to reflect slimmed-down codebase: CLAUDE.md, README.md, CLAUDE.local.md, hooks.json, and 10 module docs. Deleted 3 stale doc files for removed modules.
+
+---
+
 ## [0.9.0] - 2026-02-25
 
 ### Changed
