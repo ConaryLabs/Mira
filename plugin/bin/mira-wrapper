@@ -11,7 +11,7 @@ if [ -z "${HOME:-}" ]; then
     exit 1
 fi
 
-MIRA_VERSION="0.9.0"
+MIRA_VERSION="0.9.1"
 # Allow version pinning via environment variable
 if [ -n "${MIRA_VERSION_PIN:-}" ]; then
     MIRA_VERSION="$MIRA_VERSION_PIN"
