@@ -73,19 +73,6 @@ pub(super) async fn get_error_patterns<C: ToolContext>(
     }))
 }
 
-/// Health trends have been removed (health snapshots table dropped).
-/// Returns a message explaining the removal.
-pub(super) async fn get_health_trends<C: ToolContext>(
-    _ctx: &C,
-    _limit: Option<i64>,
-) -> Result<Json<SessionOutput>, MiraError> {
-    Ok(Json(SessionOutput {
-        action: "health_trends".into(),
-        message: "Health trends have been removed. Health snapshots were based on heuristic scoring that has been replaced by concrete signals (cargo check warnings and unused function detection via call graph).".to_string(),
-        data: None,
-    }))
-}
-
 /// Query session lineage (resume chains) for the active project.
 pub(super) async fn get_session_lineage<C: ToolContext>(
     ctx: &C,

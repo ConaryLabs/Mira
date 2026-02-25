@@ -15,8 +15,13 @@ pub(crate) struct ToolUsageEntry {
 pub(crate) struct PonderingInsight {
     pub pattern_type: String,
     pub description: String,
+    #[serde(default = "default_confidence")]
     pub confidence: f64,
     pub evidence: Vec<String>,
+}
+
+fn default_confidence() -> f64 {
+    0.7
 }
 
 /// Container for all project-aware insight data.

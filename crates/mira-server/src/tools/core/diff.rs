@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use crate::background::diff_analysis::{
-    DiffAnalysisResult, RiskAssessment, analyze_diff, build_impact_graph, format_diff_analysis,
-    map_to_symbols,
+    DiffAnalysisResult, analyze_diff, analyze_diff_heuristic, build_impact_graph,
+    format_diff_analysis, map_to_symbols,
 };
 use crate::db::get_recent_diff_analyses_sync;
 use crate::error::MiraError;
@@ -20,7 +20,7 @@ use crate::utils::truncate;
 
 /// Analyze git diff semantically
 ///
-/// Identifies change types, calculates impact, and assesses risk.
+/// Provides factual stats and impact graph data for changed commits.
 pub async fn analyze_diff_tool<C: ToolContext>(
     ctx: &C,
     from_ref: Option<String>,
@@ -123,8 +123,6 @@ pub async fn analyze_diff_tool<C: ToolContext>(
             lines_added: result.lines_added,
             lines_removed: result.lines_removed,
             summary: Some(result.summary.clone()),
-            risk_level: Some(result.risk.overall.clone()),
-            historical_risk: None,
         })),
     }))
 }
@@ -139,8 +137,6 @@ async fn analyze_staged_or_working<C: ToolContext>(
     diff_content: &str,
     include_impact: bool,
 ) -> Result<Json<DiffOutput>, MiraError> {
-    use crate::background::diff_analysis::{analyze_diff_heuristic, calculate_risk_level};
-
     // Get stats
     let stats = if analysis_type == "staged" {
         parse_staged_stats(path)?
@@ -156,30 +152,16 @@ async fn analyze_staged_or_working<C: ToolContext>(
         }));
     }
 
-    // Heuristic analysis
-    let (changes, summary, risk_flags) = analyze_diff_heuristic(diff_content, &stats);
+    // Heuristic summary
+    let summary = analyze_diff_heuristic(diff_content, &stats);
 
     // Build impact if requested
-    let impact = if include_impact && !changes.is_empty() {
+    let impact = if include_impact {
         let pool = ctx.pool().clone();
         let files = stats.files.clone();
-        let changes_clone = changes.clone();
         pool.run(move |conn| {
             let symbols = map_to_symbols(conn, project_id, &files);
-            let result = if symbols.is_empty() {
-                let pseudo_symbols: Vec<(String, String, String)> = changes_clone
-                    .iter()
-                    .filter_map(|c| {
-                        c.symbol_name
-                            .as_ref()
-                            .map(|name| (name.clone(), "function".to_string(), c.file_path.clone()))
-                    })
-                    .collect();
-                build_impact_graph(conn, project_id, &pseudo_symbols, 2)
-            } else {
-                build_impact_graph(conn, project_id, &symbols, 2)
-            };
-            Ok::<_, MiraError>(result)
+            Ok::<_, MiraError>(build_impact_graph(conn, project_id, &symbols, 2))
         })
         .await
         .map_err(|e| {
@@ -189,12 +171,6 @@ async fn analyze_staged_or_working<C: ToolContext>(
         .ok()
     } else {
         None
-    };
-
-    // Calculate risk
-    let risk = RiskAssessment {
-        overall: calculate_risk_level(&risk_flags, &changes),
-        flags: risk_flags,
     };
 
     let result = DiffAnalysisResult {
@@ -208,9 +184,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
         } else {
             "working".to_string()
         },
-        changes,
         impact,
-        risk,
         summary,
         files: stats.files.clone(),
         files_changed: stats.files_changed,
@@ -229,8 +203,6 @@ async fn analyze_staged_or_working<C: ToolContext>(
             lines_added: result.lines_added,
             lines_removed: result.lines_removed,
             summary: Some(result.summary.clone()),
-            risk_level: Some(result.risk.overall.clone()),
-            historical_risk: None,
         })),
     }))
 }

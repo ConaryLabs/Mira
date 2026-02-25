@@ -244,8 +244,6 @@ pub enum SessionAction {
     Cleanup,
     /// Show learned error patterns and fixes
     ErrorPatterns,
-    /// Show health snapshot trends over time (CLI-only)
-    HealthTrends,
     /// Show session history with resume chains (CLI-only)
     SessionLineage,
     /// Show capability status: what features are available vs degraded (CLI-only)
@@ -255,7 +253,7 @@ pub enum SessionAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), health_trends (show health snapshot trends over time), session_lineage (show session history with resume chains)"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), session_lineage (show session history with resume chains)"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]

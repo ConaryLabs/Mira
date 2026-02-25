@@ -8,7 +8,6 @@ use crate::fuzzy::FuzzyCache;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-mod analytics;
 mod budget;
 mod cache;
 mod config;
@@ -18,7 +17,6 @@ mod goal_aware;
 mod semantic;
 mod working_context;
 
-pub use analytics::{InjectionAnalytics, InjectionEvent};
 pub use budget::{
     BudgetEntry, BudgetManager, BudgetResult, PRIORITY_CONVENTION,
     PRIORITY_FILE_AWARE, PRIORITY_GOALS, PRIORITY_REACTIVE,
@@ -111,13 +109,9 @@ impl InjectionSource {
 pub fn is_simple_command(message: &str) -> bool {
     let trimmed = message.trim();
 
-    // Very short messages (1 word) that aren't code-related
+    // Very short messages (1-2 words) rarely need context injection
     let word_count = trimmed.split_whitespace().count();
-    if word_count <= 1 {
-        return true;
-    }
-    // 2-word messages: skip only if not code-related
-    if word_count == 2 && !is_code_related(trimmed) {
+    if word_count <= 2 {
         return true;
     }
 
@@ -171,103 +165,6 @@ pub fn is_simple_command(message: &str) -> bool {
     false
 }
 
-/// Check if message is code-related (contains programming keywords or file mentions)
-fn is_code_related(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    let code_keywords = [
-        // Code structure
-        "function",
-        "struct",
-        "class",
-        "module",
-        "import",
-        "export",
-        "variable",
-        "constant",
-        "type",
-        "interface",
-        "trait",
-        "impl",
-        "def",
-        "fn",
-        "method",
-        "property",
-        "attribute",
-        "enum",
-        "const",
-        "let",
-        "var",
-        "field",
-        "member",
-        // Questions
-        "where is",
-        "how does",
-        "show me",
-        "what is",
-        "explain",
-        "find",
-        "search",
-        "look for",
-        "locate",
-        "where are",
-        "how to",
-        "help with",
-        // Implementation
-        "implement",
-        "refactor",
-        "fix",
-        "bug",
-        "error",
-        "issue",
-        "problem",
-        "debug",
-        "test",
-        "optimize",
-        "performance",
-        "memory",
-        "concurrent",
-        "async",
-        "thread",
-        "parallel",
-        // Codebase concepts
-        "api",
-        "endpoint",
-        "route",
-        "handler",
-        "controller",
-        "service",
-        "repository",
-        "dao",
-        "middleware",
-        "auth",
-        "authentication",
-        "authorization",
-        "database",
-        "db",
-        "query",
-        "schema",
-        "migration",
-        "config",
-        "configuration",
-        "setting",
-        "environment",
-    ];
-
-    let has_code_keyword = code_keywords.iter().any(|&kw| lower.contains(kw));
-
-    let has_file_mention = lower.contains(".rs")
-        || lower.contains(".toml")
-        || lower.contains(".json")
-        || lower.contains(".md")
-        || lower.contains(".txt")
-        || lower.contains(".py")
-        || lower.contains(".js")
-        || lower.contains(".ts")
-        || (lower.contains('/') && (lower.contains("src/") || lower.contains("crates/")));
-
-    has_code_keyword || has_file_mention
-}
-
 /// Main context injection manager
 pub struct ContextInjectionManager {
     pool: Arc<DatabasePool>,
@@ -277,7 +174,6 @@ pub struct ContextInjectionManager {
     convention_injector: ConventionInjector,
     budget_manager: BudgetManager,
     cache: InjectionCache,
-    analytics: InjectionAnalytics,
     config: InjectionConfig,
 }
 
@@ -299,7 +195,6 @@ impl ContextInjectionManager {
             convention_injector: ConventionInjector::new(pool.clone()),
             budget_manager: BudgetManager::with_limit(config.max_chars),
             cache: InjectionCache::new(),
-            analytics: InjectionAnalytics::new(pool.clone()),
             config,
         }
     }
@@ -376,11 +271,6 @@ impl ContextInjectionManager {
             if hash >= threshold {
                 return InjectionResult::skipped("sampled_out");
             }
-        }
-
-        // Check if message is code-related
-        if !is_code_related(user_message) {
-            return InjectionResult::skipped("not_code_related");
         }
 
         // Check cache first
@@ -476,30 +366,12 @@ impl ContextInjectionManager {
         // Cache the result
         self.cache.put(user_message, final_context.clone()).await;
 
-        // Record analytics
-        if !final_context.is_empty() {
-            self.analytics
-                .record(InjectionEvent {
-                    session_id: session_id.to_string(),
-                    project_id,
-                    sources: sources.clone(),
-                    context_len: final_context.len(),
-                    message_preview: user_message.chars().take(50).collect(),
-                })
-                .await;
-        }
-
         InjectionResult {
             context: final_context,
             sources,
             skip_reason: None,
             from_cache: false,
         }
-    }
-
-    /// Get injection analytics summary
-    pub async fn get_analytics_summary(&self, project_id: Option<i64>) -> String {
-        self.analytics.summary(project_id).await
     }
 
 }

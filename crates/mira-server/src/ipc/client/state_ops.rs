@@ -1,4 +1,4 @@
-// crates/mira-server/src/ipc/client/memory_ops.rs
+// crates/mira-server/src/ipc/client/state_ops.rs
 //! HookClient methods for behavior logging, observations, and compaction context.
 
 use super::Backend;

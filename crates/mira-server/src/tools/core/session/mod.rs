@@ -80,7 +80,6 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::StorageStatus => storage::storage_status(ctx).await,
         SessionAction::Cleanup => storage::cleanup(ctx, req.dry_run, req.category).await,
         SessionAction::ErrorPatterns => analytics::get_error_patterns(ctx, req.limit).await,
-        SessionAction::HealthTrends => analytics::get_health_trends(ctx, req.limit).await,
         SessionAction::SessionLineage => analytics::get_session_lineage(ctx, req.limit).await,
         SessionAction::Capabilities => analytics::get_capabilities(ctx).await,
     }
@@ -575,21 +574,6 @@ mod tests {
     }
 
     // ========================================================================
-    // HealthTrends (stub — returns "removed" message)
-    // ========================================================================
-
-    #[tokio::test]
-    async fn test_health_trends_returns_removed_message() {
-        let ctx = MockToolContext::with_project().await;
-        let result = handle_session(&ctx, make_request(SessionAction::HealthTrends))
-            .await
-            .unwrap();
-        assert_eq!(result.0.action, "health_trends");
-        assert!(result.0.message.contains("removed"));
-        assert!(result.0.data.is_none());
-    }
-
-    // ========================================================================
     // SessionLineage
     // ========================================================================
 
@@ -796,7 +780,6 @@ mod tests {
             SessionAction::GetHistory,
             SessionAction::Recap,
             SessionAction::ErrorPatterns,
-            SessionAction::HealthTrends,
             SessionAction::SessionLineage,
             SessionAction::Capabilities,
             SessionAction::StorageStatus,

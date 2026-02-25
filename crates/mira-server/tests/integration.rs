@@ -997,43 +997,6 @@ async fn test_context_injection_file_extraction() {
     assert!(paths.contains(&"package.json".to_string()));
 }
 
-#[tokio::test]
-async fn test_context_injection_analytics() {
-    use mira::context::{InjectionAnalytics, InjectionEvent, InjectionSource};
-
-    let ctx = TestContext::new().await;
-    let analytics = InjectionAnalytics::new(ctx.pool().clone());
-
-    // Record some events
-    analytics
-        .record(InjectionEvent {
-            session_id: "test-1".to_string(),
-            project_id: Some(1),
-            sources: vec![InjectionSource::Semantic],
-            context_len: 100,
-            message_preview: "test message 1".to_string(),
-        })
-        .await;
-
-    analytics
-        .record(InjectionEvent {
-            session_id: "test-2".to_string(),
-            project_id: Some(1),
-            sources: vec![InjectionSource::Semantic, InjectionSource::TaskAware],
-            context_len: 200,
-            message_preview: "test message 2".to_string(),
-        })
-        .await;
-
-    // Check summary
-    let summary = analytics.summary(None).await;
-    assert!(summary.contains("2 injections"), "Summary: {}", summary);
-    assert!(summary.contains("300 chars"), "Summary: {}", summary);
-
-    // Check recent events
-    let recent = analytics.recent_events(5).await;
-    assert_eq!(recent.len(), 2);
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Documentation System Integration Tests

@@ -15,11 +15,6 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
     // 1. Stale goals — goals stuck in_progress for >14 days
     for goal in data.stale_goals.iter().take(MAX_PER_CATEGORY) {
         if goal.days_since_update > 14 {
-            let confidence = if goal.days_since_update > 21 {
-                0.8
-            } else {
-                0.65
-            };
             insights.push(PonderingInsight {
                 pattern_type: "insight_stale_goal".to_string(),
                 description: format!(
@@ -30,7 +25,7 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
                     goal.milestones_completed,
                     goal.milestones_total,
                 ),
-                confidence,
+                confidence: 0.8,
                 evidence: vec![
                     format!("goal_id: {}", goal.goal_id),
                     format!("progress: {}%", goal.progress_percent),
@@ -42,7 +37,6 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
     // 2. Fragile modules — high revert/fix rate (minimum 10 changes to avoid small-sample noise)
     for module in data.fragile_modules.iter().take(MAX_PER_CATEGORY) {
         if module.total_changes >= 10 && module.bad_rate > 0.3 {
-            let confidence = (module.bad_rate * 1.1).min(0.9);
             insights.push(PonderingInsight {
                 pattern_type: "insight_fragile_code".to_string(),
                 description: format!(
@@ -53,7 +47,7 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
                     module.follow_up_fixes,
                     module.total_changes,
                 ),
-                confidence,
+                confidence: 0.7,
                 evidence: vec![
                     format!("reverted: {}", module.reverted),
                     format!("follow_up_fixes: {}", module.follow_up_fixes),
@@ -66,18 +60,13 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
     // 3. Revert clusters — multiple reverts in short timespan
     for cluster in data.revert_clusters.iter().take(MAX_PER_CATEGORY) {
         if cluster.revert_count >= 2 {
-            let confidence = if cluster.revert_count >= 3 {
-                0.85
-            } else {
-                0.70
-            };
             insights.push(PonderingInsight {
                 pattern_type: "insight_revert_cluster".to_string(),
                 description: format!(
                     "Module '{}' had {} reverts in {}h \u{2014} area may be unstable",
                     cluster.module, cluster.revert_count, cluster.timespan_hours,
                 ),
-                confidence,
+                confidence: 0.75,
                 evidence: cluster.commits.clone(),
             });
         }
@@ -93,20 +82,13 @@ pub(super) fn generate_insights_heuristic(data: &ProjectInsightData) -> Vec<Pond
         if is_benign_error(&error.tool_name, &error.error_template) {
             continue;
         }
-        let confidence = if error.occurrence_count >= 10 {
-            0.9
-        } else if error.occurrence_count >= 5 {
-            0.75
-        } else {
-            0.6
-        };
         insights.push(PonderingInsight {
             pattern_type: "insight_recurring_error".to_string(),
             description: format!(
                 "Error in '{}' has occurred {} times without resolution: {}",
                 error.tool_name, error.occurrence_count, error.error_template,
             ),
-            confidence,
+            confidence: 0.7,
             evidence: vec![
                 format!("occurrences: {}", error.occurrence_count),
                 format!("tool: {}", error.tool_name),
@@ -161,7 +143,6 @@ mod tests {
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights.len(), 1);
         assert_eq!(insights[0].pattern_type, "insight_stale_goal");
-        assert_eq!(insights[0].confidence, 0.8);
         assert!(insights[0].description.contains("deadpool migration"));
         assert!(insights[0].description.contains("23 days"));
     }
@@ -182,7 +163,7 @@ mod tests {
         };
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights.len(), 1);
-        assert_eq!(insights[0].confidence, 0.65);
+        assert_eq!(insights[0].pattern_type, "insight_stale_goal");
     }
 
     #[test]
@@ -200,7 +181,6 @@ mod tests {
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights.len(), 1);
         assert_eq!(insights[0].pattern_type, "insight_fragile_code");
-        assert!((insights[0].confidence - 0.44).abs() < 0.01);
         assert!(insights[0].description.contains("src/db"));
     }
 
@@ -234,7 +214,7 @@ mod tests {
             ..Default::default()
         };
         let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights[0].confidence, 0.9); // capped at 0.9
+        assert_eq!(insights[0].pattern_type, "insight_fragile_code");
     }
 
     #[test]
@@ -251,7 +231,6 @@ mod tests {
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights.len(), 1);
         assert_eq!(insights[0].pattern_type, "insight_revert_cluster");
-        assert_eq!(insights[0].confidence, 0.85);
     }
 
     #[test]
@@ -266,7 +245,8 @@ mod tests {
             ..Default::default()
         };
         let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights[0].confidence, 0.70);
+        assert_eq!(insights.len(), 1);
+        assert_eq!(insights[0].pattern_type, "insight_revert_cluster");
     }
 
     #[test]
@@ -284,7 +264,6 @@ mod tests {
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights.len(), 1);
         assert_eq!(insights[0].pattern_type, "insight_recurring_error");
-        assert_eq!(insights[0].confidence, 0.9);
         assert!(insights[0].description.contains("code_search"));
         assert!(insights[0].description.contains("12 times"));
     }
@@ -302,7 +281,7 @@ mod tests {
             ..Default::default()
         };
         let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights[0].confidence, 0.75);
+        assert_eq!(insights[0].pattern_type, "insight_recurring_error");
     }
 
     #[test]
@@ -318,7 +297,7 @@ mod tests {
             ..Default::default()
         };
         let insights = generate_insights_heuristic(&data);
-        assert_eq!(insights[0].confidence, 0.6);
+        assert_eq!(insights[0].pattern_type, "insight_recurring_error");
     }
 
     #[test]

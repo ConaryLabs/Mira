@@ -1,5 +1,5 @@
 // background/diff_analysis/
-// Core logic for semantic diff analysis, split into focused sub-modules.
+// Core logic for diff analysis, split into focused sub-modules.
 
 mod format;
 mod heuristic;
@@ -14,11 +14,9 @@ pub use crate::git::{
     get_working_diff, parse_diff_stats, parse_numstat_output, parse_staged_stats,
     parse_working_stats, resolve_ref,
 };
-pub use heuristic::{analyze_diff_heuristic, calculate_risk_level};
+pub use heuristic::analyze_diff_heuristic;
 pub use impact::{build_impact_graph, map_to_symbols};
-pub use types::{
-    DiffAnalysisResult, DiffStats, ImpactAnalysis, RiskAssessment, SemanticChange,
-};
+pub use types::{DiffAnalysisResult, DiffStats, ImpactAnalysis};
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
@@ -53,17 +51,9 @@ fn result_from_cache(cached: DiffAnalysis, from_ref: String, to_ref: String) -> 
     DiffAnalysisResult {
         from_ref,
         to_ref,
-        changes: serde_json::from_str(&cached.changes_json.unwrap_or_default()).unwrap_or_default(),
         impact: cached
             .impact_json
             .and_then(|j| serde_json::from_str(&j).ok()),
-        risk: cached
-            .risk_json
-            .and_then(|j| serde_json::from_str(&j).ok())
-            .unwrap_or(RiskAssessment {
-                overall: "Unknown".to_string(),
-                flags: vec![],
-            }),
         summary: cached.summary.unwrap_or_default(),
         files_changed: cached.files_changed.unwrap_or(0),
         lines_added: cached.lines_added.unwrap_or(0),
@@ -79,13 +69,6 @@ async fn cache_result(
     result: &DiffAnalysisResult,
     analysis_type: &str,
 ) {
-    let changes_json = match serde_json::to_string(&result.changes) {
-        Ok(json) => Some(json),
-        Err(e) => {
-            tracing::warn!("Failed to serialize diff changes: {e}");
-            None
-        }
-    };
     let impact_json = result
         .impact
         .as_ref()
@@ -96,13 +79,6 @@ async fn cache_result(
                 None
             }
         });
-    let risk_json = match serde_json::to_string(&result.risk) {
-        Ok(json) => Some(json),
-        Err(e) => {
-            tracing::warn!("Failed to serialize diff risk: {e}");
-            None
-        }
-    };
     let from = result.from_ref.clone();
     let to = result.to_ref.clone();
     let summary = result.summary.clone();
@@ -132,9 +108,9 @@ async fn cache_result(
                 from_commit: &from,
                 to_commit: &to,
                 analysis_type: &analysis_type,
-                changes_json: changes_json.as_deref(),
+                changes_json: None,
                 impact_json: impact_json.as_deref(),
-                risk_json: risk_json.as_deref(),
+                risk_json: None,
                 summary: Some(&summary),
                 files_changed: Some(files_changed),
                 lines_added: Some(lines_added),
@@ -186,12 +162,7 @@ pub async fn analyze_diff(
         return Ok(DiffAnalysisResult {
             from_ref: from_commit,
             to_ref: to_commit,
-            changes: vec![],
             impact: None,
-            risk: RiskAssessment {
-                overall: "Low".to_string(),
-                flags: vec![],
-            },
             summary: "No changes between the specified commits.".to_string(),
             files: vec![],
             files_changed: 0,
@@ -200,30 +171,17 @@ pub async fn analyze_diff(
         });
     }
 
-    // Heuristic analysis
-    let (changes, summary, risk_flags) = analyze_diff_heuristic(&diff_content, &stats);
+    // Heuristic summary
+    let summary = analyze_diff_heuristic(&diff_content, &stats);
     let analysis_type = "heuristic";
 
     // Build impact analysis if requested (DB-based, works without LLM)
-    let impact = if include_impact && !changes.is_empty() {
+    let impact = if include_impact {
         let files = stats.files.clone();
-        let changes_clone = changes.clone();
         let impact_result = pool
             .run(move |conn| -> Result<ImpactAnalysis, String> {
                 let symbols = map_to_symbols(conn, project_id, &files);
-                if symbols.is_empty() {
-                    let pseudo_symbols: Vec<(String, String, String)> = changes_clone
-                        .iter()
-                        .filter_map(|c| {
-                            c.symbol_name.as_ref().map(|name| {
-                                (name.clone(), "function".to_string(), c.file_path.clone())
-                            })
-                        })
-                        .collect();
-                    Ok(build_impact_graph(conn, project_id, &pseudo_symbols, 2))
-                } else {
-                    Ok(build_impact_graph(conn, project_id, &symbols, 2))
-                }
+                Ok(build_impact_graph(conn, project_id, &symbols, 2))
             })
             .await?;
         Some(impact_result)
@@ -231,17 +189,10 @@ pub async fn analyze_diff(
         None
     };
 
-    let risk = RiskAssessment {
-        overall: calculate_risk_level(&risk_flags, &changes),
-        flags: risk_flags,
-    };
-
     let result = DiffAnalysisResult {
         from_ref: from_commit,
         to_ref: to_commit,
-        changes,
         impact,
-        risk,
         summary,
         files: stats.files.clone(),
         files_changed: stats.files_changed,
@@ -270,9 +221,9 @@ mod tests {
             from_commit: "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000".to_string(),
             to_commit: "bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111".to_string(),
             analysis_type: "heuristic".to_string(),
-            changes_json: Some(r#"[{"change_type":"NewFunction","file_path":"src/lib.rs","symbol_name":"foo","description":"Added fn","breaking":false,"security_relevant":false}]"#.to_string()),
+            changes_json: None,
             impact_json: None,
-            risk_json: Some(r#"{"overall":"Low","flags":[]}"#.to_string()),
+            risk_json: None,
             summary: Some("1 file changed (+5 -0)".to_string()),
             files_changed: Some(1),
             lines_added: Some(5),
@@ -298,12 +249,8 @@ mod tests {
         assert_eq!(result.files_changed, 1);
         assert_eq!(result.lines_added, 5);
         assert_eq!(result.lines_removed, 0);
-        assert_eq!(result.risk.overall, "Low");
-        assert!(result.risk.flags.is_empty());
+        assert!(result.impact.is_none());
         assert_eq!(result.files, vec!["src/lib.rs"]);
-        assert_eq!(result.changes.len(), 1);
-        assert_eq!(result.changes[0].change_type, "NewFunction");
-        assert_eq!(result.changes[0].symbol_name.as_deref(), Some("foo"));
     }
 
     #[test]
@@ -328,9 +275,7 @@ mod tests {
 
         let result = result_from_cache(cached, "from".to_string(), "to".to_string());
 
-        assert!(result.changes.is_empty(), "null changes_json -> empty vec");
         assert!(result.impact.is_none(), "null impact_json -> None");
-        assert_eq!(result.risk.overall, "Unknown", "null risk_json -> Unknown");
         assert!(result.summary.is_empty(), "null summary -> empty string");
         assert_eq!(result.files_changed, 0);
         assert_eq!(result.lines_added, 0);
@@ -367,9 +312,9 @@ mod tests {
                     from_commit: "from_sha",
                     to_commit: "to_sha",
                     analysis_type: "heuristic",
-                    changes_json: Some(r#"[]"#),
+                    changes_json: None,
                     impact_json: None,
-                    risk_json: Some(r#"{"overall":"Low","flags":[]}"#),
+                    risk_json: None,
                     summary: Some("cached summary"),
                     files_changed: Some(2),
                     lines_added: Some(10),
@@ -439,12 +384,7 @@ mod tests {
         let result = DiffAnalysisResult {
             from_ref: "commit_a".to_string(),
             to_ref: "commit_b".to_string(),
-            changes: vec![],
             impact: None,
-            risk: RiskAssessment {
-                overall: "Low".to_string(),
-                flags: vec![],
-            },
             summary: "round-trip test".to_string(),
             files: vec!["src/main.rs".to_string()],
             files_changed: 1,

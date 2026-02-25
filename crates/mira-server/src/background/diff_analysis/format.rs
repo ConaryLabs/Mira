@@ -1,15 +1,14 @@
 // background/diff_analysis/format.rs
 // Formatting functions for diff analysis output
 
-use super::types::{DiffAnalysisResult, ImpactAnalysis, SemanticChange};
-use std::collections::HashSet;
+use super::types::{DiffAnalysisResult, ImpactAnalysis};
 
 /// Format diff analysis result for display
 pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
     let mut output = String::new();
 
     output.push_str(&format!(
-        "## Semantic Diff Analysis: {}..{}\n\n",
+        "## Diff Analysis: {}..{}\n\n",
         result.from_ref, result.to_ref
     ));
 
@@ -24,82 +23,9 @@ pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
         result.files_changed, result.lines_added, result.lines_removed
     ));
 
-    // Changes
-    if !result.changes.is_empty() {
-        output.push_str(&format_changes_section(&result.changes));
-    }
-
     // Impact
     if let Some(ref impact) = result.impact {
         output.push_str(&format_impact_section(impact));
-    }
-
-    // Risk
-    output.push_str(&format!("### Risk: {}\n", result.risk.overall));
-    for flag in &result.risk.flags {
-        output.push_str(&format!("- {}\n", flag));
-    }
-
-    output
-}
-
-/// Format grouped changes section
-fn format_changes_section(changes: &[SemanticChange]) -> String {
-    let mut output = format!("### Changes ({})\n", changes.len());
-
-    let groups: &[(&str, &[&str])] = &[
-        ("New Features", &["NewFunction", "NewFeature"]),
-        (
-            "Modifications",
-            &["ModifiedFunction", "SignatureChange", "Refactoring"],
-        ),
-        ("Deletions", &["DeletedFunction"]),
-    ];
-
-    let mut classified: HashSet<(&str, &str, &str)> = HashSet::new();
-
-    for (title, types) in groups {
-        let matching: Vec<_> = changes
-            .iter()
-            .filter(|c| types.contains(&c.change_type.as_str()))
-            .collect();
-
-        if !matching.is_empty() {
-            output.push_str(&format!("**{}**\n", title));
-            for c in &matching {
-                let markers = format_change_markers(c);
-                output.push_str(&format!(
-                    "- {}: {}{}\n",
-                    c.file_path, c.description, markers
-                ));
-                classified.insert((&c.file_path, &c.description, &c.change_type));
-            }
-            output.push('\n');
-        }
-    }
-
-    // Other (unclassified)
-    let other: Vec<_> = changes
-        .iter()
-        .filter(|c| {
-            !classified.contains(&(
-                c.file_path.as_str(),
-                c.description.as_str(),
-                c.change_type.as_str(),
-            ))
-        })
-        .collect();
-
-    if !other.is_empty() {
-        output.push_str("**Other Changes**\n");
-        for c in other {
-            let markers = format_change_markers(c);
-            output.push_str(&format!(
-                "- {}: {}{}\n",
-                c.file_path, c.description, markers
-            ));
-        }
-        output.push('\n');
     }
 
     output
@@ -128,15 +54,4 @@ fn format_impact_section(impact: &ImpactAnalysis) -> String {
         transitive,
         impact.affected_files.len()
     )
-}
-
-pub(super) fn format_change_markers(change: &SemanticChange) -> String {
-    let mut markers = String::new();
-    if change.breaking {
-        markers.push_str(" [BREAKING]");
-    }
-    if change.security_relevant {
-        markers.push_str(" [SECURITY]");
-    }
-    markers
 }

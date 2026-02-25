@@ -20,9 +20,4 @@ pub struct DiffAnalysisData {
     pub lines_removed: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub risk_level: Option<String>,
-    /// Always None — historical risk pipeline has been removed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub historical_risk: Option<serde_json::Value>,
 }
