@@ -398,7 +398,7 @@ pub async fn hybrid_search(
 
     // Debug intent benefits from more context -- increase limit by 50%
     let effective_limit = if intent == QueryIntent::Debug {
-        (limit * 3 + 1) / 2 // ceil(limit * 1.5)
+        (limit * 3).div_ceil(2) // ceil(limit * 1.5)
     } else {
         limit
     };
@@ -728,10 +728,7 @@ mod tests {
 
     #[test]
     fn test_detect_intent_debug() {
-        assert_eq!(
-            detect_query_intent("fix the login bug"),
-            QueryIntent::Debug
-        );
+        assert_eq!(detect_query_intent("fix the login bug"), QueryIntent::Debug);
         assert_eq!(
             detect_query_intent("error handling in search"),
             QueryIntent::Debug
@@ -744,14 +741,8 @@ mod tests {
             detect_query_intent("debug the connection issue"),
             QueryIntent::Debug
         );
-        assert_eq!(
-            detect_query_intent("crash in indexer"),
-            QueryIntent::Debug
-        );
-        assert_eq!(
-            detect_query_intent("troubleshoot auth"),
-            QueryIntent::Debug
-        );
+        assert_eq!(detect_query_intent("crash in indexer"), QueryIntent::Debug);
+        assert_eq!(detect_query_intent("troubleshoot auth"), QueryIntent::Debug);
         assert_eq!(
             detect_query_intent("panic in database pool"),
             QueryIntent::Debug
@@ -1039,7 +1030,11 @@ mod tests {
         ];
 
         // With project_path pointing to temp dir, only recent.rs resolves
-        rerank_results_with_intent(&mut results, Some(dir.to_str().unwrap()), QueryIntent::Debug);
+        rerank_results_with_intent(
+            &mut results,
+            Some(dir.to_str().unwrap()),
+            QueryIntent::Debug,
+        );
 
         // The recent file should get the amplified 1.30 debug recency boost
         let recent_result = results.iter().find(|r| r.file_path == "recent.rs").unwrap();

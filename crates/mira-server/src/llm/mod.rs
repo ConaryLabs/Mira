@@ -4,7 +4,6 @@
 mod circuit_breaker;
 mod context_budget;
 mod deepseek;
-mod factory;
 mod http_client;
 pub mod logging;
 mod ollama;
@@ -21,7 +20,6 @@ pub use context_budget::{
     truncate_messages_to_default_budget,
 };
 pub use deepseek::DeepSeekClient;
-pub use factory::ProviderFactory;
 pub use http_client::LlmHttpClient;
 pub use ollama::OllamaClient;
 pub use pricing::{ModelPricing, chat_with_usage, get_pricing, record_llm_usage};

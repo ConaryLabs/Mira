@@ -20,9 +20,7 @@ const MIN_TOOL_CALLS: usize = 10;
 pub use storage::cleanup_stale_insights;
 
 /// Process pondering - analyze recent activity for patterns
-pub async fn process_pondering(
-    pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
+pub async fn process_pondering(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     // Get all projects with recent activity
     let projects = pool.run(|conn| get_active_projects_sync(conn, 24)).await?;
 
@@ -103,13 +101,15 @@ async fn should_ponder_project(pool: &Arc<DatabasePool>, project_id: i64) -> Res
         match last_pondering {
             Some(timestamp) => {
                 // Only ponder if >6 hours since last time
+                // On DB error, conservatively skip pondering rather than
+                // forcing it. A transient error should not trigger a run.
                 let should = conn
                     .query_row(
                         "SELECT datetime(?) < datetime('now', '-6 hours')",
                         params![timestamp],
                         |row| row.get::<_, bool>(0),
                     )
-                    .unwrap_or(true);
+                    .unwrap_or(false);
                 Ok(should)
             }
             None => Ok::<_, rusqlite::Error>(true), // Never pondered before

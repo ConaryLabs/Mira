@@ -317,11 +317,8 @@ pub async fn run_mcp_server() -> Result<()> {
 
     // Spawn background workers with separate pools
     let bg_embeddings = server.embeddings.clone();
-    let (_shutdown_tx, fast_lane_notify) = background::spawn_with_pools(
-        server.code_pool.clone(),
-        pool.clone(),
-        bg_embeddings,
-    );
+    let (_shutdown_tx, fast_lane_notify) =
+        background::spawn_with_pools(server.code_pool.clone(), pool.clone(), bg_embeddings);
     info!("Background worker started");
 
     // Spawn file watcher for incremental indexing (uses code_pool)

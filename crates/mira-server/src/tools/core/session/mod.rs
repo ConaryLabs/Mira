@@ -883,7 +883,6 @@ mod tests {
                 assert!(!data.capabilities.is_empty());
                 let names: Vec<&str> = data.capabilities.iter().map(|c| c.name.as_str()).collect();
                 assert!(names.contains(&"semantic_search"));
-                assert!(names.contains(&"background_llm"));
                 assert!(names.contains(&"fuzzy_search"));
                 assert!(names.contains(&"code_index"));
                 assert!(names.contains(&"mcp_sampling"));

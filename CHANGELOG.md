@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.13] - 2026-02-24
 
+### Changed
+- **Background tasks are heuristic-only** -- DeepSeek and Ollama are no longer used for background intelligence (module summaries, briefings, pondering, diff analysis). These features now use heuristic fallbacks permanently regardless of API keys configured. Only OpenAI embeddings continue to provide an upgrade path (semantic search).
+
 ### Added
 - **Token efficiency improvements** -- PreToolUse file-read cache with reread advisory for unchanged files, symbol hints for large files (>200 lines) from code index, batch-aware cooldown with injection summary replay, cross-prompt injection dedup via content hashing, post-compaction context recovery from session snapshots.
 - **Type-aware subagent budgets** -- Narrow agents (Explore, code-reviewer) get 800-char context cap vs 2000 for full agents. Goals skipped for narrow subagents.

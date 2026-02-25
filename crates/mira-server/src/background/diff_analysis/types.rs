@@ -79,4 +79,3 @@ pub struct MatchedPattern {
     /// Bad outcome rate from historical data
     pub bad_rate: f64,
 }
-

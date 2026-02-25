@@ -104,18 +104,19 @@ pub async fn process_health_fast_scans(
 
     let mut total = 0;
 
-    // 1. Cargo check warnings (spawns external cargo process)
+    // 1. Cargo check warnings.
+    // Use the async tokio::process::Command variant so the Child handle is held
+    // for the duration of the await. If the outer slow-lane timeout fires and
+    // drops this future, tokio will kill the cargo process automatically
+    // (kill_on_drop(true)), preventing orphaned cargo processes.
     let cargo_path = project_path.clone();
-    let cargo_findings = tokio::task::spawn_blocking(move || {
-        tracing::debug!("Code health: running cargo check for {}", cargo_path);
-        cargo::collect_cargo_warnings(&cargo_path)
-    })
-    .await
-    .map_err(|e| format!("cargo scan join error: {}", e))?
-    .unwrap_or_else(|e| {
-        tracing::warn!("Code health: cargo check failed: {}", e);
-        Vec::new()
-    });
+    tracing::debug!("Code health: running cargo check for {}", cargo_path);
+    let cargo_findings = cargo::collect_cargo_warnings_async(&cargo_path)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("Code health: cargo check failed: {}", e);
+            Vec::new()
+        });
 
     if !cargo_findings.is_empty() {
         tracing::info!("Code health: found {} cargo warnings", cargo_findings.len());
@@ -213,26 +214,6 @@ pub async fn process_health_fast_scans(
     );
 
     Ok(total)
-}
-
-/// LLM-based complexity analysis for large functions.
-/// Currently a no-op since LLM dependency has been removed.
-pub async fn process_health_llm_complexity(
-    _main_pool: &Arc<DatabasePool>,
-    _code_pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
-    // LLM-based analysis removed; fast scans handle complexity detection heuristically
-    Ok(0)
-}
-
-/// LLM-based error handling quality analysis.
-/// Currently a no-op since LLM dependency has been removed.
-pub async fn process_health_llm_error_quality(
-    _main_pool: &Arc<DatabasePool>,
-    _code_pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
-    // LLM-based analysis removed; fast scans handle error detection heuristically
-    Ok(0)
 }
 
 /// Module-level analysis: dependencies, patterns, tech debt scoring, and conventions.
@@ -638,6 +619,10 @@ async fn scan_unused_functions_sharded(
         })
         .await?;
 
+    // Return the number of findings stored (capped at MAX_UNUSED_FINDINGS),
+    // not unused.len(). The return value is "how many were stored", not
+    // "how many were found". Callers use this for progress totals, so the
+    // capped count is the correct value to report.
     Ok(count)
 }
 
@@ -754,7 +739,6 @@ fn clear_old_health_issues(conn: &rusqlite::Connection, project_id: i64) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::mark_llm_health_done_sync;
     use rusqlite::Connection;
 
     fn setup_main_db_with_project() -> (Connection, i64) {
@@ -993,66 +977,6 @@ mod tests {
         assert!(
             needs_health_scan(&conn, pid),
             "scan-needed flag must survive when stale marker was cleared and fast scans failed"
-        );
-    }
-
-    #[test]
-    fn test_llm_task_tracks_own_completion() {
-        // LLM tasks use their own timestamp keys, independent of the scan-needed flag.
-        let (conn, pid) = setup_main_db_with_project();
-
-        // First, mark a scan as done (sets health_scan_time)
-        mark_health_scanned(&conn, pid).unwrap();
-
-        // LLM task has never run — scan_time exists but llm_time doesn't
-        let scan_time = crate::db::get_observation_info_sync(&conn, pid, "health_scan_time");
-        let llm_time =
-            crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
-        assert!(scan_time.is_some(), "health_scan_time should exist");
-        assert!(llm_time.is_none(), "llm time should not exist yet");
-
-        // Mark LLM task as done
-        mark_llm_health_done_sync(&conn, pid, "health_llm_complexity_time").unwrap();
-        let llm_time =
-            crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time");
-        assert!(
-            llm_time.is_some(),
-            "llm time should exist after marking done"
-        );
-
-        // LLM time should be >= scan time (both set to "now")
-        let (_, st) = scan_time.unwrap();
-        let (_, lt) = llm_time.unwrap();
-        assert!(lt >= st, "llm time should be >= scan time");
-    }
-
-    #[test]
-    fn test_llm_task_reruns_after_new_scan() {
-        // After a new scan cycle, LLM tasks should detect that health_scan_time
-        // is newer than their own timestamp and re-run.
-        let (conn, pid) = setup_main_db_with_project();
-
-        // Cycle 1: LLM task ran — backdate it to simulate a past run
-        conn.execute(
-            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
-             VALUES (?, 'health_llm_complexity_time', 'scanned', 'system', 'health', 1.0, 'code_health', 'project', datetime('now', '-1 hour'), datetime('now', '-1 hour'))",
-            [pid],
-        )
-        .unwrap();
-
-        // Cycle 2: new file change triggers a new scan, module analysis finalizes
-        mark_health_scan_needed_sync(&conn, pid).unwrap();
-        mark_health_scanned(&conn, pid).unwrap();
-
-        // Now health_scan_time (just set) is newer than health_llm_complexity_time (1 hour ago)
-        let (_, st) = crate::db::get_observation_info_sync(&conn, pid, "health_scan_time").unwrap();
-        let (_, lt) =
-            crate::db::get_observation_info_sync(&conn, pid, "health_llm_complexity_time").unwrap();
-        assert!(
-            st > lt,
-            "scan time ({}) should be newer than llm time ({})",
-            st,
-            lt
         );
     }
 

@@ -185,54 +185,42 @@ pub async fn run() -> Result<()> {
     }
 
     // AST-level change detection for Write/Edit tools
-    if is_write_tool {
-        if let Some((_, project_path)) = client.resolve_project(None, sid).await {
-            if let Some(old_content) =
-                ast_diff::get_previous_content(&file_path, &project_path).await
-            {
-                // Read the current (new) file content
-                if let Ok(new_content) = tokio::fs::read_to_string(&file_path).await {
-                    if let Some(changes) = ast_diff::detect_structural_changes(
-                        std::path::Path::new(&file_path),
-                        &old_content,
-                        &new_content,
-                    ) {
-                        if !changes.is_empty() {
-                            let change_summary: Vec<String> = changes
-                                .iter()
-                                .take(5)
-                                .map(|c| {
-                                    format!(
-                                        "{}: {} `{}` at line {}",
-                                        c.change_kind, c.symbol_kind, c.symbol_name, c.line_number
-                                    )
-                                })
-                                .collect();
+    if is_write_tool
+        && let Some((_, project_path)) = client.resolve_project(None, sid).await
+        && let Some(old_content) = ast_diff::get_previous_content(&file_path, &project_path).await
+        && let Ok(new_content) = tokio::fs::read_to_string(&file_path).await
+        && let Some(changes) = ast_diff::detect_structural_changes(
+            std::path::Path::new(&file_path),
+            &old_content,
+            &new_content,
+        )
+        .filter(|c| !c.is_empty())
+    {
+        let change_summary: Vec<String> = changes
+            .iter()
+            .take(5)
+            .map(|c| {
+                format!(
+                    "{}: {} `{}` at line {}",
+                    c.change_kind, c.symbol_kind, c.symbol_name, c.line_number
+                )
+            })
+            .collect();
 
-                            let data = serde_json::json!({
-                                "behavior_type": "structural_change",
-                                "file_path": file_path,
-                                "changes": change_summary,
-                            });
-                            client
-                                .log_behavior(
-                                    &post_input.session_id,
-                                    project_id,
-                                    "ast_diff",
-                                    data,
-                                )
-                                .await;
+        let data = serde_json::json!({
+            "behavior_type": "structural_change",
+            "file_path": file_path,
+            "changes": change_summary,
+        });
+        client
+            .log_behavior(&post_input.session_id, project_id, "ast_diff", data)
+            .await;
 
-                            tracing::debug!(
-                                file = %file_path,
-                                count = changes.len(),
-                                "AST diff detected structural changes"
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        tracing::debug!(
+            file = %file_path,
+            count = changes.len(),
+            "AST diff detected structural changes"
+        );
     }
 
     // Build output

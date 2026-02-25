@@ -332,18 +332,27 @@ pub async fn session_start<C: ToolContext>(
 
             let last_indexed = last_indexed?;
 
+            // Validate last_indexed before interpolating into git argument.
+            // Only allow standard datetime characters to prevent argument injection.
+            if !is_safe_datetime_string(&last_indexed) {
+                tracing::warn!("Stale index check: skipping due to unexpected last_indexed format");
+                return None;
+            }
+
             // Check if git HEAD has changed since the last index
-            // by looking for commits after the indexed_at timestamp
-            let output = std::process::Command::new("git")
-                .args([
-                    "log",
-                    "--oneline",
-                    "-1",
-                    &format!("--after={}", last_indexed),
-                ])
-                .current_dir(&pp)
-                .output()
-                .ok()?;
+            // by looking for commits after the indexed_at timestamp.
+            // Use spawn_blocking since Command::output is a blocking call.
+            let after_arg = format!("--after={}", last_indexed);
+            let output = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("git")
+                    .args(["log", "--oneline", "-1", &after_arg])
+                    .current_dir(&pp)
+                    .output()
+                    .ok()
+            })
+            .await
+            .ok()
+            .flatten()?;
             if !output.status.success() {
                 return None;
             }
@@ -456,4 +465,134 @@ async fn run_first_session_onboarding<C: ToolContext>(
         project_id
     );
     stored > 0
+}
+
+/// Validate that a string contains only characters safe for use as a git
+/// `--after=<date>` argument. Prevents argument injection via a malformed
+/// indexed_at timestamp stored in the DB.
+///
+/// Allowed characters: ASCII alphanumeric, T, :, ., -, +, Z, space
+pub(crate) fn is_safe_datetime_string(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, 'T' | ':' | '.' | '-' | '+' | 'Z' | ' ')
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // is_safe_datetime_string: argument injection guard
+    // =========================================================================
+
+    #[test]
+    fn valid_iso8601_datetime_passes() {
+        assert!(is_safe_datetime_string("2026-01-15T10:30:00Z"));
+        assert!(is_safe_datetime_string("2026-01-15T10:30:00.123Z"));
+        assert!(is_safe_datetime_string("2026-01-15T10:30:00+05:30"));
+        assert!(is_safe_datetime_string("2026-01-15T10:30:00-08:00"));
+    }
+
+    #[test]
+    fn valid_sqlite_datetime_passes() {
+        // SQLite datetime() returns "YYYY-MM-DD HH:MM:SS"
+        assert!(is_safe_datetime_string("2026-01-15 10:30:00"));
+        assert!(is_safe_datetime_string("2026-02-24 08:00:00"));
+    }
+
+    #[test]
+    fn empty_string_fails() {
+        assert!(!is_safe_datetime_string(""));
+    }
+
+    #[test]
+    fn string_with_semicolon_fails() {
+        // Semicolon could be used to inject shell commands in some contexts
+        assert!(!is_safe_datetime_string("2026-01-15T10:30:00Z; rm -rf /"));
+    }
+
+    #[test]
+    fn string_with_shell_special_chars_fails() {
+        assert!(!is_safe_datetime_string("2026-01-15`whoami`"));
+        assert!(!is_safe_datetime_string("2026-01-15$(cmd)"));
+        assert!(!is_safe_datetime_string("2026-01-15\nnewline"));
+        assert!(!is_safe_datetime_string("2026-01-15|pipe"));
+        assert!(!is_safe_datetime_string("2026-01-15&amp"));
+    }
+
+    #[test]
+    fn string_with_quote_chars_fails() {
+        assert!(!is_safe_datetime_string("2026-01-15'quote"));
+        assert!(!is_safe_datetime_string("2026-01-15\"dquote"));
+    }
+
+    #[test]
+    fn string_with_slash_fails() {
+        // Slashes are not needed in datetime strings and could indicate a path
+        assert!(!is_safe_datetime_string("2026/01/15"));
+    }
+
+    // =========================================================================
+    // detect_project_type (re-exported from detection.rs)
+    // These tests run against the real Mira repo on disk.
+    // =========================================================================
+
+    #[test]
+    fn detects_rust_project_from_cargo_toml() {
+        // Mira itself is a Rust workspace
+        let project_root = env!("CARGO_MANIFEST_DIR")
+            .trim_end_matches("/crates/mira-server")
+            .to_string();
+        // Walk up until we find Cargo.toml at root
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // The workspace root is two levels up from crates/mira-server
+        let root = path.parent().and_then(|p| p.parent()).unwrap_or(path);
+        if root.join("Cargo.toml").exists() {
+            let project_type = super::super::detection::detect_project_type(
+                root.to_str().unwrap_or(&project_root),
+            );
+            assert_eq!(project_type, "rust");
+        }
+    }
+
+    #[test]
+    fn detects_unknown_for_empty_temp_dir() {
+        let dir = std::env::temp_dir().join("mira_test_no_project_files");
+        std::fs::create_dir_all(&dir).ok();
+        let project_type =
+            super::super::detection::detect_project_type(dir.to_str().unwrap_or("/tmp"));
+        assert_eq!(project_type, "unknown");
+    }
+
+    #[test]
+    fn detects_node_project() {
+        let dir = std::env::temp_dir().join("mira_test_node_project");
+        std::fs::create_dir_all(&dir).ok();
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"name":"test","version":"1.0.0"}"#,
+        )
+        .ok();
+        let project_type =
+            super::super::detection::detect_project_type(dir.to_str().unwrap_or("/tmp"));
+        assert_eq!(project_type, "node");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detects_python_project_pyproject_toml() {
+        let dir = std::env::temp_dir().join("mira_test_python_project");
+        std::fs::create_dir_all(&dir).ok();
+        std::fs::write(
+            dir.join("pyproject.toml"),
+            "[tool.poetry]\nname = \"test\"\n",
+        )
+        .ok();
+        let project_type =
+            super::super::detection::detect_project_type(dir.to_str().unwrap_or("/tmp"));
+        assert_eq!(project_type, "python");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

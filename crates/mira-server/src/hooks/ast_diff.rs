@@ -171,7 +171,14 @@ fn extract_from_node(
                 Some(p) => format!("{}::{}", p, name),
                 None => name.clone(),
             };
-            push_diff_symbol(node, content, symbols, &qualified, normalize_kind(kind), parent_name);
+            push_diff_symbol(
+                node,
+                content,
+                symbols,
+                &qualified,
+                normalize_kind(kind),
+                parent_name,
+            );
         }
     }
 }
@@ -251,11 +258,7 @@ fn extract_signature(node: tree_sitter::Node, _content: &str, full_text: &str) -
 /// signature. That is fine because signature changes are detected separately
 /// before body hash comparison.
 #[cfg(feature = "parsers")]
-fn _extract_body_text<'a>(
-    node: tree_sitter::Node,
-    _content: &str,
-    full_text: &'a str,
-) -> &'a str {
+fn _extract_body_text<'a>(node: tree_sitter::Node, _content: &str, full_text: &'a str) -> &'a str {
     if let Some(body) = node.child_by_field_name("body") {
         let offset = body.start_byte().saturating_sub(node.start_byte());
         if offset < full_text.len() {
@@ -298,8 +301,12 @@ fn is_symbol_node(kind: &str) -> bool {
 #[cfg(feature = "parsers")]
 fn normalize_kind(kind: &str) -> &str {
     match kind {
-        "function_item" | "function_signature_item" | "function_definition"
-        | "function_declaration" | "method_definition" | "method_declaration" => "function",
+        "function_item"
+        | "function_signature_item"
+        | "function_definition"
+        | "function_declaration"
+        | "method_definition"
+        | "method_declaration" => "function",
         "struct_item" | "class_definition" | "class_declaration" => "struct",
         "enum_item" | "enum_declaration" => "enum",
         "trait_item" | "interface_declaration" => "trait",
@@ -447,9 +454,11 @@ mod tests {
         let old = "fn existing() {}";
         let new = "fn existing() {}\nfn new_func() {}";
         let changes = detect_structural_changes(Path::new("test.rs"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "new_func" && c.change_kind == ChangeKind::SymbolAdded));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "new_func" && c.change_kind == ChangeKind::SymbolAdded)
+        );
     }
 
     #[test]
@@ -457,9 +466,11 @@ mod tests {
         let old = "fn foo() {}\nfn bar() {}";
         let new = "fn foo() {}";
         let changes = detect_structural_changes(Path::new("test.rs"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "bar" && c.change_kind == ChangeKind::SymbolRemoved));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "bar" && c.change_kind == ChangeKind::SymbolRemoved)
+        );
     }
 
     #[test]
@@ -467,9 +478,11 @@ mod tests {
         let old = "fn foo(x: i32) {}";
         let new = "fn foo(x: i32, y: i32) {}";
         let changes = detect_structural_changes(Path::new("test.rs"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "foo" && c.change_kind == ChangeKind::SignatureChanged));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "foo" && c.change_kind == ChangeKind::SignatureChanged)
+        );
     }
 
     #[test]
@@ -477,9 +490,11 @@ mod tests {
         let old = "fn foo() { let x = 1; }";
         let new = "fn foo() { let x = 2; }";
         let changes = detect_structural_changes(Path::new("test.rs"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "foo" && c.change_kind == ChangeKind::BodyChanged));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "foo" && c.change_kind == ChangeKind::BodyChanged)
+        );
     }
 
     #[test]
@@ -500,12 +515,16 @@ mod tests {
         let old = "def foo():\n    pass";
         let new = "def foo():\n    return 1\ndef bar():\n    pass";
         let changes = detect_structural_changes(Path::new("test.py"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "bar" && c.change_kind == ChangeKind::SymbolAdded));
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "foo" && c.change_kind == ChangeKind::BodyChanged));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "bar" && c.change_kind == ChangeKind::SymbolAdded)
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "foo" && c.change_kind == ChangeKind::BodyChanged)
+        );
     }
 
     #[test]
@@ -513,12 +532,16 @@ mod tests {
         let old = "function greet() { return 'hi'; }";
         let new = "function greet() { return 'hello'; }\nfunction farewell() { return 'bye'; }";
         let changes = detect_structural_changes(Path::new("test.ts"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "farewell" && c.change_kind == ChangeKind::SymbolAdded));
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "greet" && c.change_kind == ChangeKind::BodyChanged));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "farewell" && c.change_kind == ChangeKind::SymbolAdded)
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "greet" && c.change_kind == ChangeKind::BodyChanged)
+        );
     }
 
     #[test]
@@ -526,9 +549,11 @@ mod tests {
         let old = "fn foo() {}";
         let new = "fn foo() {}\npub struct Bar { x: i32 }";
         let changes = detect_structural_changes(Path::new("test.rs"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "Bar" && c.change_kind == ChangeKind::SymbolAdded));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "Bar" && c.change_kind == ChangeKind::SymbolAdded)
+        );
     }
 
     #[test]
@@ -536,9 +561,11 @@ mod tests {
         let old = "struct Foo;\nimpl Foo {\n    fn bar(&self) { let x = 1; }\n}";
         let new = "struct Foo;\nimpl Foo {\n    fn bar(&self) { let x = 2; }\n}";
         let changes = detect_structural_changes(Path::new("test.rs"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "Foo::bar" && c.change_kind == ChangeKind::BodyChanged));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "Foo::bar" && c.change_kind == ChangeKind::BodyChanged)
+        );
     }
 
     #[test]
@@ -546,9 +573,11 @@ mod tests {
         let old = "struct Foo;\nimpl Foo {\n    fn bar(&self) {}\n}";
         let new = "struct Foo;\nimpl Foo {\n    fn bar(&self) {}\n    fn baz(&self) {}\n}";
         let changes = detect_structural_changes(Path::new("test.rs"), old, new).unwrap();
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "Foo::baz" && c.change_kind == ChangeKind::SymbolAdded));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "Foo::baz" && c.change_kind == ChangeKind::SymbolAdded)
+        );
     }
 
     #[test]
@@ -570,9 +599,11 @@ mod tests {
         assert!(changes
             .iter()
             .any(|c| c.symbol_name == "remove_me" && c.change_kind == ChangeKind::SymbolRemoved));
-        assert!(changes
-            .iter()
-            .any(|c| c.symbol_name == "added" && c.change_kind == ChangeKind::SymbolAdded));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.symbol_name == "added" && c.change_kind == ChangeKind::SymbolAdded)
+        );
         assert!(changes.iter().any(
             |c| c.symbol_name == "change_sig" && c.change_kind == ChangeKind::SignatureChanged
         ));

@@ -42,8 +42,6 @@ const PONDERING_CYCLE_INTERVAL: u64 = 10;
 const OUTCOME_SCAN_CYCLE_INTERVAL: u64 = 5;
 /// Run team monitoring every Nth cycle
 const TEAM_MONITOR_CYCLE_INTERVAL: u64 = 3;
-/// Run LLM health analysis every Nth cycle (expensive, LLM-dependent)
-const HEALTH_LLM_CYCLE_INTERVAL: u64 = 3;
 /// Run data retention every Nth cycle (~10 min interval at 60s idle)
 const DATA_RETENTION_CYCLE_INTERVAL: u64 = 10;
 
@@ -68,8 +66,6 @@ enum BackgroundTask {
     Summaries,
     Briefings,
     HealthFastScans,
-    HealthLlmComplexity,
-    HealthLlmErrorQuality,
     HealthModuleAnalysis,
     EntityBackfills,
     TeamMonitor,
@@ -88,8 +84,6 @@ impl std::fmt::Display for BackgroundTask {
             Self::Summaries => write!(f, "summaries"),
             Self::Briefings => write!(f, "briefings"),
             Self::HealthFastScans => write!(f, "health: fast scans"),
-            Self::HealthLlmComplexity => write!(f, "health: LLM complexity"),
-            Self::HealthLlmErrorQuality => write!(f, "health: LLM error quality"),
             Self::HealthModuleAnalysis => write!(f, "health: module analysis"),
             Self::EntityBackfills => write!(f, "entity backfills"),
             Self::TeamMonitor => write!(f, "team monitor"),
@@ -155,16 +149,6 @@ fn task_schedule() -> Vec<ScheduledTask> {
             task: BackgroundTask::HealthModuleAnalysis,
             priority: TaskPriority::Normal,
             cycle_interval: None,
-        },
-        ScheduledTask {
-            task: BackgroundTask::HealthLlmComplexity,
-            priority: TaskPriority::Low,
-            cycle_interval: Some(HEALTH_LLM_CYCLE_INTERVAL),
-        },
-        ScheduledTask {
-            task: BackgroundTask::HealthLlmErrorQuality,
-            priority: TaskPriority::Low,
-            cycle_interval: Some(HEALTH_LLM_CYCLE_INTERVAL),
         },
         ScheduledTask {
             task: BackgroundTask::EntityBackfills,
@@ -351,10 +335,7 @@ impl SlowLaneWorker {
     /// Dispatch a task to its implementation.
     /// The exhaustive match ensures new `BackgroundTask` variants cause a compile error
     /// until their dispatch logic is added here.
-    async fn dispatch_task(
-        &mut self,
-        task: BackgroundTask,
-    ) -> usize {
+    async fn dispatch_task(&mut self, task: BackgroundTask) -> usize {
         let name = task.to_string();
 
         // Clone pools and other needed data upfront to avoid borrow issues with &mut self
@@ -363,11 +344,8 @@ impl SlowLaneWorker {
 
         match task {
             BackgroundTask::StaleSessions => {
-                self.run_task(
-                    &name,
-                    session_summaries::process_stale_sessions(&pool),
-                )
-                .await
+                self.run_task(&name, session_summaries::process_stale_sessions(&pool))
+                    .await
             }
             BackgroundTask::Summaries => {
                 self.run_task(&name, summaries::process_queue(&code_pool, &pool))
@@ -388,20 +366,6 @@ impl SlowLaneWorker {
                 self.run_task(
                     &name,
                     code_health::process_health_fast_scans(&pool, &code_pool),
-                )
-                .await
-            }
-            BackgroundTask::HealthLlmComplexity => {
-                self.run_task(
-                    &name,
-                    code_health::process_health_llm_complexity(&pool, &code_pool),
-                )
-                .await
-            }
-            BackgroundTask::HealthLlmErrorQuality => {
-                self.run_task(
-                    &name,
-                    code_health::process_health_llm_error_quality(&pool, &code_pool),
                 )
                 .await
             }
@@ -671,8 +635,6 @@ mod tests {
         assert!(names.contains(&"summaries".to_string()));
         assert!(names.contains(&"briefings".to_string()));
         assert!(names.contains(&"health: fast scans".to_string()));
-        assert!(names.contains(&"health: LLM complexity".to_string()));
-        assert!(names.contains(&"health: LLM error quality".to_string()));
         assert!(names.contains(&"health: module analysis".to_string()));
         assert!(names.contains(&"entity backfills".to_string()));
         assert!(names.contains(&"team monitor".to_string()));

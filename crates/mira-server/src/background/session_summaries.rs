@@ -22,9 +22,7 @@ const MAX_FILES_IN_SUMMARY: usize = 5;
 
 /// Process stale sessions: close them and optionally generate summaries
 /// Also generates summaries for already-closed sessions that don't have one
-pub async fn process_stale_sessions(
-    pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
+pub async fn process_stale_sessions(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     let mut processed = 0;
 
     // First, close stale active sessions
@@ -37,9 +35,7 @@ pub async fn process_stale_sessions(
 }
 
 /// Close stale active sessions
-async fn close_stale_sessions(
-    pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
+async fn close_stale_sessions(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     let stale = pool
         .run(move |conn| get_stale_sessions_sync(conn, STALE_SESSION_MINUTES))
         .await?;
@@ -65,6 +61,7 @@ async fn close_stale_sessions(
             .run(move |conn| close_session_sync(conn, &session_id_clone, summary_clone.as_deref()))
             .await
         {
+            tracing::debug!("Failed to close session (full id: {}): {}", session_id, e);
             tracing::warn!(
                 "Failed to close session {}: {}",
                 truncate_at_boundary(&session_id, 8),
@@ -78,6 +75,12 @@ async fn close_stale_sessions(
         } else {
             "no summary"
         };
+        tracing::debug!(
+            "Closed stale session (full id: {}) ({} tools, {})",
+            session_id,
+            tool_count,
+            summary_status
+        );
         tracing::info!(
             "Closed stale session {} ({} tools, {})",
             truncate_at_boundary(&session_id, 8),
@@ -91,9 +94,7 @@ async fn close_stale_sessions(
 }
 
 /// Generate summaries for completed sessions that don't have one
-async fn generate_missing_summaries(
-    pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
+async fn generate_missing_summaries(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     let sessions = pool.run(get_sessions_needing_summary_sync).await?;
 
     if sessions.is_empty() {
@@ -103,8 +104,7 @@ async fn generate_missing_summaries(
     let mut processed = 0;
 
     for (session_id, project_id, _tool_count) in sessions {
-        if let Some(summary) = generate_session_summary(pool, &session_id, project_id).await
-        {
+        if let Some(summary) = generate_session_summary(pool, &session_id, project_id).await {
             let session_id_clone = session_id.clone();
             let summary_clone = summary.clone();
             if let Err(e) = pool
@@ -121,6 +121,7 @@ async fn generate_missing_summaries(
                 continue;
             }
 
+            tracing::debug!("Generated summary for session (full id: {})", session_id);
             tracing::info!(
                 "Generated summary for session {}",
                 truncate_at_boundary(&session_id, 8)
@@ -157,7 +158,13 @@ async fn generate_session_summary(
                 .map_err(|e| anyhow::anyhow!("Failed to get behavior summary: {}", e))
         })
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "Failed to fetch behavior_summary, defaulting to empty: {}",
+                e
+            );
+            String::new()
+        });
 
     // Pick the richer source (more lines = more signal)
     let tool_lines = tool_summary.lines().count();

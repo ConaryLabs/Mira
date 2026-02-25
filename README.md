@@ -43,12 +43,12 @@ That's it. Mira auto-configures itself, starts injecting context on every prompt
 Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
     |                             |
     +--13 lifecycle hooks         +--->  OpenAI (embeddings, optional)
-    +--MCP Sampling (host LLM)   +--->  DeepSeek / Ollama (background tasks, optional)
+    +--MCP Sampling (host LLM)
 ```
 
 Everything runs locally. Two SQLite databases in `~/.mira/`: one for memories, sessions, and goals; one for the code index. No cloud, no accounts, no external databases.
 
-**No API keys required.** Memory, code intelligence, goal tracking, and documentation detection all work out of the box — search falls back to keyword/fuzzy matching, analysis uses heuristic parsers. OpenAI for semantic search and DeepSeek/Ollama for background intelligence are there when you want them.
+**No API keys required.** Memory, code intelligence, goal tracking, and documentation detection all work out of the box — search falls back to keyword/fuzzy matching, analysis uses heuristic parsers. OpenAI embeddings upgrade search to semantic when configured.
 
 ## Installation
 
@@ -229,9 +229,9 @@ See **[docs/CLAUDE_TEMPLATE.md](docs/CLAUDE_TEMPLATE.md)** for a recommended `CL
 | Memory & recall | Keyword/fuzzy search | Semantic search (OpenAI embeddings) |
 | Code search | FTS5 + fuzzy matching | Hybrid semantic + keyword |
 | Code intelligence | Tree-sitter symbols, call graph | Same |
-| Diff analysis | Heuristic pattern detection | LLM-powered semantic classification |
-| Module summaries | File counts, symbol names | LLM-generated descriptions |
-| Background insights | Tool usage analysis, friction detection | LLM-powered pattern extraction |
+| Diff analysis | Heuristic pattern detection | Same |
+| Module summaries | File counts, symbol names | Same |
+| Background insights | Tool usage analysis, friction detection | Same |
 | Goal tracking | Full | Full |
 | Agent team coordination | Full | Full |
 | Error pattern learning | Remembers how errors were fixed across sessions — Claude gets the solution faster next time | Same |

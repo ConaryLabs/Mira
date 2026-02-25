@@ -1150,8 +1150,8 @@ mod tests {
         let _ = std::fs::remove_file(&cache_path);
 
         // Create a real temp file so mtime is consistent
-        let tmp_file = std::env::temp_dir()
-            .join(format!("mira_aged_test_{}.rs", std::process::id()));
+        let tmp_file =
+            std::env::temp_dir().join(format!("mira_aged_test_{}.rs", std::process::id()));
         let tmp_file = tmp_file.to_string_lossy().to_string();
         std::fs::write(&tmp_file, b"fn foo() {}").unwrap();
         let current_mtime = file_mtime_secs(&tmp_file);

@@ -15,9 +15,7 @@ const FALLBACK_MAX_COMMITS: usize = 5;
 const FALLBACK_MAX_LENGTH: usize = 200;
 
 /// Check all projects for git changes and generate briefings
-pub async fn process_briefings(
-    pool: &Arc<DatabasePool>,
-) -> Result<usize, String> {
+pub async fn process_briefings(pool: &Arc<DatabasePool>) -> Result<usize, String> {
     let projects = pool.run(get_projects_for_briefing_check_sync).await?;
 
     let mut processed = 0;
@@ -45,12 +43,8 @@ pub async fn process_briefings(
         }
 
         // Generate the briefing
-        let briefing = generate_briefing(
-            &project_path,
-            last_known_commit.as_deref(),
-            &current_commit,
-        )
-        .await;
+        let briefing =
+            generate_briefing(&project_path, last_known_commit.as_deref(), &current_commit).await;
 
         // Only update commit marker if briefing was successfully generated
         // This ensures failed briefings will be retried on next run
@@ -179,13 +173,20 @@ async fn generate_briefing(
     // async runtime and can be cancelled by the slow-lane task timeout.
     let path = project_path.to_string();
     let from = from_commit.map(|s| s.to_string());
-    let (git_log, file_stats) = tokio::task::spawn_blocking(move || {
+    let join_result = tokio::task::spawn_blocking(move || {
         let log = get_git_changes(&path, from.as_deref());
         let stats = get_files_changed(&path, from.as_deref());
         (log, stats)
     })
-    .await
-    .ok()?;
+    .await;
+
+    let (git_log, file_stats) = match join_result {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::warn!("briefing spawn_blocking task failed: {}", e);
+            return None;
+        }
+    };
 
     Some(generate_briefing_fallback(
         git_log.as_deref(),
@@ -250,7 +251,10 @@ fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -
         result.push_str(&format!(". {}", stats));
     }
 
-    // Cap total output length (UTF-8 safe)
+    // Cap total output length. Note: .len() is a byte-length check, not
+    // character count. FALLBACK_MAX_LENGTH is a byte limit. This is acceptable
+    // since briefings are primarily ASCII; truncate_at_boundary handles the
+    // actual UTF-8 boundary so no invalid sequences are produced.
     if result.len() > FALLBACK_MAX_LENGTH {
         result = format!(
             "{}...",

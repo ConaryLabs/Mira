@@ -143,37 +143,6 @@ pub fn mark_health_scanned_sync(conn: &Connection, project_id: i64) -> rusqlite:
     Ok(())
 }
 
-/// Mark an LLM health subtask as completed for a project.
-/// Stores a per-task timestamp so the subtask knows not to re-run until the next
-/// fast scan cycle updates `health_scan_time` to a newer value.
-pub fn mark_llm_health_done_sync(
-    conn: &Connection,
-    project_id: i64,
-    task_key: &str,
-) -> rusqlite::Result<()> {
-    // Manual UPSERT
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM system_observations WHERE project_id = ? AND key = ?",
-            params![project_id, task_key],
-            |row| row.get(0),
-        )
-        .ok();
-    if let Some(id) = existing {
-        conn.execute(
-            "UPDATE system_observations SET content = 'scanned', updated_at = datetime('now') WHERE id = ?",
-            [id],
-        )?;
-    } else {
-        conn.execute(
-            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
-             VALUES (?, ?, 'scanned', 'system', 'health', 1.0, 'code_health', 'project', datetime('now'), datetime('now'))",
-            params![project_id, task_key],
-        )?;
-    }
-    Ok(())
-}
-
 /// Clear old health issues before refresh
 pub fn clear_old_health_issues_sync(conn: &Connection, project_id: i64) -> rusqlite::Result<()> {
     conn.execute(
@@ -721,17 +690,6 @@ mod tests {
         // Scan time marker should exist
         let info = get_scan_info_sync(&conn, pid, "health_scan_time");
         assert!(info.is_some());
-    }
-
-    #[test]
-    fn test_mark_llm_health_done() {
-        let (conn, pid) = setup_conn_with_project();
-
-        mark_llm_health_done_sync(&conn, pid, "llm_health_complexity").unwrap();
-
-        let info = get_scan_info_sync(&conn, pid, "llm_health_complexity");
-        assert!(info.is_some());
-        assert_eq!(info.unwrap().0, "scanned");
     }
 
     #[test]

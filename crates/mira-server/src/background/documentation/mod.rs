@@ -256,12 +256,19 @@ async fn analyze_impact_heuristic(
 
 pub use crate::git::{get_git_head, is_ancestor};
 
-/// Calculate SHA256 checksum of file content
+/// Calculate SHA256 checksum of file content.
+/// Returns None for files larger than 10MB to avoid excessive memory use.
 pub fn file_checksum(path: &std::path::Path) -> Option<String> {
     use sha2::Digest;
     use std::io::Read;
 
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
     let mut file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > MAX_FILE_SIZE {
+        return None;
+    }
+
     let mut hasher = sha2::Sha256::new();
     let mut buffer = Vec::new();
 

@@ -255,7 +255,10 @@ impl Point {
 }"#;
         let output = skeletonize_content(input);
         let placeholder_count = output.matches("// ... body omitted").count();
-        assert_eq!(placeholder_count, 1, "Should have exactly one placeholder per body block");
+        assert_eq!(
+            placeholder_count, 1,
+            "Should have exactly one placeholder per body block"
+        );
     }
 
     #[test]
@@ -271,7 +274,10 @@ fn second() {
 }"#;
         let output = skeletonize_content(input);
         let placeholder_count = output.matches("// ... body omitted").count();
-        assert_eq!(placeholder_count, 2, "Should have one placeholder per function body");
+        assert_eq!(
+            placeholder_count, 2,
+            "Should have one placeholder per function body"
+        );
         assert!(output.contains("/// First function"));
         assert!(output.contains("fn first()"));
         assert!(output.contains("/// Second function"));

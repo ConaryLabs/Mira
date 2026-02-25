@@ -271,7 +271,11 @@ mod tests {
     fn test_mark_stale_matches_full_path() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        let id = store_memory(&conn, pid, "The config in /src/config.rs uses builder pattern");
+        let id = store_memory(
+            &conn,
+            pid,
+            "The config in /src/config.rs uses builder pattern",
+        );
         assert!(get_stale_since(&conn, id).is_none());
 
         let count = mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();

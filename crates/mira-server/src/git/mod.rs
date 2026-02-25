@@ -26,6 +26,9 @@ use std::process::Command;
 
 /// Validate that a git ref doesn't look like a CLI flag (defense-in-depth)
 pub(crate) fn validate_ref(r: &str) -> Result<(), String> {
+    if r.len() > 256 {
+        return Err("Invalid git ref: exceeds maximum length of 256 characters".to_string());
+    }
     if r.starts_with('-') {
         return Err(format!("Invalid git ref: '{}'", r));
     }

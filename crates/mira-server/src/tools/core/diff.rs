@@ -112,15 +112,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     };
 
     // Perform full analysis
-    let result = analyze_diff(
-        ctx.pool(),
-        path,
-        project_id,
-        &from,
-        &to,
-        include_impact,
-    )
-    .await?;
+    let result = analyze_diff(ctx.pool(), path, project_id, &from, &to, include_impact).await?;
 
     // Compute historical risk LIVE from mined patterns (never cached)
     let historical_risk =
@@ -153,9 +145,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
     diff_content: &str,
     include_impact: bool,
 ) -> Result<Json<DiffOutput>, MiraError> {
-    use crate::background::diff_analysis::{
-        analyze_diff_heuristic, calculate_risk_level,
-    };
+    use crate::background::diff_analysis::{analyze_diff_heuristic, calculate_risk_level};
 
     // Get stats
     let stats = if analysis_type == "staged" {

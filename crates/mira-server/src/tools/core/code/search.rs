@@ -257,18 +257,23 @@ pub async fn search_code<C: ToolContext>(
             let caller_results: Vec<(String, Vec<crate::search::CrossRefResult>)> = {
                 let fns = pub_fns.clone();
                 ctx.code_pool()
-                    .run(move |conn| -> Result<Vec<(String, Vec<crate::search::CrossRefResult>)>, MiraError> {
-                        let mut out = Vec::new();
-                        for fn_name in &fns {
-                            match find_callers(conn, project_id, fn_name, 5) {
-                                Ok(callers) if !callers.is_empty() => {
-                                    out.push((fn_name.clone(), callers));
+                    .run(
+                        move |conn| -> Result<
+                            Vec<(String, Vec<crate::search::CrossRefResult>)>,
+                            MiraError,
+                        > {
+                            let mut out = Vec::new();
+                            for fn_name in &fns {
+                                match find_callers(conn, project_id, fn_name, 5) {
+                                    Ok(callers) if !callers.is_empty() => {
+                                        out.push((fn_name.clone(), callers));
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
-                        }
-                        Ok(out)
-                    })
+                            Ok(out)
+                        },
+                    )
                     .await
                     .unwrap_or_default()
             };

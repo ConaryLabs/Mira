@@ -54,6 +54,31 @@ pub fn collect_cargo_warnings(project_path: &str) -> Result<Vec<CargoFinding>, S
     Ok(parse_cargo_output(&stdout))
 }
 
+/// Async version of collect_cargo_warnings using tokio::process::Command.
+/// The tokio Child handle is held for the duration of the await, so if this
+/// future is dropped (e.g. outer timeout fires), tokio kills the child process
+/// automatically — preventing orphaned cargo processes.
+pub async fn collect_cargo_warnings_async(project_path: &str) -> Result<Vec<CargoFinding>, String> {
+    use tokio::process::Command as TokioCommand;
+
+    // Check if it's a Rust project
+    let cargo_toml = Path::new(project_path).join("Cargo.toml");
+    if !cargo_toml.exists() {
+        return Ok(Vec::new());
+    }
+
+    let output = TokioCommand::new("cargo")
+        .args(["check", "--message-format=json", "--quiet"])
+        .current_dir(project_path)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run cargo check: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_cargo_output(&stdout))
+}
+
 /// Store collected cargo findings in the database (batch write).
 pub fn store_cargo_findings(
     conn: &Connection,

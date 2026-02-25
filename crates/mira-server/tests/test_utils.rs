@@ -1,7 +1,9 @@
 //! Test utilities for Mira integration tests
 
 use async_trait::async_trait;
-use mira::{background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient};
+use mira::{
+    background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient,
+};
 use mira_types::ProjectContext;
 use std::sync::Arc;
 use tokio::sync::RwLock;
