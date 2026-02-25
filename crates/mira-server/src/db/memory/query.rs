@@ -247,6 +247,11 @@ pub fn clear_project_persona_sync(
     conn: &rusqlite::Connection,
     project_id: i64,
 ) -> rusqlite::Result<bool> {
+    // Clean up vec_memory embeddings first
+    conn.execute(
+        "DELETE FROM vec_memory WHERE fact_id IN (SELECT id FROM memory_facts WHERE key = 'project_persona' AND project_id = ? AND fact_type = 'persona')",
+        [project_id],
+    )?;
     let deleted = conn.execute(
         "DELETE FROM memory_facts WHERE key = 'project_persona' AND project_id = ? AND fact_type = 'persona'",
         [project_id],

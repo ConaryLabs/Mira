@@ -72,8 +72,12 @@ pub async fn list_memories<C: ToolContext>(
     let (rows, total): (Vec<ListMemoryItem>, usize) = ctx
         .pool()
         .run(move |conn| {
+            // Exclude system/automated fact types from user-facing list.
+            // These belong in system_observations, not user memories.
+            let system_filter = "AND fact_type NOT IN ('health', 'persona', 'system', 'session_event', 'extracted', 'tool_outcome', 'convergence_alert', 'distilled')";
+
             // Count total matching rows
-            let total: usize = conn.query_row(
+            let count_sql = format!(
                 "SELECT COUNT(*) FROM memory_facts
                  WHERE (project_id IS ?1 OR project_id IS NULL)
                    AND COALESCE(suspicious, 0) = 0
@@ -84,13 +88,17 @@ pub async fn list_memories<C: ToolContext>(
                      OR (scope = 'team' AND COALESCE(team_id, 0) = COALESCE(?3, 0))
                    )
                    AND (?4 IS NULL OR category = ?4)
-                   AND (?5 IS NULL OR fact_type = ?5)",
+                   AND (?5 IS NULL OR fact_type = ?5)
+                   {system_filter}",
+            );
+            let total: usize = conn.query_row(
+                &count_sql,
                 rusqlite::params![project_id, uid.as_deref(), team_id, cat, ft],
                 |row| row.get::<_, usize>(0),
             )?;
 
             // Fetch paginated results
-            let mut stmt = conn.prepare(
+            let list_sql = format!(
                 "SELECT id, content, fact_type, category,
                         COALESCE(scope, 'project') as scope, key, created_at
                  FROM memory_facts
@@ -104,9 +112,11 @@ pub async fn list_memories<C: ToolContext>(
                    )
                    AND (?4 IS NULL OR category = ?4)
                    AND (?5 IS NULL OR fact_type = ?5)
+                   {system_filter}
                  ORDER BY created_at DESC
                  LIMIT ?6 OFFSET ?7",
-            )?;
+            );
+            let mut stmt = conn.prepare(&list_sql)?;
 
             let rows = stmt
                 .query_map(

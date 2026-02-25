@@ -16,7 +16,6 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectOutput, ProjectStartData};
 use crate::proactive::{ProactiveConfig, interventions};
 use crate::tools::core::ToolContext;
-use crate::tools::core::claude_local;
 
 use super::detection::{detect_project_type, gather_system_context_content};
 use super::formatting::{format_recent_sessions, format_session_insights};
@@ -155,23 +154,10 @@ pub async fn session_start<C: ToolContext>(
     ctx.set_session_id(sid.clone()).await;
     ctx.set_branch(branch.clone()).await;
 
-    // Phase 2: Import CLAUDE.local.md
-    let imported_count =
-        claude_local::import_claude_local_md_async(ctx.pool(), project_id, &project_path)
-            .await
-            .unwrap_or(0);
-
-    // Phase 3: Build response
+    // Phase 2: Build response
     let project_type = detect_project_type(&project_path);
     let display_name = project_name.as_deref().unwrap_or("unnamed");
     let mut response = format!("Project: {} ({})\n", display_name, project_type);
-
-    if imported_count > 0 {
-        response.push_str(&format!(
-            "\nImported {} entries from CLAUDE.local.md\n",
-            imported_count
-        ));
-    }
     if let Some(text) = briefing_text {
         response.push_str(&format!("\nWhat's new: {}\n", text));
     }
