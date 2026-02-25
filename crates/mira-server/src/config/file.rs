@@ -18,8 +18,8 @@ pub struct MiraConfig {
 /// Data retention configuration section
 #[derive(Debug, Deserialize, Clone)]
 pub struct RetentionConfig {
-    /// Master switch -- no auto-cleanup unless explicitly enabled
-    #[serde(default)]
+    /// Master switch -- enabled by default for automatic data hygiene
+    #[serde(default = "RetentionConfig::default_enabled")]
     pub enabled: bool,
     /// Days to keep tool_history, chat_messages, chat_summaries, etc.
     #[serde(default = "RetentionConfig::default_tool_history_days")]
@@ -39,23 +39,30 @@ pub struct RetentionConfig {
     /// Days to keep system observations
     #[serde(default = "RetentionConfig::default_observations_days")]
     pub observations_days: u32,
+    /// Days to keep untouched memories (based on updated_at, not created_at)
+    #[serde(default = "RetentionConfig::default_memory_days")]
+    pub memory_days: u32,
 }
 
 impl Default for RetentionConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             tool_history_days: 30,
             chat_days: 30,
             sessions_days: 90,
             analytics_days: 180,
             behavior_days: 365,
             observations_days: 90,
+            memory_days: 180,
         }
     }
 }
 
 impl RetentionConfig {
+    fn default_enabled() -> bool {
+        true
+    }
     fn default_tool_history_days() -> u32 {
         30
     }
@@ -73,6 +80,9 @@ impl RetentionConfig {
     }
     fn default_observations_days() -> u32 {
         90
+    }
+    fn default_memory_days() -> u32 {
+        180
     }
 
     /// Check if retention is enabled (config field OR env var override)
@@ -280,13 +290,14 @@ background_provider = 123
     #[test]
     fn test_retention_defaults() {
         let config: MiraConfig = toml::from_str("").unwrap();
-        assert!(!config.retention.enabled);
+        assert!(config.retention.enabled);
         assert_eq!(config.retention.tool_history_days, 30);
         assert_eq!(config.retention.chat_days, 30);
         assert_eq!(config.retention.sessions_days, 90);
         assert_eq!(config.retention.analytics_days, 180);
         assert_eq!(config.retention.behavior_days, 365);
         assert_eq!(config.retention.observations_days, 90);
+        assert_eq!(config.retention.memory_days, 180);
     }
 
     #[test]
@@ -341,9 +352,9 @@ unknown_retention_key = 42
     }
 
     #[test]
-    fn test_retention_is_enabled_config_false() {
+    fn test_retention_is_enabled_by_default() {
         let config = RetentionConfig::default();
-        assert!(!config.is_enabled());
+        assert!(config.is_enabled());
     }
 
     #[test]

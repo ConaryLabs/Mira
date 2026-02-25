@@ -13,6 +13,7 @@ fn table_category(table: &str) -> &'static str {
         "sessions" | "session_snapshots" | "session_tasks" | "tool_history" => "sessions",
         "llm_usage" | "embeddings_usage" => "analytics",
         "behavior_patterns" | "system_observations" | "error_patterns" => "behavior",
+        "memory_facts" => "memories",
         _ => "other",
     }
 }
@@ -37,6 +38,11 @@ pub async fn run_cleanup(dry_run: bool, yes: bool, category: Option<String>) -> 
         println!("  Analytics: {} days", config.analytics_days);
         println!("  Behavior: {} days", config.behavior_days);
         println!("  Observations: {} days", config.observations_days);
+        println!(
+            "  Memories: {} days (low-engagement), {} days (all)",
+            config.memory_days,
+            config.memory_days * 2
+        );
     } else {
         println!("  Status: disabled (only orphan cleanup will run)");
         println!("  Enable with: [retention] enabled = true in ~/.mira/config.toml");
@@ -96,7 +102,6 @@ pub async fn run_cleanup(dry_run: bool, yes: bool, category: Option<String>) -> 
     }
 
     println!("\nProtected (never auto-deleted):");
-    println!("  - Memories (use 'forget' to delete individually)");
     println!("  - Goals and milestones");
     println!("  - Active sessions");
 

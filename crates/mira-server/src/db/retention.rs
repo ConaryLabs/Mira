@@ -8,8 +8,10 @@
 //! - analytics_days (default 180): llm_usage, embeddings_usage
 //! - behavior_days (default 365): behavior_patterns (non-insight)
 //! - observations_days (default 90): system_observations
+//! - memory_days (default 180): memory_facts (tiered: low-engagement <3 sessions at N days,
+//!   all memories at 2N days). Based on updated_at which is bumped on every recall.
 //!
-//! Retention rules only run when explicitly enabled. Orphan cleanup always runs.
+//! Retention is enabled by default. Orphan cleanup always runs.
 
 use crate::config::file::RetentionConfig;
 use rusqlite::Connection;
@@ -136,6 +138,20 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             table: "health_snapshots",
             time_column: "snapshot_at",
             days: config.observations_days,
+            extra_filter: "",
+        },
+        // ── Memories: low-engagement stale memories decay first ──
+        RetentionRule {
+            table: "memory_facts",
+            time_column: "COALESCE(updated_at, created_at)",
+            days: config.memory_days,
+            extra_filter: "AND session_count < 3",
+        },
+        // ── Memories: even high-engagement memories expire eventually ──
+        RetentionRule {
+            table: "memory_facts",
+            time_column: "COALESCE(updated_at, created_at)",
+            days: config.memory_days * 2,
             extra_filter: "",
         },
     ]

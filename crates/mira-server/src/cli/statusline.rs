@@ -68,10 +68,12 @@ fn query_goals(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Count memories stored for a project.
+/// Count memories stored for a project (excludes system/internal types).
 fn query_memories(conn: &Connection, project_id: i64) -> i64 {
     conn.query_row(
-        "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1",
+        "SELECT COUNT(*) FROM memory_facts WHERE project_id = ?1 \
+         AND fact_type NOT IN ('health','persona','system','session_event',\
+         'extracted','tool_outcome','convergence_alert','distilled')",
         [project_id],
         |r| r.get(0),
     )
