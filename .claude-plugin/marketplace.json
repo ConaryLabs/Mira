@@ -6,13 +6,13 @@
     "email": "peter@conary.io"
   },
   "metadata": {
-    "description": "Persistent memory, semantic code intelligence, and proactive context for Claude Code"
+    "description": "Persistent context, semantic code intelligence, and team recipes for Claude Code"
   },
   "plugins": [
     {
       "name": "mira",
       "source": "./plugin",
-      "description": "Persistent memory, semantic code intelligence, team recipes, and proactive context injection for Claude Code.",
+      "description": "Persistent context, semantic code intelligence, and team recipes for Claude Code.",
       "version": "0.9.0",
       "author": {
         "name": "Peter Permenter"
@@ -21,13 +21,12 @@
       "license": "Apache-2.0",
       "category": "productivity",
       "keywords": [
-        "memory",
         "context",
         "code-intelligence",
         "semantic-search",
         "goals",
         "mcp",
-        "persistent-memory",
+        "persistent-context",
         "code-review",
         "session-history"
       ]

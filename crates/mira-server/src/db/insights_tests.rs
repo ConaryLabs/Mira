@@ -139,7 +139,7 @@ mod tests {
         let project_id = create_test_project(&conn);
         let now = days_ago(0);
 
-        let known_types = vec![
+        let known_types = [
             ("insight_revert_cluster", "Revert Pattern"),
             ("insight_fragile_code", "Fragile Code"),
             ("insight_stale_goal", "Stale Goal"),

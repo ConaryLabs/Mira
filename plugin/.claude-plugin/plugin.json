@@ -1,6 +1,6 @@
 {
   "name": "mira",
-  "description": "Persistent memory, semantic code intelligence, team recipes, and proactive context injection for Claude Code.",
+  "description": "Persistent context, semantic code intelligence, and team recipes for Claude Code.",
   "version": "0.9.0",
   "author": {
     "name": "Peter Permenter"
@@ -9,8 +9,8 @@
   "repository": "https://github.com/ConaryLabs/Mira",
   "license": "Apache-2.0",
   "keywords": [
-    "memory", "context", "code-intelligence", "semantic-search", "goals",
-    "persistent", "cross-session", "recall", "knowledge-base", "productivity", "mcp"
+    "context", "code-intelligence", "semantic-search", "goals",
+    "persistent", "cross-session", "productivity", "mcp"
   ],
   "mcpServers": "./.mcp.json",
   "skills": [
@@ -26,7 +26,6 @@
     "./skills/full-cycle",
     "./skills/qa-hardening",
     "./skills/refactor",
-    "./skills/status",
-    "./skills/efficiency"
+    "./skills/status"
   ]
 }
