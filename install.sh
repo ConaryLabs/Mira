@@ -292,7 +292,7 @@ setup_config() {
 
 # --- MCP server fallback ---
 # When plugin install fails, register mira as a global MCP server so Claude Code
-# can still call mira's tools (memory, code, session, goal, etc.).
+# can still call mira's tools (code, session, goal, etc.).
 
 setup_mcp() {
     require_jq || return
@@ -364,7 +364,7 @@ MANUAL
     local hooks_json
     hooks_json=$("$JQ" -n --arg bin "$mira_bin" '{
   SessionStart: [{hooks: [{type: "command", command: ($bin + " hook session-start"), timeout: 10, statusMessage: "Mira: Loading session context..."}]}],
-  UserPromptSubmit: [{hooks: [{type: "command", command: ($bin + " hook user-prompt"), timeout: 8, statusMessage: "Mira: Searching memories..."}]}],
+  UserPromptSubmit: [{hooks: [{type: "command", command: ($bin + " hook user-prompt"), timeout: 8, statusMessage: "Mira: Loading context..."}]}],
   PreToolUse: [{matcher: "Grep|Glob|Read", hooks: [{type: "command", command: ($bin + " hook pre-tool"), timeout: 3, statusMessage: "Mira: Checking relevant context..."}]}],
   PostToolUse: [{matcher: "Write|Edit|NotebookEdit|Bash", hooks: [{type: "command", command: ($bin + " hook post-tool"), timeout: 5, statusMessage: "Mira: Tracking changes..."}]}],
   PostToolUseFailure: [{hooks: [{type: "command", command: ($bin + " hook post-tool-failure"), timeout: 5, async: true, statusMessage: "Mira: Analyzing failure..."}]}],
@@ -458,7 +458,7 @@ setup_statusline() {
         atomic_write "$content" "$settings_file"
     fi
 
-    info "Status line configured (shows memory/goal/index stats)"
+    info "Status line configured (shows goal/index stats)"
 }
 
 # --- Main ---
@@ -525,16 +525,16 @@ main() {
     echo "       ${INSTALL_DIR}/mira setup"
     echo ""
     echo "    2. Or just start using Claude Code -- Mira works without API keys."
-    echo "       Memory, code intelligence, and goal tracking are ready."
+    echo "       Code intelligence, session persistence, and goal tracking are ready."
     echo ""
     if [ "$plugin_ok" -eq 0 ]; then
         echo "    Plugin installed -- hooks, skills, and MCP auto-configured."
         echo ""
         echo "  Try it now:"
         echo "    /mira:status          -- See what Mira knows about your project"
-        echo '    /mira:remember "..."  -- Store knowledge for future sessions'
         echo '    /mira:search "..."    -- Semantic code search'
         echo "    /mira:goals           -- Track work across sessions"
+        echo "    /mira:insights        -- Background analysis results"
     else
         echo "    Hooks and MCP server configured in ~/.claude/"
         echo "    Skills require the plugin. Install later with:"
