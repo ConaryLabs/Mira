@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use crate::background::diff_analysis::{
-    DiffAnalysisResult, HistoricalRisk, RiskAssessment, analyze_diff, build_impact_graph,
-    compute_historical_risk, format_diff_analysis, map_to_symbols,
+    DiffAnalysisResult, RiskAssessment, analyze_diff, build_impact_graph, format_diff_analysis,
+    map_to_symbols,
 };
 use crate::db::get_recent_diff_analyses_sync;
 use crate::error::MiraError;
@@ -14,9 +14,7 @@ use crate::git::{
     resolve_ref,
 };
 use crate::mcp::responses::Json;
-use crate::mcp::responses::{
-    DiffAnalysisData, DiffData, DiffOutput, HistoricalRiskData, PatternMatchInfo,
-};
+use crate::mcp::responses::{DiffAnalysisData, DiffData, DiffOutput};
 use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::truncate;
 
@@ -114,11 +112,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     // Perform full analysis
     let result = analyze_diff(ctx.pool(), path, project_id, &from, &to, include_impact).await?;
 
-    // Compute historical risk LIVE from mined patterns (never cached)
-    let historical_risk =
-        compute_historical_risk_live(ctx, project_id, &result.files, result.files_changed).await;
-
-    let formatted = format_diff_analysis(&result, historical_risk.as_ref());
+    let formatted = format_diff_analysis(&result);
     Ok(Json(DiffOutput {
         action: "analyze".into(),
         message: format!("{}{}", context_header, formatted),
@@ -130,7 +124,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
             lines_removed: result.lines_removed,
             summary: Some(result.summary.clone()),
             risk_level: Some(result.risk.overall.clone()),
-            historical_risk: historical_risk.map(to_historical_risk_data),
+            historical_risk: None,
         })),
     }))
 }
@@ -224,11 +218,7 @@ async fn analyze_staged_or_working<C: ToolContext>(
         lines_removed: stats.lines_removed,
     };
 
-    // Compute historical risk LIVE from mined patterns
-    let historical_risk =
-        compute_historical_risk_live(ctx, project_id, &result.files, result.files_changed).await;
-
-    let formatted = format_diff_analysis(&result, historical_risk.as_ref());
+    let formatted = format_diff_analysis(&result);
     Ok(Json(DiffOutput {
         action: "analyze".into(),
         message: format!("{}{}", context_header, formatted),
@@ -240,44 +230,9 @@ async fn analyze_staged_or_working<C: ToolContext>(
             lines_removed: result.lines_removed,
             summary: Some(result.summary.clone()),
             risk_level: Some(result.risk.overall.clone()),
-            historical_risk: historical_risk.map(to_historical_risk_data),
+            historical_risk: None,
         })),
     }))
-}
-
-/// Compute historical risk from mined change patterns (never cached).
-async fn compute_historical_risk_live<C: ToolContext>(
-    ctx: &C,
-    project_id: Option<i64>,
-    files: &[String],
-    files_changed: i64,
-) -> Option<HistoricalRisk> {
-    let pid = project_id?;
-    let files = files.to_vec();
-    ctx.pool()
-        .run(move |conn| {
-            Ok::<_, MiraError>(compute_historical_risk(conn, pid, &files, files_changed))
-        })
-        .await
-        .ok()
-        .flatten()
-}
-
-/// Convert internal HistoricalRisk to the output HistoricalRiskData
-fn to_historical_risk_data(hr: HistoricalRisk) -> HistoricalRiskData {
-    HistoricalRiskData {
-        risk_delta: hr.risk_delta,
-        matching_patterns: hr
-            .matching_patterns
-            .into_iter()
-            .map(|mp| PatternMatchInfo {
-                pattern_type: mp.pattern_subtype,
-                description: mp.description,
-                confidence: mp.confidence,
-            })
-            .collect(),
-        overall_confidence: hr.overall_confidence,
-    }
 }
 
 /// List recent diff analyses for the project

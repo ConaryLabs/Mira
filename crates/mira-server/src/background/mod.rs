@@ -7,7 +7,6 @@
 
 mod briefings;
 
-pub(crate) mod change_patterns;
 pub mod code_health;
 pub mod diff_analysis;
 pub mod documentation;

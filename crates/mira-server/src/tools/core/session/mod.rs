@@ -586,13 +586,7 @@ mod tests {
             .unwrap();
         assert_eq!(result.0.action, "health_trends");
         assert!(result.0.message.contains("removed"));
-        match result.0.data {
-            Some(SessionData::HealthTrends(data)) => {
-                assert!(data.snapshots.is_empty());
-                assert!(data.trend.is_none());
-            }
-            other => panic!("Expected SessionData::HealthTrends, got {:?}", other),
-        }
+        assert!(result.0.data.is_none());
     }
 
     // ========================================================================

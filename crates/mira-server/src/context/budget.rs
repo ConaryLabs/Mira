@@ -10,8 +10,6 @@
 pub const PRIORITY_TEAM: f32 = 0.95;
 /// Priority for coding conventions
 pub const PRIORITY_CONVENTION: f32 = 0.9;
-/// Priority for memory decisions
-pub const PRIORITY_MEMORY: f32 = 0.85;
 /// Priority for reactive/recalled context
 pub const PRIORITY_REACTIVE: f32 = 0.75;
 /// Priority for semantic search results

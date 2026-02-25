@@ -1,14 +1,11 @@
 // background/diff_analysis/format.rs
 // Formatting functions for diff analysis output
 
-use super::types::{DiffAnalysisResult, HistoricalRisk, ImpactAnalysis, SemanticChange};
+use super::types::{DiffAnalysisResult, ImpactAnalysis, SemanticChange};
 use std::collections::HashSet;
 
 /// Format diff analysis result for display
-pub fn format_diff_analysis(
-    result: &DiffAnalysisResult,
-    historical_risk: Option<&HistoricalRisk>,
-) -> String {
+pub fn format_diff_analysis(result: &DiffAnalysisResult) -> String {
     let mut output = String::new();
 
     output.push_str(&format!(
@@ -41,25 +38,6 @@ pub fn format_diff_analysis(
     output.push_str(&format!("### Risk: {}\n", result.risk.overall));
     for flag in &result.risk.flags {
         output.push_str(&format!("- {}\n", flag));
-    }
-
-    // Historical Risk (from mined change patterns)
-    if let Some(hr) = historical_risk {
-        output.push_str(&format!(
-            "\n### Historical Risk: {}\n",
-            hr.risk_delta.to_uppercase()
-        ));
-        output.push_str(&format!(
-            "Based on {} matching pattern(s) (confidence: {:.0}%)\n",
-            hr.matching_patterns.len(),
-            hr.overall_confidence * 100.0
-        ));
-        for mp in &hr.matching_patterns {
-            output.push_str(&format!(
-                "- **{}**: {}\n",
-                mp.pattern_subtype, mp.description
-            ));
-        }
     }
 
     output

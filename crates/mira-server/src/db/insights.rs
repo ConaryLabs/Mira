@@ -219,8 +219,6 @@ fn fetch_pondering_insights(
             timestamp,
             evidence,
             row_id: Some(row_id),
-            trend: None,
-            change_summary: None,
             category: Some(category.to_string()),
         });
     }
@@ -282,8 +280,6 @@ fn fetch_doc_gap_insights(
             timestamp,
             evidence: reason,
             row_id: Some(row_id),
-            trend: None,
-            change_summary: None,
             category: Some("documentation".to_string()),
         });
     }

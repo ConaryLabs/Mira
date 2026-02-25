@@ -5,7 +5,6 @@
 // dependency analysis, pattern detection, and health snapshots have been removed.
 
 mod cargo;
-mod detection;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{

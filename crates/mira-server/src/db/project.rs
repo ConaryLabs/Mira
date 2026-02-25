@@ -335,23 +335,3 @@ pub fn get_active_projects_sync(
     rows.collect()
 }
 
-/// Project IDs with high-confidence patterns needing suggestions (limit 5)
-pub fn get_projects_needing_suggestions_sync(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT DISTINCT bp.project_id
-        FROM behavior_patterns bp
-        WHERE bp.confidence >= 0.7
-          AND bp.pattern_type IN ('file_sequence', 'tool_chain')
-          AND bp.occurrence_count >= 3
-          AND NOT EXISTS (
-              SELECT 1 FROM proactive_suggestions ps
-              WHERE ps.project_id = bp.project_id
-                AND ps.created_at > datetime('now', '-1 day')
-          )
-        LIMIT 5
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
-    rows.collect()
-}

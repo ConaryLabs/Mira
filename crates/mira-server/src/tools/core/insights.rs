@@ -127,11 +127,6 @@ pub async fn query_insights<C: ToolContext>(
                 };
                 let age = format_age(&insight.timestamp);
                 output.push_str(&format!("  {} {}{}\n", indicator, insight.description, age));
-                if let Some(ref trend) = insight.trend
-                    && let Some(ref summary) = insight.change_summary
-                {
-                    output.push_str(&format!("       Trend: {} ({})\n", trend, summary));
-                }
                 if let Some(ref evidence) = insight.evidence {
                     output.push_str(&format!("       {}\n", evidence));
                 }
@@ -168,8 +163,6 @@ pub async fn query_insights<C: ToolContext>(
                 priority_score: insight.priority_score,
                 confidence: insight.confidence,
                 evidence: insight.evidence.clone(),
-                trend: insight.trend.clone(),
-                change_summary: insight.change_summary.clone(),
                 category: item_category,
             }
         })

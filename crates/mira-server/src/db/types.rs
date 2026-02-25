@@ -27,28 +27,6 @@ pub struct SessionInfo {
     pub resumed_from: Option<String>,
 }
 
-/// Chat message record
-#[derive(Debug, Clone)]
-pub struct ChatMessage {
-    pub id: i64,
-    pub role: String,
-    pub content: String,
-    pub reasoning_content: Option<String>,
-    pub created_at: String,
-}
-
-/// Chat summary record
-#[derive(Debug, Clone)]
-pub struct ChatSummary {
-    pub id: i64,
-    pub project_id: Option<i64>,
-    pub summary: String,
-    pub message_range_start: i64,
-    pub message_range_end: i64,
-    pub summary_level: i32,
-    pub created_at: String,
-}
-
 /// Task record
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -110,12 +88,6 @@ pub struct UnifiedInsight {
     pub evidence: Option<String>,
     /// Row ID from behavior_patterns (pondering) for marking as shown
     pub row_id: Option<i64>,
-    /// Trend direction for health insights: "improved", "degraded", "stable", or "baseline"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trend: Option<String>,
-    /// Human-readable change summary, e.g. "B → C" or "42.3 → 58.1"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub change_summary: Option<String>,
     /// Dashboard category for grouping: "attention", "quality", "testing", "workflow", "documentation", "health"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,

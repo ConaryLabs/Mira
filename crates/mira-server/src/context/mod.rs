@@ -21,7 +21,7 @@ mod working_context;
 pub use analytics::{InjectionAnalytics, InjectionEvent};
 pub use budget::{
     BudgetEntry, BudgetManager, BudgetResult, PRIORITY_CONVENTION,
-    PRIORITY_FILE_AWARE, PRIORITY_GOALS, PRIORITY_MEMORY, PRIORITY_REACTIVE,
+    PRIORITY_FILE_AWARE, PRIORITY_GOALS, PRIORITY_REACTIVE,
     PRIORITY_SEMANTIC, PRIORITY_TASKS, PRIORITY_TEAM,
 };
 pub use cache::InjectionCache;

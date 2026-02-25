@@ -56,26 +56,3 @@ pub struct DiffStats {
     pub files: Vec<String>,
 }
 
-/// Historical risk assessment computed from mined change patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoricalRisk {
-    /// Overall risk adjustment: "elevated" or "normal"
-    pub risk_delta: String,
-    /// Patterns that matched the current diff
-    pub matching_patterns: Vec<MatchedPattern>,
-    /// Weighted average confidence across matched patterns
-    pub overall_confidence: f64,
-}
-
-/// A single pattern that matched the current diff
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MatchedPattern {
-    /// Pattern subtype: "module_hotspot", "co_change_gap", "size_risk"
-    pub pattern_subtype: String,
-    /// Human-readable description of the match
-    pub description: String,
-    /// Pattern confidence (0.0-1.0)
-    pub confidence: f64,
-    /// Bad outcome rate from historical data
-    pub bad_rate: f64,
-}

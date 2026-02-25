@@ -122,7 +122,7 @@ pub use project::{
     get_indexed_projects_sync, get_last_active_project_sync, get_or_create_project_sync,
     get_project_briefing_sync, get_project_info_sync, get_project_path_sync,
     get_project_paths_by_ids_sync, get_projects_for_briefing_check_sync,
-    get_projects_needing_suggestions_sync, get_server_state_sync, list_projects_sync,
+    get_server_state_sync, list_projects_sync,
     mark_session_for_briefing_sync, save_active_project_sync,
     set_server_state_sync, update_project_briefing_sync, update_project_name_sync,
     upsert_session_sync, upsert_session_with_branch_sync,

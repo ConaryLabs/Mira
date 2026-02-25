@@ -5,8 +5,8 @@ use crate::db::{get_error_patterns_sync, get_session_lineage_sync};
 use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
-    CapabilitiesData, CapabilityStatus, ErrorPatternItem, ErrorPatternsData, HealthTrendsData,
-    LineageSession, SessionData, SessionLineageData, SessionOutput,
+    CapabilitiesData, CapabilityStatus, ErrorPatternItem, ErrorPatternsData, LineageSession,
+    SessionData, SessionLineageData, SessionOutput,
 };
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 use crate::utils::truncate_at_boundary;
@@ -82,10 +82,7 @@ pub(super) async fn get_health_trends<C: ToolContext>(
     Ok(Json(SessionOutput {
         action: "health_trends".into(),
         message: "Health trends have been removed. Health snapshots were based on heuristic scoring that has been replaced by concrete signals (cargo check warnings and unused function detection via call graph).".to_string(),
-        data: Some(SessionData::HealthTrends(HealthTrendsData {
-            snapshots: vec![],
-            trend: None,
-        })),
+        data: None,
     }))
 }
 

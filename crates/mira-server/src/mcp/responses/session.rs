@@ -16,7 +16,6 @@ pub enum SessionData {
     History(SessionHistoryData),
     Insights(InsightsData),
     ErrorPatterns(ErrorPatternsData),
-    HealthTrends(HealthTrendsData),
     SessionLineage(SessionLineageData),
     Capabilities(CapabilitiesData),
 }
@@ -79,12 +78,6 @@ pub struct InsightItem {
     pub confidence: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
-    /// Trend direction when applicable (health insights)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trend: Option<String>,
-    /// Change summary when applicable (health insights)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub change_summary: Option<String>,
     /// Dashboard category for grouping
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
@@ -104,26 +97,6 @@ pub struct ErrorPatternItem {
     pub fix_description: Option<String>,
     pub occurrence_count: i64,
     pub last_seen: String,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct HealthTrendsData {
-    pub snapshots: Vec<HealthSnapshotItem>,
-    /// Overall trend direction: "improving", "degrading", or "stable"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trend: Option<String>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct HealthSnapshotItem {
-    pub snapshot_at: String,
-    pub module_count: i64,
-    pub avg_debt_score: f64,
-    pub max_debt_score: f64,
-    pub tier_distribution: String,
-    pub warning_count: i64,
-    pub todo_count: i64,
-    pub total_finding_count: i64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

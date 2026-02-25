@@ -15,10 +15,9 @@ pub use crate::git::{
     parse_working_stats, resolve_ref,
 };
 pub use heuristic::{analyze_diff_heuristic, calculate_risk_level};
-pub use impact::{build_impact_graph, compute_historical_risk, map_to_symbols};
+pub use impact::{build_impact_graph, map_to_symbols};
 pub use types::{
-    DiffAnalysisResult, DiffStats, HistoricalRisk, ImpactAnalysis, MatchedPattern, RiskAssessment,
-    SemanticChange,
+    DiffAnalysisResult, DiffStats, ImpactAnalysis, RiskAssessment, SemanticChange,
 };
 
 use crate::db::pool::DatabasePool;
