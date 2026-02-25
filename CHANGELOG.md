@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.0] - 2026-02-25
+
+### Changed
+- **Background LLM permanently removed** -- Deleted LLM factory, removed dead background task variants. All background intelligence (pondering, briefings, summaries, diff analysis) uses heuristics permanently. Only OpenAI embeddings remain as an optional API-key feature.
+- **Zero-key mode** -- Mira works fully out of the box without any API keys. Embeddings provide the only optional upgrade (semantic search).
+
+### Fixed
+- **Error message sanitization** -- MiraError::Db and callers/callees errors no longer leak rusqlite internals (table names, SQL fragments) to users.
+- **Watcher robustness** -- File watcher pending_changes retry count no longer resets on re-queue (preventing infinite retries under continuous modification). Pending changes preserved across panic-restarts via shared Arc.
+- **File permissions race** -- persist_api_key now uses atomic mode(0o600) on file creation instead of post-write chmod.
+- **Silent error logging** -- Added tracing for 8+ silently swallowed `let _ =` sites in hooks (user_prompt, precompact, session).
+- **Chunk start_line accuracy** -- split_large_chunk now calculates correct start_line for each sub-chunk instead of reusing the symbol's start_line.
+- **Memory stale-matching precision** -- mark_memories_stale uses parent/basename matching instead of basename-only, preventing over-broad staling for common filenames (mod.rs, lib.rs).
+- **SQLite retry robustness** -- retry_with_backoff inspects rusqlite error codes directly instead of brittle string matching.
+- **Embeddings batch isolation** -- A single bad batch no longer permanently blocks all pending embeddings.
+- **Retention safety** -- days=0 in retention config now skipped with warning instead of silently wiping tables.
+- **Supervisor shutdown latency** -- Worker backoff sleep now uses tokio::select with shutdown channel, reducing max shutdown delay from 60s to immediate.
+- **AllowedTable enum** -- count_table uses compile-time enum instead of runtime string allowlist.
+- **Session test determinism** -- Removed 1-second wall-clock sleep, replaced with SQL backdating.
+
+### Documentation
+- Updated all docs to reflect background LLM removal (DESIGN.md, CONCEPTS.md, CONFIGURATION.md, diff.md, index.md, team.md, module docs).
+- Fixed PostToolUseFailure hook name typo in DESIGN.md.
+- Added bundle action documentation to code.md.
+- Fixed insight_id vs row_id naming inconsistency in insights.md.
+- Rephrased function-call syntax in error messages and README to natural language.
+
+---
+
 ## [0.8.13] - 2026-02-24
 
 ### Changed
