@@ -2,8 +2,8 @@
 // Database queries for pondering data gathering
 
 use super::types::{
-    ChurnHotspot, FragileModule, HealthTrend, MemoryEntry, ProjectInsightData, RecurringError,
-    RevertCluster, SessionPattern, StaleGoal, ToolUsageEntry, TrendDirection, UntestedFile,
+    ChurnHotspot, FragileModule, HealthTrend, ProjectInsightData, RecurringError, RevertCluster,
+    SessionPattern, StaleGoal, ToolUsageEntry, TrendDirection, UntestedFile,
 };
 use crate::db::pool::DatabasePool;
 use crate::utils::truncate;
@@ -72,45 +72,7 @@ pub(super) fn summarize_arguments(args: &str) -> String {
     truncate(args, 50)
 }
 
-/// Get recent memories for a project
-pub(super) async fn get_recent_memories(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Result<Vec<MemoryEntry>, String> {
-    pool.run(move |conn| {
-        let mut stmt = conn
-            .prepare(
-                r#"
-                SELECT content, fact_type, category, status
-                FROM memory_facts
-                WHERE project_id = ?
-                  AND fact_type IN ('general','preference','decision','pattern','context','persona')
-                  AND updated_at > datetime('now', '-7 days')
-                ORDER BY updated_at DESC
-                LIMIT 50
-            "#,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to prepare: {}", e))?;
-
-        let rows = stmt
-            .query_map(params![project_id], |row| {
-                Ok(MemoryEntry {
-                    content: row.get(0)?,
-                    fact_type: row.get(1)?,
-                    category: row.get(2)?,
-                    status: row.get(3)?,
-                })
-            })
-            .map_err(|e| anyhow::anyhow!("Failed to query: {}", e))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow::anyhow!("Failed to collect: {}", e))
-    })
-    .await
-    .map_err(Into::into)
-}
-
-// ── New project-aware queries ──────────────────────────────────────────
+// ── Project-aware queries ──────────────────────────────────────────────
 
 /// Goals with `status = 'in_progress'` that haven't been updated recently.
 pub(super) async fn get_stale_goals(
@@ -726,36 +688,6 @@ pub(super) async fn get_project_insight_data(
     })
 }
 
-/// Get existing insights for a project (to avoid duplicating them).
-pub(super) async fn get_existing_insights(
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Result<Vec<String>, String> {
-    pool.run(move |conn| {
-        let mut stmt = conn
-            .prepare(
-                r#"
-                SELECT json_extract(pattern_data, '$.description')
-                FROM behavior_patterns
-                WHERE project_id = ?
-                  AND pattern_type LIKE 'insight_%'
-                ORDER BY last_triggered_at DESC
-                LIMIT 20
-            "#,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to prepare existing insights: {}", e))?;
-
-        let rows = stmt
-            .query_map(params![project_id], |row| row.get::<_, String>(0))
-            .map_err(|e| anyhow::anyhow!("Failed to query existing insights: {}", e))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow::anyhow!("Failed to collect existing insights: {}", e))
-    })
-    .await
-    .map_err(Into::into)
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /// Extract top-level module names from a files_json JSON array.
@@ -1102,16 +1034,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_recent_memories_empty_tables() {
-        use crate::db::test_support::setup_test_pool_with_project;
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        let result = get_recent_memories(&pool, project_id).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[tokio::test]
     async fn test_get_stale_goals_empty_tables() {
         use crate::db::test_support::setup_test_pool_with_project;
         let (pool, project_id) = setup_test_pool_with_project().await;
@@ -1189,16 +1111,6 @@ mod tests {
         let result = get_health_trend(&pool, project_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_get_existing_insights_empty_tables() {
-        use crate::db::test_support::setup_test_pool_with_project;
-        let (pool, project_id) = setup_test_pool_with_project().await;
-
-        let result = get_existing_insights(&pool, project_id).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]

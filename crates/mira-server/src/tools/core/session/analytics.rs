@@ -310,17 +310,17 @@ pub(super) async fn get_capabilities<C: ToolContext>(
         }
         .into(),
         detail: if !has_embeddings {
-            Some("Set OPENAI_API_KEY for semantic search".into())
+            Some("keyword + fuzzy search active | add OPENAI_API_KEY for semantic search".into())
         } else {
             None
         },
     });
 
-    // Background LLM (removed -- all background tasks use local heuristics)
+    // Background analysis (local heuristics, no LLM required)
     caps.push(CapabilityStatus {
-        name: "background_llm".into(),
-        status: "disabled".into(),
-        detail: Some("Background tasks use local heuristic analysis".into()),
+        name: "background_analysis".into(),
+        status: "available".into(),
+        detail: Some("Local heuristic analysis".into()),
     });
 
     // Fuzzy search (requires cache)

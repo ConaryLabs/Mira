@@ -80,10 +80,3 @@ pub struct MatchedPattern {
     pub bad_rate: f64,
 }
 
-/// LLM response structure for diff analysis
-#[derive(Debug, Deserialize)]
-pub(super) struct LlmDiffResponse {
-    pub changes: Vec<SemanticChange>,
-    pub summary: String,
-    pub risk_flags: Vec<String>,
-}

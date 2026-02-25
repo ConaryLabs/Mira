@@ -913,19 +913,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_capabilities_no_llm_unavailable() {
+    async fn test_capabilities_background_analysis_available() {
         let ctx = MockToolContext::new().await;
         let result = handle_session(&ctx, make_request(SessionAction::Capabilities))
             .await
             .unwrap();
         match result.0.data {
             Some(SessionData::Capabilities(data)) => {
-                let llm = data
+                let analysis = data
                     .capabilities
                     .iter()
-                    .find(|c| c.name == "background_llm")
+                    .find(|c| c.name == "background_analysis")
                     .unwrap();
-                assert_eq!(llm.status, "disabled");
+                assert_eq!(analysis.status, "available");
             }
             other => panic!("Expected SessionData::Capabilities, got {:?}", other),
         }

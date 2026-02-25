@@ -1,7 +1,6 @@
 // crates/mira-server/src/background/code_health/mod.rs
 // Background worker for detecting code health issues using concrete signals
 
-mod analysis;
 mod cargo;
 pub mod conventions;
 pub mod dependencies;
@@ -47,54 +46,6 @@ async fn find_project_for_health_scan(
 
             for (project_id, project_path) in all_projects {
                 if needs_health_scan(conn, project_id) && Path::new(&project_path).exists() {
-                    return Ok(Some((project_id, project_path)));
-                }
-            }
-            Ok::<_, rusqlite::Error>(None)
-        })
-        .await?;
-
-    Ok(result)
-}
-
-/// Find a project that needs LLM health analysis for the given subtask.
-/// Returns a project where `health_scan_time` is more recent than the subtask's
-/// own timestamp (`task_key`), meaning fast scans have run since this LLM task
-/// last completed. This decouples LLM tasks from the scan-needed flag so they
-/// can run on a slower cadence without being starved by fast scans.
-async fn find_project_for_llm_health(
-    main_pool: &Arc<DatabasePool>,
-    code_pool: &Arc<DatabasePool>,
-    task_key: &str,
-) -> Result<Option<(i64, String)>, String> {
-    let project_ids = code_pool.run(get_indexed_project_ids_sync).await?;
-
-    if project_ids.is_empty() {
-        return Ok(None);
-    }
-
-    let key = task_key.to_string();
-    let ids = project_ids;
-    let result = main_pool
-        .run(move |conn| {
-            let all_projects = get_project_paths_by_ids_sync(conn, &ids)?;
-
-            for (project_id, project_path) in all_projects {
-                if !Path::new(&project_path).exists() {
-                    continue;
-                }
-                // Check if fast scans have completed more recently than this LLM task
-                let scan_time =
-                    crate::db::get_observation_info_sync(conn, project_id, "health_scan_time");
-                let llm_time = crate::db::get_observation_info_sync(conn, project_id, &key);
-
-                let needs_run = match (&scan_time, &llm_time) {
-                    (Some(_), None) => true,                   // Scanned but LLM task never ran
-                    (Some((_, st)), Some((_, lt))) => st > lt, // Scanned more recently
-                    _ => false,                                // Never scanned
-                };
-
-                if needs_run {
                     return Ok(Some((project_id, project_path)));
                 }
             }

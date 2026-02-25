@@ -295,11 +295,11 @@ pub async fn session_start<C: ToolContext>(
     let has_embeddings = ctx.embeddings().is_some();
 
     let (mode, mode_detail) = if has_embeddings {
-        ("semantic search", None)
+        ("semantic", None)
     } else {
         (
-            "basic",
-            Some("semantic search disabled — no OPENAI_API_KEY configured"),
+            "local",
+            Some("keyword + fuzzy search active | add OPENAI_API_KEY for semantic search"),
         )
     };
 
@@ -309,10 +309,7 @@ pub async fn session_start<C: ToolContext>(
     ));
 
     if let Some(detail) = mode_detail {
-        response.push_str(&format!(
-            "  → {} | run `mira setup` to configure API keys and unlock all features\n",
-            detail
-        ));
+        response.push_str(&format!("  {}\n", detail));
     }
 
     // Lightweight stale index detection: compare last indexed_at against git HEAD

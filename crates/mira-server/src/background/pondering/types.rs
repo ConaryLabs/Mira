@@ -12,14 +12,6 @@ pub(crate) struct ToolUsageEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct MemoryEntry {
-    pub content: String,
-    pub fact_type: String,
-    pub category: Option<String>,
-    pub status: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PonderingInsight {
     pub pattern_type: String,
     pub description: String,
