@@ -1,6 +1,7 @@
 // crates/mira-server/src/hooks/mod.rs
 // Claude Code hook handlers
 
+pub mod ast_diff;
 pub mod permission;
 pub mod post_tool;
 pub mod post_tool_failure;

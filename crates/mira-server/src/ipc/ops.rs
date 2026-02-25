@@ -1047,3 +1047,26 @@ pub async fn distill_team_session(server: &MiraServer, params: Value) -> Result<
         None => Ok(json!({"distilled": false})),
     }
 }
+
+/// Mark memories referencing a file as stale when that file changes.
+pub async fn mark_memories_stale(server: &MiraServer, params: Value) -> Result<Value> {
+    let project_id = params
+        .get("project_id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
+    let file_path = params
+        .get("file_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing required param: file_path"))?
+        .to_string();
+
+    let count = server
+        .pool
+        .interact(move |conn| {
+            crate::db::mark_memories_stale_for_file_sync(conn, project_id, &file_path)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await?;
+
+    Ok(json!({"count": count}))
+}

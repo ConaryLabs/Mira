@@ -140,6 +140,7 @@ pub use memory::{
     get_project_persona_sync,
     import_confirmed_memory_sync,
     mark_fact_has_embedding_sync,
+    mark_memories_stale_for_file_sync,
     parse_memory_fact_row,
     recall_semantic_with_entity_boost_sync,
     record_memory_access_sync,

@@ -169,6 +169,8 @@ async fn dispatch(
         "distill_team_session" => super::ops::distill_team_session(server, params).await,
         // Phase 4: UserPromptSubmit
         "get_user_prompt_context" => super::ops::get_user_prompt_context(server, params).await,
+        // Memory staleness
+        "mark_memories_stale" => super::ops::mark_memories_stale(server, params).await,
         _ => anyhow::bail!("unknown op: {op}"),
     }
 }

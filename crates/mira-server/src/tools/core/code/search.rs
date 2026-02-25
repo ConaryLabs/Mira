@@ -11,7 +11,8 @@ use crate::mcp::responses::{
     SymbolInfo, SymbolsData,
 };
 use crate::search::{
-    CrossRefType, crossref_search, expand_context_with_conn, format_crossref_results,
+    CrossRefType, QueryIntent, crossref_search, expand_context_with_conn, find_callers,
+    format_crossref_results, skeletonize_content,
 };
 use crate::tools::core::{ToolContext, get_project_info};
 use crate::utils::truncate;
@@ -73,6 +74,7 @@ pub async fn search_code<C: ToolContext>(
 
     // Use shared query core for hybrid search
     let result = query_search_code(ctx, &query, limit).await?;
+    let detected_intent = result.intent;
 
     if result.results.is_empty() {
         // Check whether the project has any indexed data at all
@@ -161,35 +163,127 @@ pub async fn search_code<C: ToolContext>(
         .await
         .map_err(|e| MiraError::Other(format!("Failed to expand code search results: {}. Try re-indexing with index(action=\"project\").", e)))?;
 
+    /// Number of top-ranked results that get full content; rest are skeletonized
+    const TIERED_FULL_COUNT: usize = 2;
+
     let items: Vec<CodeSearchResult> = expanded_results
         .iter()
-        .map(|(file_path, content, score, expanded)| CodeSearchResult {
-            file_path: file_path.clone(),
-            score: *score,
-            symbol_info: expanded.as_ref().and_then(|(info, _)| info.clone()),
-            content: expanded
-                .as_ref()
-                .map(|(_, code)| truncate(code, 1500))
-                .unwrap_or_else(|| truncate(content, 500)),
+        .enumerate()
+        .map(|(rank, (file_path, content, score, expanded))| {
+            let use_full = rank < TIERED_FULL_COUNT;
+            CodeSearchResult {
+                file_path: file_path.clone(),
+                score: *score,
+                symbol_info: if use_full {
+                    expanded.as_ref().and_then(|(info, _)| info.clone())
+                } else {
+                    None
+                },
+                content: if use_full {
+                    expanded
+                        .as_ref()
+                        .map(|(_, code)| truncate(code, 1500))
+                        .unwrap_or_else(|| truncate(content, 500))
+                } else {
+                    skeletonize_content(
+                        expanded
+                            .as_ref()
+                            .map(|(_, code)| code.as_str())
+                            .unwrap_or(content),
+                    )
+                },
+            }
         })
         .collect();
 
-    for (file_path, content, score, expanded) in expanded_results {
+    for (rank, (file_path, content, score, expanded)) in expanded_results.into_iter().enumerate() {
         response.push_str(&format!("━━━ {} (score: {:.2}) ━━━\n", file_path, score));
 
-        if let Some((symbol_info, full_code)) = expanded {
-            if let Some(info) = symbol_info {
-                response.push_str(&format!("{}\n", info));
-            }
-            let code_display = if full_code.len() > 1500 {
-                format!("{}\n[truncated]", truncate(&full_code, 1500))
+        if rank < TIERED_FULL_COUNT {
+            // Top-ranked results get full content
+            if let Some((symbol_info, full_code)) = expanded {
+                if let Some(info) = symbol_info {
+                    response.push_str(&format!("{}\n", info));
+                }
+                let code_display = if full_code.len() > 1500 {
+                    format!("{}\n[truncated]", truncate(&full_code, 1500))
+                } else {
+                    full_code
+                };
+                response.push_str(&format!("```\n{}\n```\n\n", code_display));
             } else {
-                full_code
-            };
-            response.push_str(&format!("```\n{}\n```\n\n", code_display));
+                let display = truncate(&content, 500);
+                response.push_str(&format!("```\n{}\n```\n\n", display));
+            }
         } else {
-            let display = truncate(&content, 500);
-            response.push_str(&format!("```\n{}\n```\n\n", display));
+            // Lower-ranked results get skeletonized
+            let source = expanded
+                .as_ref()
+                .map(|(_, code)| code.as_str())
+                .unwrap_or(&content);
+            let skeleton = skeletonize_content(source);
+            response.push_str(&format!("```\n{}\n```\n\n", skeleton));
+        }
+    }
+
+    // Refactor intent: enrich top results with caller info ("blast radius")
+    if detected_intent == QueryIntent::Refactor && !items.is_empty() {
+        // Extract public function names from top results for caller lookup
+        let mut pub_fns: Vec<String> = Vec::new();
+        for item in items.iter().take(3) {
+            for line in item.content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn ") {
+                    // Extract function name from signature
+                    let after_fn = if let Some(rest) = trimmed.strip_prefix("pub async fn ") {
+                        rest
+                    } else if let Some(rest) = trimmed.strip_prefix("pub fn ") {
+                        rest
+                    } else {
+                        continue;
+                    };
+                    if let Some(name) = after_fn.split('(').next() {
+                        let name = name.split('<').next().unwrap_or(name).trim();
+                        if !name.is_empty() {
+                            pub_fns.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        if !pub_fns.is_empty() {
+            // Look up callers for discovered public functions
+            let caller_results: Vec<(String, Vec<crate::search::CrossRefResult>)> = {
+                let fns = pub_fns.clone();
+                ctx.code_pool()
+                    .run(move |conn| -> Result<Vec<(String, Vec<crate::search::CrossRefResult>)>, MiraError> {
+                        let mut out = Vec::new();
+                        for fn_name in &fns {
+                            match find_callers(conn, project_id, fn_name, 5) {
+                                Ok(callers) if !callers.is_empty() => {
+                                    out.push((fn_name.clone(), callers));
+                                }
+                                _ => {}
+                            }
+                        }
+                        Ok(out)
+                    })
+                    .await
+                    .unwrap_or_default()
+            };
+
+            if !caller_results.is_empty() {
+                response.push_str("━━━ Blast Radius (callers of top results) ━━━\n");
+                for (fn_name, callers) in &caller_results {
+                    response.push_str(&format!("  {} ({} callers):", fn_name, callers.len()));
+                    for caller in callers {
+                        response.push_str(&format!(" {}", caller.symbol_name));
+                    }
+                    response.push('\n');
+                }
+                response.push('\n');
+            }
         }
     }
 

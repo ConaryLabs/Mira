@@ -252,6 +252,11 @@ fn migration_registry() -> Vec<Migration> {
             name: "milestones_temporal_tracking",
             func: migrate_milestones_temporal_tracking,
         },
+        Migration {
+            version: 46,
+            name: "memory_facts_staleness",
+            func: memory::migrate_memory_facts_staleness,
+        },
     ]
 }
 

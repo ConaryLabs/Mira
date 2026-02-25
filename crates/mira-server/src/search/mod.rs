@@ -5,6 +5,7 @@ mod context;
 mod crossref;
 mod keyword;
 mod semantic;
+pub mod skeleton;
 mod tree;
 mod utils;
 
@@ -15,6 +16,8 @@ pub use crossref::{
 };
 pub use keyword::keyword_search;
 pub use semantic::{
-    HybridSearchResult, SearchResult, SearchType, format_results, hybrid_search, semantic_search,
+    HybridSearchResult, QueryIntent, ResultDetail, SearchResult, SearchType, format_results,
+    hybrid_search, semantic_search,
 };
+pub use skeleton::skeletonize_content;
 pub use utils::{distance_to_score, embedding_to_bytes, format_project_header};

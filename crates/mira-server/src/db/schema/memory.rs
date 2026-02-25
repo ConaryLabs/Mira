@@ -468,6 +468,27 @@ pub fn migrate_memory_facts_suspicious(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate memory_facts to add staleness tracking columns.
+///
+/// When code files referenced by a memory change, the memory is marked stale.
+/// Stale memories get a graduated recall penalty that increases over time,
+/// deprioritizing outdated context without deleting it.
+pub fn migrate_memory_facts_staleness(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "memory_facts") {
+        return Ok(());
+    }
+
+    if !column_exists(conn, "memory_facts", "stale_since") {
+        tracing::info!("Migrating memory_facts to add staleness tracking");
+        conn.execute_batch(
+            "ALTER TABLE memory_facts ADD COLUMN stale_since TEXT;
+             ALTER TABLE memory_facts ADD COLUMN stale_file_path TEXT;",
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Drop OLD teams tables (pre-team-intelligence-layer).
 ///
 /// The old `teams` table lacked a `config_path` column. New tables created by

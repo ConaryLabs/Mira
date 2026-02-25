@@ -1,6 +1,7 @@
 // crates/mira-server/src/hooks/post_tool.rs
 // PostToolUse hook handler - tracks file changes and detects team conflicts
 
+use crate::hooks::ast_diff;
 use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use anyhow::{Context, Result};
 
@@ -135,6 +136,14 @@ pub async fn run() -> Result<()> {
         post_input.tool_name.as_str(),
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit"
     );
+
+    // Mark memories referencing this file as stale
+    if is_write_tool {
+        client
+            .mark_memories_stale_for_file(project_id, &file_path)
+            .await;
+    }
+
     if is_write_tool
         && let Some(membership) = client.get_team_membership(&post_input.session_id).await
     {
@@ -172,6 +181,57 @@ pub async fn run() -> Result<()> {
                 count = conflicts.len(),
                 "File conflict(s) detected with teammates"
             );
+        }
+    }
+
+    // AST-level change detection for Write/Edit tools
+    if is_write_tool {
+        if let Some((_, project_path)) = client.resolve_project(None, sid).await {
+            if let Some(old_content) =
+                ast_diff::get_previous_content(&file_path, &project_path).await
+            {
+                // Read the current (new) file content
+                if let Ok(new_content) = tokio::fs::read_to_string(&file_path).await {
+                    if let Some(changes) = ast_diff::detect_structural_changes(
+                        std::path::Path::new(&file_path),
+                        &old_content,
+                        &new_content,
+                    ) {
+                        if !changes.is_empty() {
+                            let change_summary: Vec<String> = changes
+                                .iter()
+                                .take(5)
+                                .map(|c| {
+                                    format!(
+                                        "{}: {} `{}` at line {}",
+                                        c.change_kind, c.symbol_kind, c.symbol_name, c.line_number
+                                    )
+                                })
+                                .collect();
+
+                            let data = serde_json::json!({
+                                "behavior_type": "structural_change",
+                                "file_path": file_path,
+                                "changes": change_summary,
+                            });
+                            client
+                                .log_behavior(
+                                    &post_input.session_id,
+                                    project_id,
+                                    "ast_diff",
+                                    data,
+                                )
+                                .await;
+
+                            tracing::debug!(
+                                file = %file_path,
+                                count = changes.len(),
+                                "AST diff detected structural changes"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 

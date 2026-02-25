@@ -61,6 +61,7 @@ pub fn store_memory_sync(
                     "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
                      session_count = session_count + 1, last_session_id = ?, user_id = COALESCE(user_id, ?),
                      scope = ?, branch = ?, team_id = ?, suspicious = ?,
+                     stale_since = NULL, stale_file_path = NULL,
                      updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     rusqlite::params![
                         params.content, params.fact_type, params.category, params.confidence,
@@ -78,6 +79,7 @@ pub fn store_memory_sync(
                 conn.execute(
                     "UPDATE memory_facts SET content = ?, fact_type = ?, category = ?, confidence = ?,
                      user_id = COALESCE(user_id, ?), scope = ?, branch = ?, team_id = ?, suspicious = ?,
+                     stale_since = NULL, stale_file_path = NULL,
                      updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     rusqlite::params![
                         params.content, params.fact_type, params.category, params.confidence,
@@ -159,6 +161,46 @@ pub fn import_confirmed_memory_sync(
     }
 }
 
+/// Mark memories referencing a file as stale when that file changes.
+///
+/// Searches memory_facts content for references to the file path (both full path
+/// and basename). Only marks not-yet-stale memories (stale_since IS NULL) to avoid
+/// resetting the staleness clock on already-stale memories.
+///
+/// Returns the number of memories marked stale.
+pub fn mark_memories_stale_for_file_sync(
+    conn: &rusqlite::Connection,
+    project_id: i64,
+    file_path: &str,
+) -> rusqlite::Result<usize> {
+    // Extract basename for matching (e.g., "main.rs" from "/src/main.rs")
+    let basename = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(file_path);
+
+    // Match memories that reference this file by full path or basename.
+    // Only mark memories that aren't already stale.
+    let updated = conn.execute(
+        "UPDATE memory_facts
+         SET stale_since = CURRENT_TIMESTAMP, stale_file_path = ?1
+         WHERE project_id = ?2
+           AND stale_since IS NULL
+           AND (content LIKE '%' || ?1 || '%' OR content LIKE '%' || ?3 || '%')",
+        rusqlite::params![file_path, project_id, basename],
+    )?;
+
+    if updated > 0 {
+        tracing::debug!(
+            count = updated,
+            file = file_path,
+            "Marked memories as stale for changed file"
+        );
+    }
+
+    Ok(updated)
+}
+
 /// Store embedding for a fact and mark as embedded (sync version for pool.interact())
 pub fn store_fact_embedding_sync(
     conn: &rusqlite::Connection,
@@ -179,4 +221,188 @@ pub fn store_fact_embedding_sync(
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::setup_test_connection;
+
+    fn insert_project(conn: &rusqlite::Connection) -> i64 {
+        conn.execute(
+            "INSERT INTO projects (path, name) VALUES ('/test/staleness', 'staleness-test')",
+            [],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn store_memory(conn: &rusqlite::Connection, project_id: i64, content: &str) -> i64 {
+        store_memory_sync(
+            conn,
+            StoreMemoryParams {
+                project_id: Some(project_id),
+                key: None,
+                content,
+                fact_type: "decision",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("test-session"),
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+                suspicious: false,
+            },
+        )
+        .unwrap()
+    }
+
+    fn get_stale_since(conn: &rusqlite::Connection, id: i64) -> Option<String> {
+        conn.query_row(
+            "SELECT stale_since FROM memory_facts WHERE id = ?",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_mark_stale_matches_full_path() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        let id = store_memory(&conn, pid, "The config in /src/config.rs uses builder pattern");
+        assert!(get_stale_since(&conn, id).is_none());
+
+        let count = mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();
+        assert_eq!(count, 1);
+        assert!(get_stale_since(&conn, id).is_some());
+    }
+
+    #[test]
+    fn test_mark_stale_matches_basename() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        let id = store_memory(&conn, pid, "The config.rs file uses builder pattern");
+        assert!(get_stale_since(&conn, id).is_none());
+
+        let count = mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();
+        assert_eq!(count, 1);
+        assert!(get_stale_since(&conn, id).is_some());
+    }
+
+    #[test]
+    fn test_mark_stale_skips_unrelated_memories() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        let related = store_memory(&conn, pid, "auth.rs handles authentication");
+        let unrelated = store_memory(&conn, pid, "database uses connection pooling");
+
+        let count = mark_memories_stale_for_file_sync(&conn, pid, "/src/auth.rs").unwrap();
+        assert_eq!(count, 1);
+        assert!(get_stale_since(&conn, related).is_some());
+        assert!(get_stale_since(&conn, unrelated).is_none());
+    }
+
+    #[test]
+    fn test_mark_stale_does_not_restale_already_stale() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+        let id = store_memory(&conn, pid, "The config.rs uses builder pattern");
+
+        // Mark stale first time
+        mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();
+        let first_stale = get_stale_since(&conn, id).unwrap();
+
+        // Manually backdate the stale_since to verify it doesn't get overwritten
+        conn.execute(
+            "UPDATE memory_facts SET stale_since = '2020-01-01 00:00:00' WHERE id = ?",
+            [id],
+        )
+        .unwrap();
+
+        // Second call should not update (already stale)
+        let count = mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();
+        assert_eq!(count, 0);
+        let second_stale = get_stale_since(&conn, id).unwrap();
+        assert_eq!(second_stale, "2020-01-01 00:00:00");
+        assert_ne!(second_stale, first_stale);
+    }
+
+    #[test]
+    fn test_upsert_clears_staleness() {
+        let conn = setup_test_connection();
+        let pid = insert_project(&conn);
+
+        // Create a keyed memory and mark it stale
+        let id = store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("config_pattern"),
+                content: "config.rs uses builder pattern",
+                fact_type: "decision",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("session-1"),
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+                suspicious: false,
+            },
+        )
+        .unwrap();
+
+        mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();
+        assert!(get_stale_since(&conn, id).is_some());
+
+        // Re-confirm the memory via upsert (new session)
+        let id2 = store_memory_sync(
+            &conn,
+            StoreMemoryParams {
+                project_id: Some(pid),
+                key: Some("config_pattern"),
+                content: "config.rs uses builder pattern (confirmed)",
+                fact_type: "decision",
+                category: None,
+                confidence: 0.8,
+                session_id: Some("session-2"),
+                user_id: None,
+                scope: "project",
+                branch: None,
+                team_id: None,
+                suspicious: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(id, id2, "upsert should update in place");
+        assert!(
+            get_stale_since(&conn, id).is_none(),
+            "upsert should clear staleness"
+        );
+    }
+
+    #[test]
+    fn test_mark_stale_respects_project_boundary() {
+        let conn = setup_test_connection();
+        let pid1 = insert_project(&conn);
+        // Insert second project
+        conn.execute(
+            "INSERT INTO projects (path, name) VALUES ('/test/other', 'other-test')",
+            [],
+        )
+        .unwrap();
+        let pid2 = conn.last_insert_rowid();
+
+        let id1 = store_memory(&conn, pid1, "config.rs in project 1");
+        let id2 = store_memory(&conn, pid2, "config.rs in project 2");
+
+        // Only mark stale for project 1
+        let count = mark_memories_stale_for_file_sync(&conn, pid1, "/src/config.rs").unwrap();
+        assert_eq!(count, 1);
+        assert!(get_stale_since(&conn, id1).is_some());
+        assert!(get_stale_since(&conn, id2).is_none());
+    }
 }

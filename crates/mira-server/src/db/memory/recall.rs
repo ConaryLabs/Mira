@@ -7,6 +7,7 @@ use mira_types::MemoryFact;
 
 use super::ranking::{
     RecallRow, TEAM_SCOPE_BOOST, apply_branch_boost, apply_entity_boost, apply_recency_boost,
+    apply_staleness_penalty,
 };
 use super::{parse_memory_fact_row, scope_filter_sql};
 
@@ -16,13 +17,14 @@ const USER_FACT_TYPES_SQL: &str =
 
 /// Cached semantic recall query with scope filtering.
 ///
-/// Returns SQL that selects (fact_id, content, distance, branch, team_id, fact_type, category, status, updated_at)
+/// Returns SQL that selects (fact_id, content, distance, branch, team_id, fact_type, category, status, updated_at, stale_since)
 /// from vec_memory + memory_facts. Inlines metadata to avoid N+1 queries.
 /// Parameters: ?1 = embedding_bytes, ?2 = project_id, ?3 = limit, ?4 = user_id, ?5 = team_id
 static SEMANTIC_RECALL_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "SELECT v.fact_id, f.content, vec_distance_cosine(v.embedding, ?1) as distance,
-                f.branch, f.team_id, f.fact_type, f.category, f.status, f.updated_at
+                f.branch, f.team_id, f.fact_type, f.category, f.status, f.updated_at,
+                f.stale_since
          FROM vec_memory v
          JOIN memory_facts f ON v.fact_id = f.id
          WHERE {}
@@ -86,6 +88,7 @@ pub fn recall_semantic_with_entity_boost_sync(
                     category: row.get(6)?,
                     status: row.get(7)?,
                     updated_at: row.get(8)?,
+                    stale_since: row.get(9)?,
                 })
             },
         )?
@@ -116,6 +119,8 @@ pub fn recall_semantic_with_entity_boost_sync(
             }
             // Recency boost: recent memories get up to 5% distance reduction
             r.distance = apply_recency_boost(r.distance, r.updated_at.as_deref());
+            // Staleness penalty: memories whose linked code changed get deprioritized
+            r.distance = apply_staleness_penalty(r.distance, r.stale_since.as_deref());
             r
         })
         .collect();

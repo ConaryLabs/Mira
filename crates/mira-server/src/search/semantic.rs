@@ -3,6 +3,7 @@
 
 use super::context::expand_context;
 use super::keyword::keyword_search;
+use super::skeleton::skeletonize_content;
 use super::utils::{Locatable, deduplicate_by_location, distance_to_score, embedding_to_bytes};
 use crate::Result;
 use crate::db::pool::DatabasePool;
@@ -61,6 +62,9 @@ impl std::fmt::Display for SearchType {
 pub struct HybridSearchResult {
     pub results: Vec<SearchResult>,
     pub search_type: SearchType,
+    /// Detected query intent, exposed so callers can apply intent-specific
+    /// post-processing (e.g. caller enrichment for Refactor intent)
+    pub intent: QueryIntent,
 }
 
 /// Semantic search using embeddings
@@ -111,6 +115,10 @@ pub enum QueryIntent {
     Examples,
     /// "docs for X" - looking for documentation
     Documentation,
+    /// "fix bug", "error handling", "failing test" - debugging/troubleshooting
+    Debug,
+    /// "refactor", "restructure", "move", "extract" - code restructuring
+    Refactor,
 }
 
 /// Detect intent from query text
@@ -145,6 +153,37 @@ fn detect_query_intent(query: &str) -> QueryIntent {
         || q.contains("definition of")
     {
         return QueryIntent::Implementation;
+    }
+
+    // Debug intent - fix/troubleshoot/error patterns
+    if q.contains("fix")
+        || q.contains("bug")
+        || q.contains("error")
+        || q.contains("broken")
+        || q.contains("failing")
+        || q.contains("crash")
+        || q.contains("debug")
+        || q.contains("troubleshoot")
+        || q.contains("panic")
+        || q.contains("issue with")
+    {
+        return QueryIntent::Debug;
+    }
+
+    // Refactor intent - restructure/reorganize patterns
+    if q.contains("refactor")
+        || q.contains("restructure")
+        || q.contains("reorganize")
+        || q.contains("move ")
+        || q.contains("rename")
+        || q.contains("extract ")
+        || q.contains("split ")
+        || q.contains("merge ")
+        || q.contains("consolidate")
+        || q.contains("blast radius")
+        || q.contains("impact of changing")
+    {
+        return QueryIntent::Refactor;
     }
 
     QueryIntent::General
@@ -235,14 +274,59 @@ fn rerank_results_with_intent(
                     boost *= 1.25;
                 }
             }
+            QueryIntent::Debug => {
+                // Boost error handling code
+                if result.content.contains("Error")
+                    || result.content.contains("error")
+                    || result.content.contains("Result<")
+                    || result.content.contains("unwrap")
+                    || result.content.contains("expect(")
+                    || result.content.contains("panic!")
+                    || result.content.contains("bail!")
+                    || result.content.contains("anyhow!")
+                    || result.content.contains("catch")
+                    || result.content.contains("except")
+                    || result.content.contains("try")
+                {
+                    boost *= 1.25;
+                }
+                // Boost test files for debugging context
+                if result.file_path.contains("test") {
+                    boost *= 1.20;
+                }
+            }
+            QueryIntent::Refactor => {
+                // Boost public API surfaces (signatures matter most for refactoring)
+                if result.content.contains("pub fn ")
+                    || result.content.contains("pub struct ")
+                    || result.content.contains("pub enum ")
+                    || result.content.contains("pub trait ")
+                    || result.content.contains("export ")
+                {
+                    boost *= 1.30;
+                }
+                // Boost files with impl blocks (high-impact refactor targets)
+                if result.content.contains("impl ") {
+                    boost *= 1.15;
+                }
+            }
             QueryIntent::General => {}
         }
 
-        // Boost recent files (up to 20% for files modified in last day)
+        // Boost recent files -- stronger for Debug intent since recently changed
+        // code is likely the source of bugs
         if let Some(modified) = mod_times.get(&result.file_path)
             && let Ok(age) = now.duration_since(*modified)
         {
-            let recency_boost = if age < one_day {
+            let recency_boost = if intent == QueryIntent::Debug {
+                if age < one_day {
+                    1.30 // Much stronger recency boost for debug
+                } else if age < one_week {
+                    1.15
+                } else {
+                    1.0
+                }
+            } else if age < one_day {
                 1.20 // Modified today
             } else if age < one_week {
                 1.10 // Modified this week
@@ -309,8 +393,18 @@ pub async fn hybrid_search(
     project_path: Option<&str>,
     limit: usize,
 ) -> Result<HybridSearchResult> {
+    // Detect intent early so we can adjust search strategy
+    let intent = detect_query_intent(query);
+
+    // Debug intent benefits from more context -- increase limit by 50%
+    let effective_limit = if intent == QueryIntent::Debug {
+        (limit * 3 + 1) / 2 // ceil(limit * 1.5)
+    } else {
+        limit
+    };
+
     // Fetch more results from each backend to account for deduplication
-    let fetch_limit = limit * 2;
+    let fetch_limit = effective_limit * 2;
 
     // Prepare keyword search future (always runs)
     let pool_for_keyword = pool.clone();
@@ -434,21 +528,22 @@ pub async fn hybrid_search(
         merge_results(semantic_results, keyword_results, fuzzy_results);
 
     // Apply intent-based reranking
-    let intent = detect_query_intent(query);
     rerank_results_with_intent(&mut results, project_path, intent);
 
-    // Truncate to requested limit
-    results.truncate(limit);
+    // Truncate to effective limit (increased for Debug intent)
+    results.truncate(effective_limit);
 
     tracing::debug!(
-        "Hybrid search: {} results after merge (type: {})",
+        "Hybrid search: {} results after merge (type: {}, intent: {:?})",
         results.len(),
-        search_type
+        search_type,
+        intent,
     );
 
     Ok(HybridSearchResult {
         results,
         search_type,
+        intent,
     })
 }
 
@@ -456,22 +551,36 @@ pub async fn hybrid_search(
 // Result Formatting
 // ============================================================================
 
+/// Controls how much detail to include in formatted search results
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResultDetail {
+    /// Truncate at 500 chars (legacy non-expand behavior)
+    Compact,
+    /// Full content for all results (legacy expand=true behavior)
+    Full,
+    /// Top N results full, rest skeletonized to signatures + docstrings
+    Tiered,
+}
+
 /// Format search results for display
 pub fn format_results(
     results: &[SearchResult],
     search_type: SearchType,
     project_path: Option<&str>,
-    expand: bool,
+    detail: ResultDetail,
 ) -> String {
     if results.is_empty() {
         return "No code matches found. Have you run 'index' yet?".to_string();
     }
 
+    /// Number of top-ranked results that get full content in Tiered mode
+    const TIERED_FULL_COUNT: usize = 2;
+
     let count = results.len();
     let noun = if count == 1 { "result" } else { "results" };
     let mut response = format!("{} {} ({} search):\n\n", count, noun, search_type);
 
-    for result in results {
+    for (rank, result) in results.iter().enumerate() {
         let location = if result.start_line > 0 {
             format!("{}:{}", result.file_path, result.start_line)
         } else {
@@ -479,7 +588,15 @@ pub fn format_results(
         };
         response.push_str(&format!("## {} (score: {:.2})\n", location, result.score));
 
-        let display_content = if expand {
+        let use_full = match detail {
+            ResultDetail::Full => true,
+            ResultDetail::Compact => false,
+            ResultDetail::Tiered => rank < TIERED_FULL_COUNT,
+        };
+
+        let use_skeleton = matches!(detail, ResultDetail::Tiered) && rank >= TIERED_FULL_COUNT;
+
+        let display_content = if use_full {
             if let Some((symbol_info, expanded)) =
                 expand_context(&result.file_path, &result.content, project_path)
             {
@@ -494,6 +611,8 @@ pub fn format_results(
             } else {
                 result.content.clone()
             }
+        } else if use_skeleton {
+            skeletonize_content(&result.content)
         } else if result.content.len() > 500 {
             truncate(&result.content, 500)
         } else {
@@ -608,10 +727,101 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_intent_debug() {
+        assert_eq!(
+            detect_query_intent("fix the login bug"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("error handling in search"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("why is this test failing"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("debug the connection issue"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("crash in indexer"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("troubleshoot auth"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("panic in database pool"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("issue with search results"),
+            QueryIntent::Debug
+        );
+        assert_eq!(
+            detect_query_intent("broken search feature"),
+            QueryIntent::Debug
+        );
+    }
+
+    #[test]
+    fn test_detect_intent_refactor() {
+        assert_eq!(
+            detect_query_intent("refactor the search module"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("restructure database layer"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("reorganize tool handlers"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("move function to separate module"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("rename the SearchResult struct"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("extract helper from hybrid_search"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("split this file into modules"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("merge these two functions"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("consolidate search backends"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("blast radius of changing pool"),
+            QueryIntent::Refactor
+        );
+        assert_eq!(
+            detect_query_intent("impact of changing the API"),
+            QueryIntent::Refactor
+        );
+    }
+
+    #[test]
     fn test_detect_intent_general() {
         assert_eq!(detect_query_intent("search code"), QueryIntent::General);
         assert_eq!(detect_query_intent("Database struct"), QueryIntent::General);
-        assert_eq!(detect_query_intent("error handling"), QueryIntent::General);
+        assert_eq!(
+            detect_query_intent("authentication logic"),
+            QueryIntent::General
+        );
     }
 
     // ============================================================================
@@ -753,12 +963,168 @@ mod tests {
     }
 
     // ============================================================================
+    // Reranking tests for Debug and Refactor intents
+    // ============================================================================
+
+    #[test]
+    fn test_rerank_debug_boosts_error_handling() {
+        let mut results = vec![
+            SearchResult {
+                file_path: "src/clean.rs".to_string(),
+                content: "fn clean_function() { let x = 1; }".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/errors.rs".to_string(),
+                content: "fn handle() -> Result<(), Error> { bail!(\"fail\") }".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+        ];
+        rerank_results_with_intent(&mut results, None, QueryIntent::Debug);
+        // The error-handling result should be boosted above the clean one
+        assert_eq!(results[0].file_path, "src/errors.rs");
+        assert!(results[0].score > results[1].score);
+    }
+
+    #[test]
+    fn test_rerank_debug_boosts_test_files() {
+        let mut results = vec![
+            SearchResult {
+                file_path: "src/lib.rs".to_string(),
+                content: "fn some_function() {}".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/test_search.rs".to_string(),
+                content: "fn some_function() {}".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+        ];
+        rerank_results_with_intent(&mut results, None, QueryIntent::Debug);
+        // Test file should be boosted for Debug intent
+        assert_eq!(results[0].file_path, "src/test_search.rs");
+        assert!(results[0].score > results[1].score);
+    }
+
+    #[test]
+    fn test_rerank_debug_boosts_recent_files() {
+        use std::fs;
+        use std::io::Write;
+
+        // Create a temp file that will have a very recent mtime
+        let dir = std::env::temp_dir().join("mira_test_debug_recency");
+        let _ = fs::create_dir_all(&dir);
+        let recent_file = dir.join("recent.rs");
+        let mut f = fs::File::create(&recent_file).unwrap();
+        writeln!(f, "fn recent() {{}}").unwrap();
+        drop(f);
+
+        let mut results = vec![
+            SearchResult {
+                file_path: "old_file.rs".to_string(),
+                content: "fn old() {}".to_string(),
+                score: 0.90,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "recent.rs".to_string(),
+                content: "fn recent() {}".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+        ];
+
+        // With project_path pointing to temp dir, only recent.rs resolves
+        rerank_results_with_intent(&mut results, Some(dir.to_str().unwrap()), QueryIntent::Debug);
+
+        // The recent file should get the amplified 1.30 debug recency boost
+        let recent_result = results.iter().find(|r| r.file_path == "recent.rs").unwrap();
+        // 0.80 * 1.10 (complete symbol) * 1.30 (debug recency) = ~1.144
+        assert!(
+            recent_result.score > 1.0,
+            "recent file should get strong debug recency boost, got {}",
+            recent_result.score
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_rerank_refactor_boosts_public_api() {
+        let mut results = vec![
+            SearchResult {
+                file_path: "src/internal.rs".to_string(),
+                content: "fn private_helper() { do_stuff(); }".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/api.rs".to_string(),
+                content: "pub fn search_code() -> Result<()> { Ok(()) }".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+        ];
+        rerank_results_with_intent(&mut results, None, QueryIntent::Refactor);
+        // Public API should be boosted for Refactor intent
+        assert_eq!(results[0].file_path, "src/api.rs");
+        assert!(results[0].score > results[1].score);
+    }
+
+    #[test]
+    fn test_rerank_refactor_boosts_pub_struct_enum_trait() {
+        let mut results = vec![
+            SearchResult {
+                file_path: "src/types.rs".to_string(),
+                content: "pub struct Config { pub name: String }".to_string(),
+                score: 0.70,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/other.rs".to_string(),
+                content: "let config = Config::new();".to_string(),
+                score: 0.75,
+                start_line: 10,
+            },
+        ];
+        rerank_results_with_intent(&mut results, None, QueryIntent::Refactor);
+        // pub struct should be boosted above usage code
+        assert_eq!(results[0].file_path, "src/types.rs");
+    }
+
+    #[test]
+    fn test_rerank_refactor_boosts_impl_blocks() {
+        let mut results = vec![
+            SearchResult {
+                file_path: "src/plain.rs".to_string(),
+                content: "fn standalone() {}".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/methods.rs".to_string(),
+                content: "impl SearchEngine { fn run(&self) {} }".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+        ];
+        rerank_results_with_intent(&mut results, None, QueryIntent::Refactor);
+        // impl block should get boosted
+        assert_eq!(results[0].file_path, "src/methods.rs");
+        assert!(results[0].score > results[1].score);
+    }
+
+    // ============================================================================
     // format_results tests
     // ============================================================================
 
     #[test]
     fn test_format_results_empty() {
-        let output = format_results(&[], SearchType::Semantic, None, false);
+        let output = format_results(&[], SearchType::Semantic, None, ResultDetail::Compact);
         assert!(output.contains("No code matches found"));
         assert!(output.contains("index"));
     }
@@ -771,7 +1137,7 @@ mod tests {
             score: 0.85,
             start_line: 1,
         }];
-        let output = format_results(&results, SearchType::Semantic, None, false);
+        let output = format_results(&results, SearchType::Semantic, None, ResultDetail::Compact);
         assert!(output.contains("1 result (semantic search)"));
         assert!(output.contains("src/main.rs:1"));
         assert!(output.contains("score: 0.85"));
@@ -786,7 +1152,7 @@ mod tests {
             score: 0.75,
             start_line: 0,
         }];
-        let output = format_results(&results, SearchType::Keyword, None, false);
+        let output = format_results(&results, SearchType::Keyword, None, ResultDetail::Compact);
         assert!(output.contains("keyword search"));
         // Should not have line number when start_line is 0
         assert!(output.contains("## src/lib.rs ("));
@@ -802,9 +1168,61 @@ mod tests {
             score: 0.9,
             start_line: 1,
         }];
-        let output = format_results(&results, SearchType::Semantic, None, false);
+        let output = format_results(&results, SearchType::Semantic, None, ResultDetail::Compact);
         assert!(output.contains("..."));
         // Output should be truncated, not contain all 600 chars
         assert!(output.len() < 700);
+    }
+
+    // ============================================================================
+    // Tiered format_results tests
+    // ============================================================================
+
+    #[test]
+    fn test_format_results_tiered_skeletonizes_lower_ranks() {
+        let results = vec![
+            SearchResult {
+                file_path: "src/first.rs".to_string(),
+                content: "/// First result doc\npub fn first() {\n    let x = 1;\n    let y = 2;\n}".to_string(),
+                score: 0.95,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/second.rs".to_string(),
+                content: "/// Second result doc\npub fn second() {\n    let a = 3;\n}".to_string(),
+                score: 0.90,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/third.rs".to_string(),
+                content: "/// Third result doc\npub fn third() {\n    let body_line = 42;\n    println!(\"hello\");\n}".to_string(),
+                score: 0.80,
+                start_line: 1,
+            },
+            SearchResult {
+                file_path: "src/fourth.rs".to_string(),
+                content: "/// Fourth result doc\npub fn fourth() {\n    let z = 99;\n}".to_string(),
+                score: 0.70,
+                start_line: 1,
+            },
+        ];
+        let output = format_results(&results, SearchType::Semantic, None, ResultDetail::Tiered);
+
+        // Results #1 and #2 should have full content (body lines present)
+        assert!(output.contains("let x = 1"));
+        assert!(output.contains("let a = 3"));
+
+        // Results #3 and #4 should be skeletonized (body lines stripped)
+        assert!(!output.contains("let body_line = 42"));
+        assert!(!output.contains("let z = 99"));
+
+        // But their signatures and docs should be preserved
+        assert!(output.contains("/// Third result doc"));
+        assert!(output.contains("pub fn third()"));
+        assert!(output.contains("/// Fourth result doc"));
+        assert!(output.contains("pub fn fourth()"));
+
+        // Body omitted placeholder should appear for skeletonized results
+        assert!(output.contains("// ... body omitted"));
     }
 }

@@ -20,7 +20,8 @@ pub use recall::{
     recall_semantic_with_entity_boost_sync, record_memory_access_sync, search_memories_sync,
 };
 pub use store::{
-    StoreMemoryParams, import_confirmed_memory_sync, store_fact_embedding_sync, store_memory_sync,
+    StoreMemoryParams, import_confirmed_memory_sync, mark_memories_stale_for_file_sync,
+    store_fact_embedding_sync, store_memory_sync,
 };
 
 /// Parse MemoryFact from a rusqlite Row with standard column order:

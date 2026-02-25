@@ -224,6 +224,35 @@ impl super::HookClient {
         }
     }
 
+    /// Mark memories referencing a file as stale. Fire-and-forget.
+    ///
+    /// Called by PostToolUse when Write/Edit tools modify a file. Memories whose
+    /// content mentions the changed file get a graduated recall penalty.
+    pub async fn mark_memories_stale_for_file(&mut self, project_id: i64, file_path: &str) {
+        if self.is_ipc() {
+            let params = json!({
+                "project_id": project_id,
+                "file_path": file_path,
+            });
+            if self.call("mark_memories_stale", params).await.is_ok() {
+                return;
+            }
+        }
+        if let Backend::Direct { pool } = &self.inner {
+            let pool = pool.clone();
+            let file_path = file_path.to_string();
+            pool.try_interact("mark_memories_stale", move |conn| {
+                if let Err(e) = crate::db::mark_memories_stale_for_file_sync(
+                    conn, project_id, &file_path,
+                ) {
+                    tracing::debug!("Failed to mark memories stale: {e}");
+                }
+                Ok(())
+            })
+            .await;
+        }
+    }
+
     /// Export memories to MEMORY.mira.md. Fire-and-forget.
     pub async fn write_auto_memory(&mut self, project_id: i64, project_path: &str) {
         if self.is_ipc() {

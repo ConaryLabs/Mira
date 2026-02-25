@@ -13,6 +13,7 @@ pub struct RecallRow {
     pub category: Option<String>,
     pub status: String,
     pub updated_at: Option<String>,
+    pub stale_since: Option<String>,
 }
 
 /// Lightweight memory struct for ranked export to CLAUDE.local.md
@@ -104,6 +105,44 @@ pub fn apply_recency_boost(distance: f32, updated_at: Option<&str>) -> f32 {
     // 5% max boost, 90-day half-life exponential decay
     let boost = 1.0 - 0.05 * (-days_ago / 90.0_f64).exp();
     distance * boost as f32
+}
+
+/// Staleness penalty: memories whose linked code has changed get deprioritized.
+///
+/// Penalty increases over time since the memory went stale:
+/// - < 1 day stale: 5% penalty (multiply distance by 1.05)
+/// - 1-7 days stale: 15% penalty (1.15)
+/// - 7-30 days stale: 25% penalty (1.25)
+/// - > 30 days stale: 35% penalty (1.35)
+///
+/// Returns original distance if not stale.
+pub fn apply_staleness_penalty(distance: f32, stale_since: Option<&str>) -> f32 {
+    let Some(ts) = stale_since else {
+        return distance;
+    };
+
+    // Parse ISO 8601 datetime (same formats as apply_recency_boost)
+    let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S"));
+
+    let Ok(dt) = parsed else {
+        return distance;
+    };
+
+    let now = chrono::Utc::now().naive_utc();
+    let days_stale = ((now - dt).num_seconds() as f64 / 86400.0).max(0.0);
+
+    let penalty = if days_stale < 1.0 {
+        1.05
+    } else if days_stale < 7.0 {
+        1.15
+    } else if days_stale < 30.0 {
+        1.25
+    } else {
+        1.35
+    };
+
+    distance * penalty as f32
 }
 
 #[cfg(test)]
@@ -273,5 +312,103 @@ mod recency_boost_tests {
         // At half-life, boost ≈ 0.05 * exp(-1) ≈ 0.0184, so distance ≈ 0.9816
         assert!(boosted > 0.97);
         assert!(boosted < 0.99);
+    }
+}
+
+#[cfg(test)]
+mod staleness_penalty_tests {
+    use super::*;
+
+    #[test]
+    fn test_staleness_penalty_none() {
+        // No stale_since returns original distance unchanged
+        let distance = 0.5;
+        let result = apply_staleness_penalty(distance, None);
+        assert!((result - distance).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_staleness_penalty_recent() {
+        // Stale < 1 day gets mild 5% penalty (distance * 1.05)
+        let distance = 1.0;
+        let now = chrono::Utc::now()
+            .naive_utc()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let penalized = apply_staleness_penalty(distance, Some(&now));
+        assert!((penalized - 1.05).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_staleness_penalty_week_old() {
+        // Stale 3 days gets medium 15% penalty (distance * 1.15)
+        let distance = 1.0;
+        let three_days_ago = (chrono::Utc::now() - chrono::Duration::days(3))
+            .naive_utc()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let penalized = apply_staleness_penalty(distance, Some(&three_days_ago));
+        assert!((penalized - 1.15).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_staleness_penalty_month_old() {
+        // Stale 15 days gets strong 25% penalty (distance * 1.25)
+        let distance = 1.0;
+        let fifteen_days_ago = (chrono::Utc::now() - chrono::Duration::days(15))
+            .naive_utc()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let penalized = apply_staleness_penalty(distance, Some(&fifteen_days_ago));
+        assert!((penalized - 1.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_staleness_penalty_very_old() {
+        // Stale 60 days gets max 35% penalty (distance * 1.35)
+        let distance = 1.0;
+        let sixty_days_ago = (chrono::Utc::now() - chrono::Duration::days(60))
+            .naive_utc()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let penalized = apply_staleness_penalty(distance, Some(&sixty_days_ago));
+        assert!((penalized - 1.35).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_staleness_penalty_invalid_timestamp() {
+        // Invalid timestamp returns original distance
+        let distance = 0.5;
+        let result = apply_staleness_penalty(distance, Some("not-a-date"));
+        assert!((result - distance).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_staleness_penalty_preserves_relative_ordering() {
+        // Stale memory should have worse (higher) distance than non-stale
+        let base_distance = 0.5;
+        let not_stale = apply_staleness_penalty(base_distance, None);
+        let stale = apply_staleness_penalty(
+            base_distance,
+            Some(
+                &chrono::Utc::now()
+                    .naive_utc()
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+            ),
+        );
+        assert!(stale > not_stale);
+    }
+
+    #[test]
+    fn test_staleness_penalty_iso_t_separator() {
+        // ISO 8601 with T separator should also parse
+        let distance = 1.0;
+        let now = chrono::Utc::now()
+            .naive_utc()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let penalized = apply_staleness_penalty(distance, Some(&now));
+        assert!((penalized - 1.05).abs() < 0.01);
     }
 }
