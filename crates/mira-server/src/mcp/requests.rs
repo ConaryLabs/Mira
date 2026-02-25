@@ -196,9 +196,11 @@ pub struct CodeRequest {
     pub file_path: Option<String>,
     #[schemars(description = "Function name (required for callers/callees)")]
     pub function_name: Option<String>,
-    #[schemars(description = "Symbol type filter")]
+    #[schemars(
+        description = "Symbol type filter (e.g. function, struct, trait, class, method, enum, interface, type)"
+    )]
     pub symbol_type: Option<String>,
-    #[schemars(description = "Max results")]
+    #[schemars(description = "Max results (default: 20 for search/callers/callees, 50 for symbols)")]
     pub limit: Option<i64>,
     #[schemars(
         description = "Starting git ref for diff (commit, branch, tag). Default: HEAD~1 or staged/working changes"
@@ -556,9 +558,11 @@ pub struct McpCodeRequest {
     pub file_path: Option<String>,
     #[schemars(description = "Function name (required for callers/callees)")]
     pub function_name: Option<String>,
-    #[schemars(description = "Symbol type filter")]
+    #[schemars(
+        description = "Symbol type filter (e.g. function, struct, trait, class, method, enum, interface, type)"
+    )]
     pub symbol_type: Option<String>,
-    #[schemars(description = "Max results")]
+    #[schemars(description = "Max results (default: 20 for search/callers/callees, 50 for symbols)")]
     pub limit: Option<i64>,
     #[schemars(
         description = "Module path or concept to bundle (required for bundle). E.g. 'src/tools/core/code/', 'authentication'"

@@ -3,8 +3,9 @@
 
 Code intelligence: semantic search, call graph tracing, and static analysis.
 
-> **MCP actions:** `search`, `symbols`, `callers`, `callees`
-> Actions marked (CLI-only) below are available via `mira tool code '<json>'`.
+> **MCP actions:** `search`, `symbols`, `callers`, `callees`, `bundle`
+> **CLI-only actions:** `dependencies`, `patterns`, `tech_debt`, `dead_code`, `conventions`, `debt_delta`, `diff`
+> CLI-only actions are available via `mira tool code '<json>'`.
 > **Note:** `diff` was extracted into a standalone MCP tool. See [diff](./diff.md).
 
 ## Actions
@@ -82,6 +83,35 @@ Compute per-module tech debt scores with tier rankings (A-F).
 
 **Returns:** Modules sorted worst-first with tier, overall score, line count, finding count, and top contributing factors for D/F tier modules. Auto-queues a health scan if no data exists.
 
+### dead_code (CLI-only)
+
+Find potentially unused functions and methods across the codebase.
+
+**Parameters:**
+- `action` (string, required) - `"dead_code"`
+- `limit` (integer, optional) - Max results (default: 50)
+
+**Returns:** Functions/methods with no detected callers, sorted by file. Auto-queues a health scan if no data exists.
+
+### conventions (CLI-only)
+
+Show detected coding conventions for the module containing a file.
+
+**Parameters:**
+- `action` (string, required) - `"conventions"`
+- `file_path` (string, required) - Path to a file within the module to inspect
+
+**Returns:** Error handling patterns, test patterns, naming conventions, key imports, and detected architectural patterns for the containing module. Auto-queues a health scan if no data exists.
+
+### debt_delta (CLI-only)
+
+Compare tech debt scores between the two most recent health snapshots.
+
+**Parameters:**
+- `action` (string, required) - `"debt_delta"`
+
+**Returns:** Per-module tier changes (improved/regressed/unchanged), average score delta, and summary. Requires at least 2 health snapshots.
+
 ### diff (CLI-only, backward compat)
 
 > **Prefer the standalone `diff` tool.** See [diff](./diff.md).
@@ -121,7 +151,7 @@ Analyze git changes semantically with impact and risk assessment.
 
 - `search`, `callers`, `callees` require the project to be indexed via `index(action="project")`
 - `symbols` requires the `parsers` compile-time feature
-- `dependencies`, `patterns`, `tech_debt` require a health scan (auto-queued if missing)
+- `dependencies`, `patterns`, `tech_debt`, `dead_code`, `conventions`, `debt_delta` require a health scan (auto-queued if missing)
 
 ## Errors
 

@@ -9,10 +9,10 @@ pub enum MiraError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
-    #[error("project not set")]
+    #[error("No active project. Auto-detection failed -- call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")]
     ProjectNotSet,
 
-    #[error("database error: {0}")]
+    #[error("Database error: {0}. Try re-indexing with index(action=\"project\") if this persists.")]
     Db(#[from] rusqlite::Error),
 
     #[error("I/O error: {0}")]
@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn test_project_not_set_error() {
         let err = MiraError::ProjectNotSet;
-        assert!(err.to_string().contains("project not set"));
+        assert!(err.to_string().contains("No active project"));
     }
 
     #[test]

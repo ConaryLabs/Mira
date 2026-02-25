@@ -464,7 +464,7 @@ pub fn get_symbols(
         if symbols.is_empty() {
             return Ok(Json(CodeOutput {
                 action: "symbols".into(),
-                message: "No symbols found. The file may not contain recognizable definitions, or the language may not be supported.".to_string(),
+                message: "No symbols found. The file may not contain recognizable definitions, or the language may not be supported. Supported: Rust (.rs), Python (.py), TypeScript (.ts/.tsx), JavaScript (.js/.jsx), Go (.go).".to_string(),
                 data: Some(CodeData::Symbols(SymbolsData {
                     symbols: vec![],
                     total: 0,

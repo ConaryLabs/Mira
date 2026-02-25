@@ -586,9 +586,15 @@ pub async fn get_debt_delta<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>,
     // Parse tier_distribution JSON from snapshots to get previous per-tier counts
     // tier_distribution is a JSON string like {"A":5,"B":3,"C":1}
     let prev_tiers: std::collections::HashMap<String, i64> =
-        serde_json::from_str(&previous_snap.tier_distribution).unwrap_or_default();
+        serde_json::from_str(&previous_snap.tier_distribution).unwrap_or_else(|e| {
+            tracing::debug!("Failed to parse previous tier_distribution JSON: {}", e);
+            std::collections::HashMap::new()
+        });
     let curr_tiers: std::collections::HashMap<String, i64> =
-        serde_json::from_str(&current_snap.tier_distribution).unwrap_or_default();
+        serde_json::from_str(&current_snap.tier_distribution).unwrap_or_else(|e| {
+            tracing::debug!("Failed to parse current tier_distribution JSON: {}", e);
+            std::collections::HashMap::new()
+        });
 
     // Aggregate delta from snapshots
     let avg_delta = current_snap.avg_debt_score - previous_snap.avg_debt_score;

@@ -70,11 +70,14 @@ pub async fn index<C: ToolContext>(
                 // Auto-queue health scan after project indexing
                 if let Some(pid) = project_id {
                     let pool_clone = ctx.pool().clone();
-                    let _ = pool_clone
+                    if let Err(e) = pool_clone
                         .run(move |conn| {
                             crate::background::code_health::mark_health_scan_needed_sync(conn, pid)
                         })
-                        .await;
+                        .await
+                    {
+                        tracing::warn!("Failed to queue health scan after indexing: {}", e);
+                    }
                 }
 
                 Ok(Json(IndexOutput {

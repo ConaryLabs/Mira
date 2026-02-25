@@ -110,14 +110,24 @@ pub async fn handle_code<C: ToolContext>(
                     "file_path is required for code(action=symbols)".to_string(),
                 )
             })?;
-            // Validate file_path is within the project directory
+            // Validate file_path is within the project directory.
+            // Both paths must canonicalize successfully — falling back to raw
+            // strings would bypass traversal detection (e.g. "../../etc/passwd").
             if let Some(project) = ctx.get_project().await {
-                let project_path = std::path::Path::new(&project.path)
-                    .canonicalize()
-                    .unwrap_or_else(|_| std::path::PathBuf::from(&project.path));
-                let target_path = std::path::Path::new(&file_path)
-                    .canonicalize()
-                    .unwrap_or_else(|_| std::path::PathBuf::from(&file_path));
+                let project_path =
+                    std::path::Path::new(&project.path).canonicalize().map_err(|e| {
+                        MiraError::InvalidInput(format!(
+                            "Cannot resolve project path '{}': {}",
+                            project.path, e
+                        ))
+                    })?;
+                let target_path =
+                    std::path::Path::new(&file_path).canonicalize().map_err(|e| {
+                        MiraError::InvalidInput(format!(
+                            "Cannot resolve file path '{}': {}. Does the file exist?",
+                            file_path, e
+                        ))
+                    })?;
                 if !target_path.starts_with(&project_path) {
                     return Err(MiraError::InvalidInput(format!(
                         "File path must be within the project directory: {}",
