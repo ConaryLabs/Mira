@@ -243,7 +243,6 @@ Patterns are mined in two tiers:
 | Tier | Method | Frequency | Purpose |
 |------|--------|-----------|---------|
 | **SQL Mining** | Database analysis | Every ~15 minutes | Fast, local pattern detection |
-| **LLM Enhancement** | DeepSeek analysis | Every ~50 minutes | Deeper insight generation |
 
 ### Automatic Context Injection
 
@@ -361,7 +360,7 @@ The Intelligence Engine continuously updates Code Intelligence and Memory. Sessi
 
 ## Local Data Storage
 
-All data Mira collects is stored locally in `~/.mira/`. Nothing leaves your machine unless you explicitly configure an external API (e.g., OpenAI for embeddings, DeepSeek for background intelligence).
+All data Mira collects is stored locally in `~/.mira/`. Nothing leaves your machine unless you explicitly configure an external API (e.g., OpenAI for embeddings).
 
 ### What Mira Stores
 

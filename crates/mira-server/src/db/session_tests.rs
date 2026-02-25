@@ -98,13 +98,20 @@ mod tests {
         )
         .map_err(Into::into));
 
-        // Get initial last_activity
+        // Set last_activity to a known past timestamp so touch_session changes it.
+        db!(pool, |conn| {
+            conn.execute(
+                "UPDATE sessions SET last_activity = '2000-01-01 00:00:00' WHERE id = 'touch-test'",
+                [],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        });
+
+        // Get initial last_activity (should be the backdated value)
         let sessions = db!(pool, |conn| get_recent_sessions_sync(conn, project_id, 1)
             .map_err(Into::into));
         let initial_activity = sessions[0].last_activity.clone();
 
-        // Wait 1 second to ensure timestamp changes (SQLite has second precision)
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         db!(pool, |conn| touch_session_sync(conn, "touch-test")
             .map_err(Into::into));
 

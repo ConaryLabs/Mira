@@ -36,11 +36,19 @@ pub async fn process_pending_embeddings(
     // Extract texts for batch embedding
     let texts: Vec<String> = pending.iter().map(|p| p.chunk_content.clone()).collect();
 
-    // Generate embeddings in batch
-    let embeddings_result = emb
-        .embed_batch(&texts)
-        .await
-        .map_err(|e| format!("Embedding generation failed: {}", e))?;
+    // Generate embeddings in batch.
+    // On failure, log and skip this cycle rather than blocking all future embeddings.
+    let embeddings_result = match emb.embed_batch(&texts).await {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::warn!(
+                "Embedding batch failed for {} chunks, skipping cycle: {}",
+                pending.len(),
+                e
+            );
+            return Ok(0);
+        }
+    };
 
     // Store embeddings and cleanup pending queue
     let count = pool

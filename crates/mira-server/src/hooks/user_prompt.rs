@@ -34,7 +34,9 @@ pub(crate) async fn log_behavior(
     let message_clone = message.to_string();
     pool.try_interact("behavior logging", move |conn| {
         let mut tracker = BehaviorTracker::for_session(conn, session_id_clone, project_id);
-        let _ = tracker.log_query(conn, &message_clone, "user_prompt");
+        if let Err(e) = tracker.log_query(conn, &message_clone, "user_prompt") {
+            tracing::debug!("query log failed: {e}");
+        }
         Ok(())
     })
     .await;
@@ -66,12 +68,14 @@ pub(crate) async fn get_proactive_context(
             context_lines.push(format!("[Mira/insight] {}", intervention.format()));
 
             // Record that we showed this intervention (for cooldown/dedup/feedback)
-            let _ = crate::proactive::interventions::record_intervention_sync(
+            if let Err(e) = crate::proactive::interventions::record_intervention_sync(
                 conn,
                 project_id,
                 session_id_owned.as_deref(),
                 intervention,
-            );
+            ) {
+                tracing::debug!("intervention record failed: {e}");
+            }
         }
 
         // Pre-generated proactive suggestions (from background pattern mining / LLM)
@@ -94,9 +98,11 @@ pub(crate) async fn get_proactive_context(
                         confidence * 100.0,
                         text
                     ));
-                    let _ = crate::proactive::background::mark_suggestion_shown(
+                    if let Err(e) = crate::proactive::background::mark_suggestion_shown(
                         conn, project_id, *id,
-                    );
+                    ) {
+                        tracing::debug!("mark suggestion shown failed: {e}");
+                    }
                 }
             }
         }
@@ -195,8 +201,11 @@ fn save_injection_dedup(session_id: &str, state: &InjectionDedupState) {
         return;
     }
     let path = injection_dedup_path(session_id);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!("injection dedup: failed to create cache dir: {e}");
+        return;
     }
     let Ok(json) = serde_json::to_string(state) else {
         return;
@@ -216,14 +225,17 @@ fn save_injection_dedup(session_id: &str, state: &InjectionDedupState) {
                 f.write_all(json.as_bytes())
             })
             .is_ok()
+            && let Err(e) = std::fs::rename(&tmp_path, &path)
         {
-            let _ = std::fs::rename(&tmp_path, &path);
+            tracing::warn!("injection dedup: failed to persist cache file: {e}");
         }
     }
     #[cfg(not(unix))]
     {
-        if std::fs::write(&tmp_path, &json).is_ok() {
-            let _ = std::fs::rename(&tmp_path, &path);
+        if std::fs::write(&tmp_path, &json).is_ok()
+            && let Err(e) = std::fs::rename(&tmp_path, &path)
+        {
+            tracing::warn!("injection dedup: failed to persist cache file: {e}");
         }
     }
 }
@@ -787,7 +799,9 @@ pub(crate) async fn get_team_context(pool: &Arc<DatabasePool>, session_id: &str)
                 .ok()?;
 
             // Cache for future calls
-            let _ = crate::hooks::session::write_team_membership(session_id, &membership);
+            if let Err(e) = crate::hooks::session::write_team_membership(session_id, &membership) {
+                tracing::warn!("failed to cache team membership: {e}");
+            }
             tracing::info!(
                 "[mira] Lazy team detection: {} (team_id: {})",
                 membership.team_name,

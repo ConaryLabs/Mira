@@ -51,11 +51,15 @@ pub(crate) async fn build_startup_context(
                 let is_new = existing.is_none();
                 Ok::<_, anyhow::Error>(
                     crate::db::get_or_create_project_sync(conn, &cwd_owned, None)
+                        .map_err(|e| {
+                            tracing::debug!("context load: get_or_create_project failed: {e}")
+                        })
                         .ok()
                         .map(|(id, _)| (id, is_new)),
                 )
             })
             .await
+            .map_err(|e| tracing::debug!("context load: project interact failed: {e}"))
             .ok()
             .flatten();
         match result {
@@ -90,11 +94,13 @@ pub(crate) async fn build_startup_context(
         .interact(move |conn| {
             Ok::<_, anyhow::Error>(
                 crate::db::get_recent_sessions_sync(conn, project_id, 2)
+                    .map_err(|e| tracing::debug!("context load: get_recent_sessions failed: {e}"))
                     .ok()
                     .and_then(|sessions| sessions.into_iter().find(|s| s.status != "active")),
             )
         })
         .await
+        .map_err(|e| tracing::debug!("context load: sessions interact failed: {e}"))
         .ok()
         .flatten();
 
@@ -109,6 +115,7 @@ pub(crate) async fn build_startup_context(
         let snapshot: Option<String> = pool_clone
             .interact(move |conn| Ok::<_, anyhow::Error>(get_session_snapshot_sync(conn, &prev_id)))
             .await
+            .map_err(|e| tracing::debug!("context load: snapshot interact failed: {e}"))
             .ok()
             .flatten();
 
@@ -175,11 +182,15 @@ pub(crate) async fn build_resume_context(
             .interact(move |conn| {
                 Ok::<_, anyhow::Error>(
                     crate::db::get_or_create_project_sync(conn, &cwd_owned, None)
+                        .map_err(|e| {
+                            tracing::debug!("context load: get_or_create_project failed: {e}")
+                        })
                         .ok()
                         .map(|(id, _)| id),
                 )
             })
             .await
+            .map_err(|e| tracing::debug!("context load: project interact failed: {e}"))
             .ok()
             .flatten()
     } else {
@@ -196,6 +207,7 @@ pub(crate) async fn build_resume_context(
         .interact(move |conn| {
             Ok::<_, anyhow::Error>(
                 crate::db::get_recent_sessions_sync(conn, project_id, 2)
+                    .map_err(|e| tracing::debug!("context load: get_recent_sessions failed: {e}"))
                     .ok()
                     .and_then(|sessions| {
                         // Find the most recent non-active session
@@ -204,6 +216,7 @@ pub(crate) async fn build_resume_context(
             )
         })
         .await
+        .map_err(|e| tracing::debug!("context load: sessions interact failed: {e}"))
         .ok()
         .flatten();
 
@@ -214,9 +227,16 @@ pub(crate) async fn build_resume_context(
         let prev_id = prev_session.id.clone();
         let tool_history: Option<Vec<crate::db::ToolHistoryEntry>> = pool_clone
             .interact(move |conn| {
-                Ok::<_, anyhow::Error>(crate::db::get_session_history_sync(conn, &prev_id, 5).ok())
+                Ok::<_, anyhow::Error>(
+                    crate::db::get_session_history_sync(conn, &prev_id, 5)
+                        .map_err(|e| {
+                            tracing::debug!("context load: get_session_history failed: {e}")
+                        })
+                        .ok(),
+                )
             })
             .await
+            .map_err(|e| tracing::debug!("context load: tool history interact failed: {e}"))
             .ok()
             .flatten();
 
@@ -291,6 +311,7 @@ pub(crate) async fn build_resume_context(
         let snapshot: Option<String> = pool_clone
             .interact(move |conn| Ok::<_, anyhow::Error>(get_session_snapshot_sync(conn, &prev_id)))
             .await
+            .map_err(|e| tracing::debug!("context load: snapshot interact failed: {e}"))
             .ok()
             .flatten();
 

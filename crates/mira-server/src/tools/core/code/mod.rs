@@ -53,15 +53,21 @@ pub async fn query_callers<C: ToolContext>(
     let fn_name = fn_name.to_string();
     ctx.code_pool()
         .run(move |conn| {
-            find_callers(conn, project_id, &fn_name, limit)
-                .map_err(|e| MiraError::Other(format!("Failed to query callers: {}", e)))
+            find_callers(conn, project_id, &fn_name, limit).map_err(|e| {
+                tracing::debug!("callers query error: {}", e);
+                MiraError::Other(
+                    "Failed to query callers. Try re-indexing with index(action=\"project\")."
+                        .to_string(),
+                )
+            })
         })
         .await
         .map_err(|e| {
-            MiraError::Other(format!(
-                "Failed to query callers: {}. Try re-indexing with index(action=\"project\").",
-                e
-            ))
+            tracing::debug!("callers pool error: {}", e);
+            MiraError::Other(
+                "Failed to query callers. Try re-indexing with index(action=\"project\")."
+                    .to_string(),
+            )
         })
 }
 
@@ -75,15 +81,21 @@ pub async fn query_callees<C: ToolContext>(
     let fn_name = fn_name.to_string();
     ctx.code_pool()
         .run(move |conn| {
-            find_callees(conn, project_id, &fn_name, limit)
-                .map_err(|e| MiraError::Other(format!("Failed to query callees: {}", e)))
+            find_callees(conn, project_id, &fn_name, limit).map_err(|e| {
+                tracing::debug!("callees query error: {}", e);
+                MiraError::Other(
+                    "Failed to query callees. Try re-indexing with index(action=\"project\")."
+                        .to_string(),
+                )
+            })
         })
         .await
         .map_err(|e| {
-            MiraError::Other(format!(
-                "Failed to query callees: {}. Try re-indexing with index(action=\"project\").",
-                e
-            ))
+            tracing::debug!("callees pool error: {}", e);
+            MiraError::Other(
+                "Failed to query callees. Try re-indexing with index(action=\"project\")."
+                    .to_string(),
+            )
         })
 }
 
@@ -115,14 +127,17 @@ pub async fn handle_code<C: ToolContext>(
             // strings would bypass traversal detection (e.g. "../../etc/passwd").
             if let Some(project) = ctx.get_project().await {
                 let project_path =
-                    std::path::Path::new(&project.path).canonicalize().map_err(|e| {
-                        MiraError::InvalidInput(format!(
-                            "Cannot resolve project path '{}': {}",
-                            project.path, e
-                        ))
-                    })?;
-                let target_path =
-                    std::path::Path::new(&file_path).canonicalize().map_err(|e| {
+                    std::path::Path::new(&project.path)
+                        .canonicalize()
+                        .map_err(|e| {
+                            MiraError::InvalidInput(format!(
+                                "Cannot resolve project path '{}': {}",
+                                project.path, e
+                            ))
+                        })?;
+                let target_path = std::path::Path::new(&file_path)
+                    .canonicalize()
+                    .map_err(|e| {
                         MiraError::InvalidInput(format!(
                             "Cannot resolve file path '{}': {}. Does the file exist?",
                             file_path, e
@@ -269,7 +284,10 @@ mod tests {
     async fn test_query_callers_empty_index() {
         let ctx = MockToolContext::with_project().await;
         let result = query_callers(&ctx, "some_function", 10).await;
-        assert!(result.is_ok(), "query_callers should succeed with empty index");
+        assert!(
+            result.is_ok(),
+            "query_callers should succeed with empty index"
+        );
         assert!(
             result.unwrap().is_empty(),
             "No callers expected in empty index"
@@ -280,7 +298,10 @@ mod tests {
     async fn test_query_callees_empty_index() {
         let ctx = MockToolContext::with_project().await;
         let result = query_callees(&ctx, "some_function", 10).await;
-        assert!(result.is_ok(), "query_callees should succeed with empty index");
+        assert!(
+            result.is_ok(),
+            "query_callees should succeed with empty index"
+        );
         assert!(
             result.unwrap().is_empty(),
             "No callees expected in empty index"

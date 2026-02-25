@@ -47,13 +47,15 @@ pub fn split_large_chunk(chunk: String, start_line: u32, kind: &str, name: &str)
     let mut result = Vec::new();
     let mut current_chunk = String::with_capacity(1000);
     let lines = chunk.lines().collect::<Vec<_>>();
-
-    for line in lines {
+    // Track the line number where the current sub-chunk starts
+    let mut current_chunk_start_line = start_line;
+    for (i, line) in lines.iter().enumerate() {
         if current_chunk.len() + line.len() > 1000 && !current_chunk.is_empty() {
             result.push(CodeChunk {
                 content: current_chunk,
-                start_line,
+                start_line: current_chunk_start_line,
             });
+            current_chunk_start_line = start_line + i as u32;
             current_chunk = String::with_capacity(1000);
             current_chunk.push_str(&format!("// {} {} (continued)\n", kind, name));
         }
@@ -64,7 +66,7 @@ pub fn split_large_chunk(chunk: String, start_line: u32, kind: &str, name: &str)
     if !current_chunk.trim().is_empty() {
         result.push(CodeChunk {
             content: current_chunk,
-            start_line,
+            start_line: current_chunk_start_line,
         });
     }
 

@@ -112,6 +112,18 @@ Compare tech debt scores between the two most recent health snapshots.
 
 **Returns:** Per-module tier changes (improved/regressed/unchanged), average score delta, and summary. Requires at least 2 health snapshots.
 
+### bundle
+
+Package module summaries, symbols, dependency edges, and code chunks into a focused context bundle. Designed for injecting scoped code context into agent spawning prompts.
+
+**Parameters:**
+- `action` (string, required) - `"bundle"`
+- `scope` (string, required) - Module path prefix or concept name. E.g. `"src/tools/core/code/"` or `"authentication"`. Path-style scopes match by file path prefix; concept-style scopes fall back to semantic search.
+- `budget` (integer, optional) - Max character budget for the output (default: 6000, min: 500, max: 50000). Approximately 1500 tokens at default.
+- `depth` (string, optional) - Detail level: `"overview"` (module map + public API only), `"standard"` (+ key function bodies and deps, default), or `"deep"` (+ full code chunks).
+
+**Returns:** A formatted bundle string containing module map, key symbols, dependency edges, and code snippets (depending on depth), all trimmed to fit within `budget` characters.
+
 ### diff (CLI-only, backward compat)
 
 > **Prefer the standalone `diff` tool.** See [diff](./diff.md).

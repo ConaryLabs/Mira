@@ -18,7 +18,7 @@ Query the unified insights digest, formatted as a categorized Health Dashboard.
 - `since_days` (integer, optional) - Look back period in days (default: 30)
 - `limit` (integer, optional) - Max results (default: 20)
 
-**Returns:** Formatted Health Dashboard with overall score, tier breakdown, and categorized insights. Each insight has a priority indicator, age label, optional evidence, and a `row_id` for dismissal.
+**Returns:** Formatted Health Dashboard with overall score, tier breakdown, and categorized insights. Each insight has a priority indicator, age label, optional evidence, and an `insight_id` for dismissal.
 
 **Priority indicators:**
 

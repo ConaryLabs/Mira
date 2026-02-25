@@ -9,10 +9,12 @@ pub enum MiraError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
-    #[error("No active project. Auto-detection failed -- call project(action=\"start\", project_path=\"/your/path\") to set one explicitly.")]
+    #[error(
+        "No active project. Auto-detection failed. Use the project tool with action=\"start\" and project_path=\"/your/path\" to set one explicitly."
+    )]
     ProjectNotSet,
 
-    #[error("Database error: {0}. Try re-indexing with index(action=\"project\") if this persists.")]
+    #[error("Database error. Try re-indexing with index(action=\"project\") if this persists.")]
     Db(#[from] rusqlite::Error),
 
     #[error("I/O error: {0}")]

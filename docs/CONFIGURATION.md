@@ -257,24 +257,20 @@ These are managed automatically and should not be deleted while Mira is running.
 
 ---
 
-## 6. Default LLM Provider
+## 6. LLM Provider (Embeddings Only)
 
-Configure default LLM providers in `~/.mira/config.toml`:
+Background LLM processing (summaries, briefings, pondering, code health) was removed in v0.8.13. All background analysis is now heuristic-based and requires no API key.
+
+The only optional API key integration is **OpenAI embeddings** for semantic search:
 
 ```toml
 [llm]
-# Provider for background intelligence (summaries, briefings, pondering, code health)
-background_provider = "deepseek"
+# background_provider is no longer used; this setting is ignored
 ```
 
-### Available Providers
+Set `OPENAI_API_KEY` in `~/.mira/.env` to enable embedding-powered semantic search. Without it, search falls back to FTS5 keyword and fuzzy matching.
 
-| Provider | Config Value | API Key / Env Var | Default Model |
-|----------|--------------|-------------------|---------------|
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-reasoner` |
-| Ollama | `ollama` | `OLLAMA_HOST` (URL, no key) | `llama3.3` |
-
-If not configured, DeepSeek is used as the default when `DEEPSEEK_API_KEY` is available.
+> **Note:** The `background_provider` config key is accepted but ignored. It will be removed in a future version.
 
 ---
 

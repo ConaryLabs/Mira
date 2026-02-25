@@ -49,7 +49,7 @@ Compact vec_code storage and VACUUM the database to reclaim space from deleted e
 
 ### summarize (CLI-only)
 
-Generate LLM-powered summaries for modules that lack descriptions. Falls back to heuristic analysis when no LLM is configured. Also triggered automatically after `project` indexing.
+Generate heuristic summaries for modules that lack descriptions. Also triggered automatically after `project` indexing.
 
 **Parameters:**
 - `action` (string, required) - `"summarize"`
@@ -92,7 +92,7 @@ Run a full code health scan: dependency graphs, architectural pattern detection,
 ## Notes
 
 - The `project` and `file` actions require the `parsers` compile-time feature.
-- After indexing, module summaries are auto-generated if an LLM provider is configured.
+- After indexing, module summaries are auto-generated using heuristic analysis.
 - A health scan is auto-queued after project indexing.
 - File watching provides automatic incremental re-indexing when files change.
 - The FTS5 index uses a code-aware tokenizer (`unicode61` with `tokenchars '_'`, no stemming).

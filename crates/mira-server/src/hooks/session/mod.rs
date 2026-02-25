@@ -337,7 +337,9 @@ pub async fn run() -> Result<()> {
             .await;
 
             if let Some(ref m) = membership {
-                let _ = write_team_membership(sid, m);
+                if let Err(e) = write_team_membership(sid, m) {
+                    tracing::warn!("failed to write team membership: {e}");
+                }
                 tracing::debug!(team_id = m.team_id, "Team session registered");
             }
         }

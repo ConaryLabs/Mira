@@ -9,7 +9,7 @@ Runs during the slow lane's background cycle, examining recent project activity 
 
 ## Key Functions
 
-- `process_pondering()` - Main entry point. Iterates active projects, gathers data, generates insights via LLM or heuristic fallback.
+- `process_pondering()` - Main entry point. Iterates active projects, gathers data, generates insights via heuristic analysis.
 - `cleanup_stale_insights()` - Remove old insights that are no longer relevant
 
 ## Sub-modules
@@ -17,8 +17,7 @@ Runs during the slow lane's background cycle, examining recent project activity 
 | Module | Purpose |
 |--------|---------|
 | `queries` | Rich data gathering queries (tool history, memories, project signals) |
-| `llm` | LLM-powered insight generation |
-| `heuristic` | Heuristic fallback when no LLM is configured |
+| `heuristic` | Heuristic insight generation (tool usage stats, friction detection, focus areas) |
 | `storage` | Insight persistence and cleanup |
 | `types` | Data types for insight context |
 

@@ -296,7 +296,12 @@ mod tests {
     async fn test_count_table_allowed_table() {
         let pool = DatabasePool::open_in_memory().await.expect("pool");
         let count = pool
-            .run(|conn| Ok::<_, rusqlite::Error>(storage::count_table(conn, "sessions")))
+            .run(|conn| {
+                Ok::<_, rusqlite::Error>(storage::count_table(
+                    conn,
+                    storage::AllowedTable::Sessions,
+                ))
+            })
             .await
             .unwrap();
         // Table exists (migrations ran), count should be 0
@@ -304,36 +309,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_count_table_disallowed_table() {
-        let pool = DatabasePool::open_in_memory().await.expect("pool");
-        let count = pool
-            .run(|conn| Ok::<_, rusqlite::Error>(storage::count_table(conn, "projects")))
-            .await
-            .unwrap();
-        // "projects" not in allowlist, should return 0
-        assert_eq!(count, 0);
-    }
-
-    #[tokio::test]
     async fn test_count_table_allowed_empty_table() {
         let pool = DatabasePool::open_in_memory().await.expect("pool");
         let count = pool
-            .run(|conn| Ok::<_, rusqlite::Error>(storage::count_table(conn, "memory_facts")))
+            .run(|conn| {
+                Ok::<_, rusqlite::Error>(storage::count_table(
+                    conn,
+                    storage::AllowedTable::MemoryFacts,
+                ))
+            })
             .await
             .unwrap();
         // In allowlist and schema exists, but 0 rows
-        assert_eq!(count, 0);
-    }
-
-    #[tokio::test]
-    async fn test_count_table_rejected_by_allowlist() {
-        let pool = DatabasePool::open_in_memory().await.expect("pool");
-        // "bogus_table" is not in ALLOWED_TABLES, so count_table short-circuits to 0
-        // without executing any SQL (prevents SQL injection via table name)
-        let count = pool
-            .run(|conn| Ok::<_, rusqlite::Error>(storage::count_table(conn, "bogus_table")))
-            .await
-            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -353,7 +340,12 @@ mod tests {
 
         let count = ctx
             .pool
-            .run(|conn| Ok::<_, rusqlite::Error>(storage::count_table(conn, "sessions")))
+            .run(|conn| {
+                Ok::<_, rusqlite::Error>(storage::count_table(
+                    conn,
+                    storage::AllowedTable::Sessions,
+                ))
+            })
             .await
             .unwrap();
         assert_eq!(count, 2);

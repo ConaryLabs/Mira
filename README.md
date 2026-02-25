@@ -253,7 +253,7 @@ Make sure `OPENAI_API_KEY` is set in `~/.mira/.env`. Without it, search falls ba
 
 ### Memory not persisting
 
-Project context is auto-initialized from Claude Code's working directory. Run `project(action="get")` to verify Mira is running and that the working directory matches your project root.
+Project context is auto-initialized from Claude Code's working directory. Use the project tool with `action="get"` to verify Mira is running and that the working directory matches your project root.
 
 ### CLI Commands
 

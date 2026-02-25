@@ -537,7 +537,10 @@ mod tests {
         // Empty query succeeds at the search_code level (validation is in handle_code).
         // With an empty index it should return the "No code index found" message.
         let result = search_code(&ctx, String::new(), None).await;
-        assert!(result.is_ok(), "search_code with empty query should not error");
+        assert!(
+            result.is_ok(),
+            "search_code with empty query should not error"
+        );
         let output = result.unwrap();
         assert!(
             output.0.message.contains("No code index")
@@ -551,7 +554,10 @@ mod tests {
     async fn test_search_code_valid_query_empty_index_returns_no_index_message() {
         let ctx = MockToolContext::with_project().await;
         let result = search_code(&ctx, "authentication".to_string(), None).await;
-        assert!(result.is_ok(), "search_code should succeed with empty index");
+        assert!(
+            result.is_ok(),
+            "search_code should succeed with empty index"
+        );
         let output = result.unwrap();
         // No indexed data -> should mention indexing
         assert!(

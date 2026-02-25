@@ -339,11 +339,10 @@ fn query_modules(
     let rows = stmt
         .query_map(params![project_id, pattern, pattern], |row| {
             let exports_json: String = row.get(4)?;
-            let exports: Vec<String> =
-                serde_json::from_str(&exports_json).unwrap_or_else(|e| {
-                    tracing::debug!("Failed to parse module exports JSON: {}", e);
-                    vec![]
-                });
+            let exports: Vec<String> = serde_json::from_str(&exports_json).unwrap_or_else(|e| {
+                tracing::debug!("Failed to parse module exports JSON: {}", e);
+                vec![]
+            });
             Ok(ModuleInfo {
                 id: row.get(0)?,
                 name: row.get(1)?,

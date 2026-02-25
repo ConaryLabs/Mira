@@ -7,7 +7,7 @@ Background processing for proactive suggestion generation. Mines behavioral patt
 
 Operates on a two-tier frequency within the slow lane's background cycle:
 - **Pattern mining** (every 3rd cycle, ~15 min): SQL-only analysis of behavior logs to detect recurring patterns (file sequences, tool chains, query patterns)
-- **Suggestion enhancement** (every 10th cycle, ~50 min): LLM-powered generation of contextual suggestions from high-confidence patterns, or template-based fallback when no LLM is available
+- **Suggestion generation** (every 10th cycle, ~50 min): Template-based generation of contextual suggestions from high-confidence patterns
 
 ## Key Functions
 
@@ -21,8 +21,7 @@ Operates on a two-tier frequency within the slow lane's background cycle:
 | Module | Purpose |
 |--------|---------|
 | `mining` | Pattern extraction from behavior logs (SQL only) |
-| `llm` | LLM-powered suggestion generation and parsing |
-| `templates` | Template-based suggestion fallback (no LLM needed) |
+| `templates` | Template-based suggestion generation |
 | `storage` | Suggestion persistence and cleanup |
 | `lookup` | Suggestion retrieval and lifecycle tracking |
 

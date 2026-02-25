@@ -32,7 +32,7 @@ Review a teammate's modified files.
 
 ### distill
 
-Extract key findings and decisions from team work into team-scoped memories for future recall. Uses LLM-powered knowledge distillation.
+Extract key findings and decisions from team work into team-scoped memories for future recall.
 
 **Parameters:**
 - `action` (string, required) - `"distill"`

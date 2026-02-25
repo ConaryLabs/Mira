@@ -173,22 +173,41 @@ pub fn mark_memories_stale_for_file_sync(
     project_id: i64,
     file_path: &str,
 ) -> rusqlite::Result<usize> {
-    // Extract basename for matching (e.g., "main.rs" from "/src/main.rs")
-    let basename = std::path::Path::new(file_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(file_path);
+    // Build a "parent/basename" pattern for more specific matching.
+    // Using just the basename (e.g., "mod.rs") is too broad — it would stale all
+    // memories mentioning any file named "mod.rs" in the project.
+    // Including the parent directory (e.g., "db/mod.rs") is far more specific.
+    let path = std::path::Path::new(file_path);
+    let parent_basename: Option<String> =
+        path.file_name().and_then(|n| n.to_str()).and_then(|name| {
+            path.parent()
+                .and_then(|p| p.file_name())
+                .and_then(|p| p.to_str())
+                .map(|parent| format!("{}/{}", parent, name))
+        });
 
-    // Match memories that reference this file by full path or basename.
+    // Match memories that reference this file by full path or parent/basename.
     // Only mark memories that aren't already stale.
-    let updated = conn.execute(
-        "UPDATE memory_facts
-         SET stale_since = CURRENT_TIMESTAMP, stale_file_path = ?1
-         WHERE project_id = ?2
-           AND stale_since IS NULL
-           AND (content LIKE '%' || ?1 || '%' OR content LIKE '%' || ?3 || '%')",
-        rusqlite::params![file_path, project_id, basename],
-    )?;
+    let updated = if let Some(ref pb) = parent_basename {
+        conn.execute(
+            "UPDATE memory_facts
+             SET stale_since = CURRENT_TIMESTAMP, stale_file_path = ?1
+             WHERE project_id = ?2
+               AND stale_since IS NULL
+               AND (content LIKE '%' || ?1 || '%' OR content LIKE '%' || ?3 || '%')",
+            rusqlite::params![file_path, project_id, pb],
+        )?
+    } else {
+        // No parent component available — fall back to full path only
+        conn.execute(
+            "UPDATE memory_facts
+             SET stale_since = CURRENT_TIMESTAMP, stale_file_path = ?1
+             WHERE project_id = ?2
+               AND stale_since IS NULL
+               AND content LIKE '%' || ?1 || '%'",
+            rusqlite::params![file_path, project_id],
+        )?
+    };
 
     if updated > 0 {
         tracing::debug!(
@@ -287,7 +306,7 @@ mod tests {
     fn test_mark_stale_matches_basename() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        let id = store_memory(&conn, pid, "The config.rs file uses builder pattern");
+        let id = store_memory(&conn, pid, "The src/config.rs file uses builder pattern");
         assert!(get_stale_since(&conn, id).is_none());
 
         let count = mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();
@@ -299,7 +318,7 @@ mod tests {
     fn test_mark_stale_skips_unrelated_memories() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        let related = store_memory(&conn, pid, "auth.rs handles authentication");
+        let related = store_memory(&conn, pid, "src/auth.rs handles authentication");
         let unrelated = store_memory(&conn, pid, "database uses connection pooling");
 
         let count = mark_memories_stale_for_file_sync(&conn, pid, "/src/auth.rs").unwrap();
@@ -312,7 +331,7 @@ mod tests {
     fn test_mark_stale_does_not_restale_already_stale() {
         let conn = setup_test_connection();
         let pid = insert_project(&conn);
-        let id = store_memory(&conn, pid, "The config.rs uses builder pattern");
+        let id = store_memory(&conn, pid, "The src/config.rs uses builder pattern");
 
         // Mark stale first time
         mark_memories_stale_for_file_sync(&conn, pid, "/src/config.rs").unwrap();
@@ -344,7 +363,7 @@ mod tests {
             StoreMemoryParams {
                 project_id: Some(pid),
                 key: Some("config_pattern"),
-                content: "config.rs uses builder pattern",
+                content: "src/config.rs uses builder pattern",
                 fact_type: "decision",
                 category: None,
                 confidence: 0.8,
@@ -367,7 +386,7 @@ mod tests {
             StoreMemoryParams {
                 project_id: Some(pid),
                 key: Some("config_pattern"),
-                content: "config.rs uses builder pattern (confirmed)",
+                content: "src/config.rs uses builder pattern (confirmed)",
                 fact_type: "decision",
                 category: None,
                 confidence: 0.8,
@@ -400,8 +419,8 @@ mod tests {
         .unwrap();
         let pid2 = conn.last_insert_rowid();
 
-        let id1 = store_memory(&conn, pid1, "config.rs in project 1");
-        let id2 = store_memory(&conn, pid2, "config.rs in project 2");
+        let id1 = store_memory(&conn, pid1, "src/config.rs in project 1");
+        let id2 = store_memory(&conn, pid2, "src/config.rs in project 2");
 
         // Only mark stale for project 1
         let count = mark_memories_stale_for_file_sync(&conn, pid1, "/src/config.rs").unwrap();

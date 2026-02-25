@@ -289,23 +289,27 @@ pub fn persist_api_key(env_var_name: &str, key: &str) {
     }
 
     let line = format!("\n{}={}\n", env_var_name, key);
-    match std::fs::OpenOptions::new()
+    #[cfg(unix)]
+    let open_result = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&env_path)
+    };
+    #[cfg(not(unix))]
+    let open_result = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&env_path)
-    {
+        .open(&env_path);
+    match open_result {
         Ok(mut file) => {
             use std::io::Write;
             if let Err(e) = file.write_all(line.as_bytes()) {
                 tracing::warn!("[elicitation] Failed to write key to {:?}: {}", env_path, e);
             } else {
                 tracing::info!("[elicitation] Persisted {} to {:?}", env_var_name, env_path);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ =
-                        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600));
-                }
             }
         }
         Err(e) => {

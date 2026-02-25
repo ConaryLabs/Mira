@@ -4,8 +4,7 @@
 >
 > It runs as an **MCP server over stdio**, stores durable memory in **SQLite
 > databases** (with **sqlite-vec** for embeddings), and provides code intelligence
-> plus background "ambient" analysis powered by **DeepSeek Reasoner**
-> (and other LLM providers via a factory).
+> plus background heuristic analysis of code patterns and session behavior.
 
 This document explains Mira's architecture and, more importantly, the *why* behind
 the major decisions. It is written for developers evaluating whether to adopt
@@ -80,8 +79,8 @@ Claude Code  <--stdio/MCP-->  Mira Server
                                    |
                     +--------------+--------------+
                     |              |              |
-                 SQLite      Background       LLM Providers
-              (sqlite-vec)     Worker        (DeepSeek, Ollama)
+                 SQLite      Background       Embeddings
+              (sqlite-vec)     Worker        (OpenAI, optional)
 ```
 
 Key components:
@@ -92,8 +91,7 @@ Key components:
 | Database | `db/mod.rs` | SQLite wrapper, schema, migrations |
 | Background Worker | `background/mod.rs` | Embeddings, summaries, health checks |
 | File Watcher | `background/watcher.rs` | Incremental indexing on file changes |
-| LLM Factory | `llm/factory.rs` | DeepSeek and Ollama providers |
-| Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small) |
+| Embeddings | `embeddings/mod.rs` | Embedding queue and OpenAI client (text-embedding-3-small, optional) |
 | MCP Sampling | `llm/sampling.rs` | LLM consultation via host client (awaiting Claude Code support) |
 | Elicitation | `mcp/elicitation.rs` | Interactive API key setup flow |
 | Async Tasks | `tools/core/tasks.rs` | Background task management |
@@ -190,51 +188,38 @@ during indexing.
 
 ---
 
-## Decision 3: Multi-Provider Intelligence
+## Decision 3: Heuristic-First Intelligence
 
 ### What We Chose
 
-Mira's intelligence features use a **Provider Factory** that supports DeepSeek
-and Ollama for background tasks (summaries, briefings, pondering, code health).
+Background intelligence (summaries, briefings, pondering, code health) runs entirely
+on heuristic analysis. No LLM provider is required or used for background tasks.
+
+The only optional external API is **OpenAI embeddings** (`text-embedding-3-small`)
+for semantic search. Without it, search falls back to FTS5 keyword and fuzzy matching.
 
 ### Why This Architecture
 
-**1) Different tasks benefit from different models**
-- Background intelligence → DeepSeek or Ollama
-- Embeddings → OpenAI text-embedding-3-small
+**1) Zero-key usability**
+- Mira works fully out of the box without any API keys.
+- Heuristic analysis covers diff classification, module summaries, insight generation,
+  and code health pattern detection.
 
-**2) Resilience and extensibility**
-- Trait-based abstraction allows adding new providers
-- Users can optimize for cost, speed, or quality
+**2) Predictable behavior**
+- Heuristic results are deterministic and fast.
+- No latency variance from external API calls in the background.
 
-### Configuration
-
-Via config file (`~/.mira/config.toml`):
-```toml
-[llm]
-background_provider = "deepseek"  # For summaries, briefings, etc.
-```
-
-### Graceful Degradation
-
-When no LLM provider is configured (or `MIRA_DISABLE_LLM=1`), Mira degrades gracefully
-rather than failing:
-
-- **Diff analysis** falls back to heuristic parsing (regex-based function detection, security keyword scanning)
-- **Module summaries** fall back to metadata extraction (file counts, language distribution, symbol names)
-- **Pondering/insights** fall back to tool history analysis (usage distribution, friction detection)
-
-Heuristic results are prefixed with `[heuristic]` and cached separately, so LLM re-analysis
-can upgrade them when a provider becomes available.
+**3) Optional semantic upgrade**
+- Adding an OpenAI API key upgrades search from keyword-only to hybrid semantic + keyword.
+- This is the only capability gated on an API key.
 
 ### Tradeoffs
 
 | Pro | Con |
 |-----|-----|
-| Provider choice | Full features need at least one API key |
-| Cost optimization | Configuration complexity |
-| No vendor lock-in | Different providers have different strengths |
-| Works without any keys | Heuristic results are less detailed than LLM |
+| Works without any API keys | Semantic search requires OpenAI API key |
+| Deterministic background analysis | Heuristic summaries less detailed than LLM |
+| No background API costs | — |
 
 ---
 
@@ -304,10 +289,9 @@ Work includes:
 **3) Enables incremental updates**
 - File watcher queues changes, background pipeline processes them.
 
-**4) Heuristic fallbacks keep the brain running**
-- Background tasks use heuristic analysis when no LLM is available.
-- Module summaries, diff analysis, and pondering all produce useful output without API keys.
-- Results are tagged and upgradeable when an LLM becomes available.
+**4) Heuristic analysis keeps the brain running**
+- All background tasks use heuristic analysis.
+- Module summaries, diff analysis, and pondering produce useful output without any API keys.
 
 ### Tradeoffs
 
@@ -316,7 +300,7 @@ Work includes:
 | Fast interactive queries | CPU/network usage when "idle" |
 | Continuously fresh data | Failure handling complexity |
 | Incremental updates | Must not surprise users |
-| Works without LLM keys | Heuristic results less detailed |
+| Works without any API keys | Semantic search requires OpenAI key |
 
 ---
 
@@ -326,7 +310,7 @@ Work includes:
 
 All Mira state lives locally unless you explicitly opt into external providers:
 - Default DB: `~/.mira/mira.db`
-- Embeddings/LLM calls are optional and require env vars
+- Embeddings (OpenAI) are optional and require `OPENAI_API_KEY`
 
 ### Why This Is Fundamental
 
@@ -406,7 +390,7 @@ Mira integrates with Claude Code via hooks that trigger at key moments:
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PreToolUse` | Injects context before tool execution (suggests semantic alternatives) |
 | `PermissionRequest` | Auto-approves tools based on stored permission rules |
-| `PostToolFailure` | Tracks tool failures, recalls memories after repeated failures |
+| `PostToolUseFailure` | Tracks tool failures, recalls memories after repeated failures |
 | `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |
 | `TeammateIdle` | Logs teammate idle events for team activity tracking |
 
@@ -420,10 +404,6 @@ A two-tier system that predicts and surfaces relevant context:
    - File access sequences
    - Tool usage chains
    - Query patterns
-
-2. **LLM Enhancement** (every ~50 minutes)
-   - Generates contextual suggestions
-   - Pre-computes hints for fast lookup
 
 The `UserPromptSubmit` hook injects relevant suggestions automatically.
 
@@ -464,7 +444,7 @@ Future evolution: policy-enforced safety rather than prompt-enforced.
 |----------|----------|------------|
 | Transport | MCP/stdio | Easy remote access |
 | Storage | SQLite local files | Horizontal scaling |
-| Intelligence | DeepSeek / Ollama | Full features need at least one provider |
+| Intelligence | Heuristic-only | Embedding-powered search requires OpenAI API key |
 | Memory | Evidence-based | Instant trust |
 | Processing | Background worker | Zero idle resource use |
 | Data | Local-first | Built-in sync |

@@ -75,11 +75,28 @@ pub(crate) fn ensure_sqlite_vec_registered() {
 /// SQLITE_BUSY ("database is locked") occurs with file-based databases under write contention.
 /// SQLITE_LOCKED ("database table is locked") occurs with shared-cache in-memory databases
 /// when another connection holds a write lock on the same table.
-fn is_sqlite_contention(err: &str) -> bool {
-    err.contains("database is locked")
-        || err.contains("database table is locked")
-        || err.contains("SQLITE_BUSY")
-        || err.contains("SQLITE_LOCKED")
+///
+/// Prefers inspecting the rusqlite error code directly; falls back to string matching
+/// for errors wrapped in other types.
+fn is_sqlite_contention(err: &anyhow::Error) -> bool {
+    use rusqlite::ffi;
+    if let Some(rusqlite_err) = err.downcast_ref::<rusqlite::Error>() {
+        return matches!(
+            rusqlite_err,
+            rusqlite::Error::SqliteFailure(
+                ffi::Error {
+                    code: ffi::ErrorCode::DatabaseBusy | ffi::ErrorCode::DatabaseLocked,
+                    ..
+                },
+                _,
+            )
+        );
+    }
+    // Fallback to string matching for wrapped errors
+    let msg = err.to_string().to_lowercase();
+    msg.contains("database is locked")
+        || msg.contains("database is busy")
+        || msg.contains("database table is locked")
 }
 
 /// Retry delays for SQLite contention backoff (100ms, 500ms, 2s).
@@ -406,7 +423,10 @@ impl DatabasePool {
                 let f_clone = f.clone();
                 self.run(f_clone)
             },
-            |e: &MiraError| is_sqlite_contention(&e.to_string()),
+            |e: &MiraError| {
+                let anyhow_err = anyhow::anyhow!("{}", e);
+                is_sqlite_contention(&anyhow_err)
+            },
         )
         .await
     }
@@ -425,7 +445,7 @@ impl DatabasePool {
                 let f_clone = f.clone();
                 self.interact(f_clone)
             },
-            |e| is_sqlite_contention(&e.to_string()),
+            |e: &anyhow::Error| is_sqlite_contention(e),
         )
         .await
     }

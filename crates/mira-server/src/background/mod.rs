@@ -135,7 +135,7 @@ pub fn spawn_with_pools(
 /// Supervise a background worker, restarting it if it panics.
 /// Stops when the shutdown signal is received.
 /// Uses exponential backoff (5s -> 10s -> 20s -> 40s -> 60s cap) with max 5 consecutive panics.
-async fn supervise_worker<F>(name: &str, shutdown: watch::Receiver<bool>, spawn_fn: F)
+async fn supervise_worker<F>(name: &str, mut shutdown: watch::Receiver<bool>, spawn_fn: F)
 where
     F: Fn() -> tokio::task::JoinHandle<()>,
 {
@@ -187,7 +187,19 @@ where
                     e,
                     delay_secs
                 );
-                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                // Use select! so shutdown signals are detected during backoff sleep.
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(delay_secs)) => {}
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            tracing::info!(
+                                "Shutdown detected during worker '{}' backoff, exiting supervisor",
+                                name
+                            );
+                            break;
+                        }
+                    }
+                }
                 // Loop will restart the worker
             }
             Err(e) => {

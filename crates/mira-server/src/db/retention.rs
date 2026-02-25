@@ -151,6 +151,15 @@ pub fn run_data_retention_sync(
     let mut total_deleted = 0;
 
     for rule in &rules {
+        // Safety guard: days=0 would delete all rows. Enforce a minimum of 1 day.
+        if rule.days == 0 {
+            tracing::warn!(
+                "[retention] Skipping rule for '{}': days=0 would wipe the table. Set days >= 1.",
+                rule.table
+            );
+            continue;
+        }
+
         // Batched deletes: use a subquery with LIMIT to avoid holding SQLite's
         // write lock for large backlogs. The subquery approach works without
         // SQLITE_ENABLE_UPDATE_DELETE_LIMIT.

@@ -2,7 +2,7 @@
 
 > **Standalone MCP tool.** Call as `diff(from_ref="...", to_ref="...", include_impact=true)`.
 
-Analyze git diffs semantically. Identifies change types, impact, and risks using LLM-powered analysis with heuristic fallback.
+Analyze git diffs semantically. Identifies change types, impact, and risks using heuristic-based analysis.
 
 ## Usage
 
@@ -29,13 +29,7 @@ Analyze git diffs semantically. Identifies change types, impact, and risks using
 1. **Change Classification** — Categorizes each change (NewFunction, ModifiedFunction, DeletedFunction, etc.)
 2. **Impact Analysis** — Traverses the call graph to find affected callers
 3. **Risk Assessment** — Flags breaking changes, security-relevant modifications
-4. **Caching** — Commit-to-commit analyses are cached in `diff_analyses`. Staged/working tree analyses are not cached. If an analysis was cached heuristically, Mira will re-run it when an LLM becomes available.
-
-## Graceful Degradation
-
-| With LLM | Without LLM |
-|----------|-------------|
-| Semantic change classification via DeepSeek Reasoner | Heuristic: regex-based function and security detection |
+4. **Caching** — Commit-to-commit analyses are cached in `diff_analyses`. Staged/working tree analyses are not cached.
 
 ## Examples
 

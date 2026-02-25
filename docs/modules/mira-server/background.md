@@ -9,7 +9,7 @@ Background workers for idle-time processing. Split into two lanes based on laten
 Handles embedding generation and incremental indexing. Woken immediately via `FastLaneNotify.wake()` when new work arrives (e.g., after file watcher updates queue new embeddings).
 
 ### Slow Lane
-Handles LLM-powered tasks: session summaries, pondering/insights, code health analysis, and proactive suggestions. Runs on a longer polling interval.
+Handles heuristic analysis tasks: session summaries, pondering/insights, code health analysis, and proactive suggestions. Runs on a longer polling interval.
 
 ## Sub-modules
 
@@ -33,19 +33,19 @@ Handles LLM-powered tasks: session summaries, pondering/insights, code health an
 | `team_monitor` | slow | Team activity monitoring |
 | `watcher` | independent | Filesystem watching for incremental updates |
 
-## Graceful Degradation
+## Background Task Behavior
 
-All background tasks degrade gracefully when no LLM provider is configured (or `MIRA_DISABLE_LLM=1`):
+All background tasks run using heuristic analysis. No LLM provider is required or used.
 
-| Task | With LLM | Without LLM |
-|------|----------|-------------|
-| Module summaries | LLM-generated descriptions | Heuristic: file count, languages, top symbols |
-| Diff analysis | Semantic change classification | Heuristic: regex-based function/security detection |
-| Pondering/insights | LLM-powered pattern extraction | Heuristic: tool usage stats, friction detection, focus areas |
-| Session summaries | LLM summarization | Skipped |
-| Code health | LLM analysis | Skipped |
+| Task | Method |
+|------|--------|
+| Module summaries | Heuristic: file count, languages, top symbols |
+| Diff analysis | Heuristic: regex-based function/security detection |
+| Pondering/insights | Heuristic: tool usage stats, friction detection, focus areas |
+| Session summaries | Skipped |
+| Code health | Pattern-based detection (TODOs, unwraps, cargo warnings) |
 
-Heuristic results are tagged with `[heuristic]` prefix and remain upgradeable when an LLM becomes available.
+Heuristic results are tagged with `[heuristic]` prefix.
 
 ## Key Types
 

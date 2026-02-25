@@ -8,23 +8,40 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::SessionOutput;
 use crate::tools::core::ToolContext;
 
-/// Helper: count rows in a table, returning 0 if the table doesn't exist.
-pub(super) fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
-    const ALLOWED_TABLES: &[&str] = &[
-        "memory_facts",
-        "sessions",
-        "tool_history",
-        "llm_usage",
-        "embeddings_usage",
-        "behavior_patterns",
-        "goals",
-        "system_observations",
-        "health_snapshots",
-    ];
-    if !ALLOWED_TABLES.contains(&table) {
-        return 0;
+/// Compile-time-safe enumeration of tables that may be counted.
+/// Prevents SQL injection via table name interpolation.
+#[allow(dead_code)]
+pub(super) enum AllowedTable {
+    MemoryFacts,
+    Sessions,
+    ToolHistory,
+    LlmUsage,
+    EmbeddingsUsage,
+    BehaviorPatterns,
+    Goals,
+    SystemObservations,
+    HealthSnapshots,
+}
+
+impl AllowedTable {
+    pub(super) fn as_str(&self) -> &'static str {
+        match self {
+            AllowedTable::MemoryFacts => "memory_facts",
+            AllowedTable::Sessions => "sessions",
+            AllowedTable::ToolHistory => "tool_history",
+            AllowedTable::LlmUsage => "llm_usage",
+            AllowedTable::EmbeddingsUsage => "embeddings_usage",
+            AllowedTable::BehaviorPatterns => "behavior_patterns",
+            AllowedTable::Goals => "goals",
+            AllowedTable::SystemObservations => "system_observations",
+            AllowedTable::HealthSnapshots => "health_snapshots",
+        }
     }
-    let sql = format!("SELECT COUNT(*) FROM {table}");
+}
+
+/// Helper: count rows in a table, returning 0 if the table doesn't exist.
+pub(super) fn count_table(conn: &rusqlite::Connection, table: AllowedTable) -> usize {
+    let sql = format!("SELECT COUNT(*) FROM {}", table.as_str());
     conn.query_row(&sql, [], |row| row.get::<_, usize>(0))
         .unwrap_or(0)
 }
@@ -62,14 +79,14 @@ pub(super) async fn storage_status<C: ToolContext>(
     let counts = ctx
         .pool()
         .run(move |conn| {
-            let memories = count_table(conn, "memory_facts");
-            let sessions = count_table(conn, "sessions");
-            let tool_history = count_table(conn, "tool_history");
-            let llm_usage = count_table(conn, "llm_usage");
-            let embed_usage = count_table(conn, "embeddings_usage");
-            let behavior = count_table(conn, "behavior_patterns");
-            let goals = count_table(conn, "goals");
-            let observations = count_table(conn, "system_observations");
+            let memories = count_table(conn, AllowedTable::MemoryFacts);
+            let sessions = count_table(conn, AllowedTable::Sessions);
+            let tool_history = count_table(conn, AllowedTable::ToolHistory);
+            let llm_usage = count_table(conn, AllowedTable::LlmUsage);
+            let embed_usage = count_table(conn, AllowedTable::EmbeddingsUsage);
+            let behavior = count_table(conn, AllowedTable::BehaviorPatterns);
+            let goals = count_table(conn, AllowedTable::Goals);
+            let observations = count_table(conn, AllowedTable::SystemObservations);
 
             Ok::<_, String>((
                 memories,

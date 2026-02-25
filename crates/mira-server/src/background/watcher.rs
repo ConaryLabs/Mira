@@ -273,8 +273,10 @@ impl FileWatcher {
     async fn queue_change(&self, path: PathBuf, change_type: ChangeType) {
         tracing::info!("Watcher: queuing {:?} for {:?}", change_type, path);
         let mut pending = self.pending_changes.write().await;
-        // New change event resets the retry counter
-        pending.insert(path, (change_type, Instant::now(), 0));
+        // Preserve existing retry count so continuous re-queuing under DB errors
+        // cannot reset the counter and bypass the MAX_RETRIES limit.
+        let retry_count = pending.get(&path).map(|(_, _, count)| *count).unwrap_or(0);
+        pending.insert(path, (change_type, Instant::now(), retry_count));
     }
 
     /// Maximum retry attempts before giving up on a file
@@ -621,6 +623,8 @@ pub fn spawn(
     fast_lane_notify: Option<FastLaneNotify>,
 ) -> WatcherHandle {
     let watched_projects = Arc::new(RwLock::new(HashMap::new()));
+    let pending_changes: Arc<RwLock<HashMap<PathBuf, PendingChange>>> =
+        Arc::new(RwLock::new(HashMap::new()));
     let handle = WatcherHandle {
         watched_projects: watched_projects.clone(),
     };
@@ -644,7 +648,7 @@ pub fn spawn(
                 pool: pool.clone(),
                 fuzzy_cache: fuzzy_cache.clone(),
                 watched_projects: watched_projects.clone(),
-                pending_changes: Arc::new(RwLock::new(HashMap::new())),
+                pending_changes: pending_changes.clone(),
                 shutdown: shutdown.clone(),
                 fast_lane_notify: fast_lane_notify.clone(),
             };
@@ -660,6 +664,14 @@ pub fn spawn(
                     }
 
                     consecutive_panics += 1;
+
+                    let pending_count = pending_changes.read().await.len();
+                    if pending_count > 0 {
+                        tracing::warn!(
+                            "Watcher restart: {} pending file change(s) were in-flight during panic (preserved via shared Arc)",
+                            pending_count
+                        );
+                    }
 
                     if consecutive_panics > MAX_PANICS {
                         tracing::error!(

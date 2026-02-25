@@ -310,11 +310,16 @@ pub(super) fn set_post_compaction_flag(session_id: &str) {
         return;
     }
     let path = post_compaction_flag_path(session_id);
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        tracing::warn!("post-compaction flag: failed to create dir: {e}");
+        return;
     }
     // Write a timestamp so we can age-out stale flags
-    let _ = fs::write(&path, format!("{}", crate::hooks::pre_tool::unix_now()));
+    if let Err(e) = fs::write(&path, format!("{}", crate::hooks::pre_tool::unix_now())) {
+        tracing::warn!("post-compaction flag: failed to write flag file: {e}");
+    }
 }
 
 /// Check whether a post-compaction flag exists and is fresh, without consuming it.

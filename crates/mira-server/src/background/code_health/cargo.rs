@@ -37,7 +37,9 @@ pub struct CargoFinding {
 
 /// Run cargo check and collect warnings (no DB writes).
 /// Returns findings to be batch-stored by the caller.
-pub fn collect_cargo_warnings(project_path: &str) -> Result<Vec<CargoFinding>, String> {
+///
+/// WARNING: This is a blocking function. Use `collect_cargo_warnings_async()` in async contexts.
+pub(super) fn collect_cargo_warnings(project_path: &str) -> Result<Vec<CargoFinding>, String> {
     // Check if it's a Rust project
     let cargo_toml = Path::new(project_path).join("Cargo.toml");
     if !cargo_toml.exists() {

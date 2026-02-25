@@ -285,7 +285,7 @@ async fn action_bulk_create<C: ToolContext>(
 ) -> Result<Json<GoalOutput>, MiraError> {
     let bulk_goals: Vec<BulkGoal> = serde_json::from_str(goals_json).map_err(|e| {
         MiraError::InvalidInput(format!(
-            "Invalid goals JSON: {}. Expected: [{{\"title\": \"...\", \"description?\": \"...\", \"priority?\": \"...\"}}]",
+            "Failed to parse goals: {}. Expected a JSON-encoded string containing an array of goal objects, e.g., '[{{\"title\": \"...\", \"priority\": \"high\"}}]'",
             e
         ))
     })?;
