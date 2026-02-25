@@ -1,10 +1,7 @@
 //! Test utilities for Mira integration tests
 
 use async_trait::async_trait;
-use mira::{
-    background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient,
-    llm::ProviderFactory,
-};
+use mira::{background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient};
 use mira_types::ProjectContext;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,7 +11,6 @@ use uuid::Uuid;
 pub struct TestContext {
     pool: Arc<DatabasePool>,
     code_pool: Arc<DatabasePool>,
-    llm_factory: Arc<ProviderFactory>,
     project_state: Arc<RwLock<Option<ProjectContext>>>,
     session_state: Arc<RwLock<Option<String>>>,
     branch_state: Arc<RwLock<Option<String>>>,
@@ -35,13 +31,9 @@ impl TestContext {
                 .expect("Failed to create in-memory code pool"),
         );
 
-        // Create LLM factory (will have no clients since no API keys are set in test env)
-        let llm_factory = Arc::new(ProviderFactory::new());
-
         Self {
             pool,
             code_pool,
-            llm_factory,
             project_state: Arc::new(RwLock::new(None)),
             session_state: Arc::new(RwLock::new(None)),
             branch_state: Arc::new(RwLock::new(None)),
@@ -66,10 +58,6 @@ impl mira::tools::core::ToolContext for TestContext {
 
     fn embeddings(&self) -> Option<&Arc<EmbeddingClient>> {
         None // No embeddings client for tests
-    }
-
-    fn llm_factory(&self) -> &ProviderFactory {
-        &self.llm_factory
     }
 
     async fn get_project(&self) -> Option<ProjectContext> {

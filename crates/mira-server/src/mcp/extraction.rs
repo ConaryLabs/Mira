@@ -1,14 +1,14 @@
 // crates/mira-server/src/mcp/extraction.rs
 // Extract meaningful outcomes from tool calls and store as project memories
+//
+// NOTE: This module previously used LLM for extraction. Since the LLM dependency
+// has been removed, spawn_tool_extraction is now a no-op. The extraction logic
+// is preserved in case a local computation replacement is added later.
 
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 use crate::db::pool::DatabasePool;
-use crate::db::{StoreObservationParams, store_observation_sync};
-use crate::llm::{LlmClient, PromptBuilder, record_llm_usage};
-use crate::utils::json::parse_json_hardened;
-use crate::utils::truncate_at_boundary;
 
 /// Tools that produce outcomes worth remembering
 const EXTRACTABLE_TOOLS: &[&str] = &[
@@ -18,157 +18,23 @@ const EXTRACTABLE_TOOLS: &[&str] = &[
     "diff", // Diff analysis insights
 ];
 
-/// Spawn background extraction for a tool call
+/// Spawn background extraction for a tool call.
+/// Currently a no-op since extraction requires an LLM client which has been removed.
 pub fn spawn_tool_extraction(
-    pool: Arc<DatabasePool>,
+    _pool: Arc<DatabasePool>,
     _embeddings: Option<Arc<crate::embeddings::EmbeddingClient>>,
-    llm_client: Option<Arc<dyn LlmClient>>,
-    project_id: Option<i64>,
+    _project_id: Option<i64>,
     tool_name: String,
-    args: String,
-    result: String,
+    _args: String,
+    _result: String,
 ) {
-    // Only extract from certain tools
-    if !EXTRACTABLE_TOOLS.contains(&tool_name.as_str()) {
-        debug!("Tool extraction: skipping {} (not extractable)", tool_name);
-        return;
-    }
-
-    // Skip if result is too short (likely just a status message)
-    if result.len() < 50 {
+    // Only log for extractable tools to avoid noise
+    if EXTRACTABLE_TOOLS.contains(&tool_name.as_str()) {
         debug!(
-            "Tool extraction: skipping {} (result too short: {} chars)",
-            tool_name,
-            result.len()
-        );
-        return;
-    }
-
-    // Need LLM client for extraction
-    let Some(llm_client) = llm_client else {
-        debug!(
-            "Tool extraction: skipping {} (no LLM provider configured)",
+            "Tool extraction: skipping {} (no LLM provider -- extraction disabled)",
             tool_name
         );
-        return;
-    };
-
-    info!(
-        "Tool extraction: spawning extraction for {} ({} chars)",
-        tool_name,
-        result.len()
-    );
-
-    tokio::spawn(async move {
-        if let Err(e) =
-            extract_and_store(&pool, &*llm_client, project_id, &tool_name, &args, &result).await
-        {
-            warn!("Tool extraction failed for {}: {}", tool_name, e);
-        }
-    });
-}
-
-/// Perform extraction and store results
-async fn extract_and_store(
-    pool: &Arc<DatabasePool>,
-    llm_client: &dyn LlmClient,
-    project_id: Option<i64>,
-    tool_name: &str,
-    args: &str,
-    result: &str,
-) -> anyhow::Result<()> {
-    // Build context for extraction
-    let tool_context = format!(
-        "Tool: {}\nArguments: {}\nResult:\n{}",
-        tool_name,
-        args,
-        // Truncate very long results (char-boundary safe)
-        truncate_at_boundary(result, 3000)
-    );
-
-    let messages = PromptBuilder::for_tool_extraction().build_messages(tool_context);
-
-    // Call LLM for extraction
-    let response = llm_client.chat(messages, None).await?;
-
-    // Record usage
-    record_llm_usage(
-        pool,
-        llm_client.provider_type(),
-        &llm_client.model_name(),
-        "background:extraction",
-        &response,
-        project_id,
-        None,
-    )
-    .await;
-
-    let content = response
-        .content
-        .ok_or_else(|| anyhow::anyhow!("No content in extraction response"))?;
-
-    // Parse JSON array (hardened: handles markdown fences, surrounding text, etc.)
-    let outcomes: Vec<ExtractedOutcome> = match parse_json_hardened(&content) {
-        Ok(o) => o,
-        Err(e) => {
-            debug!(
-                "Failed to parse tool extraction response: {} - content: {}",
-                e, content
-            );
-            return Ok(());
-        }
-    };
-
-    if outcomes.is_empty() {
-        debug!("No outcomes extracted from {} call", tool_name);
-        return Ok(());
     }
-
-    info!(
-        "Extracted {} outcomes from {} call",
-        outcomes.len(),
-        tool_name
-    );
-
-    // Store each outcome
-    for outcome in outcomes {
-        let key = outcome
-            .key
-            .map(|k| format!("tool:{}:{}", tool_name, k))
-            .unwrap_or_else(|| format!("tool:{}:{}", tool_name, uuid::Uuid::new_v4()));
-
-        // Store observation using pool
-        let content_clone = outcome.content.clone();
-        let key_clone = key.clone();
-        let category_clone = outcome.category.clone();
-        pool.interact(move |conn| {
-            store_observation_sync(
-                conn,
-                StoreObservationParams {
-                    project_id,
-                    key: Some(&key_clone),
-                    content: &content_clone,
-                    observation_type: "tool_outcome",
-                    category: Some(&category_clone),
-                    confidence: 0.85,
-                    source: "extraction",
-                    session_id: None,
-                    team_id: None,
-                    scope: "project",
-                    expires_at: Some("+30 days"),
-                },
-            )
-            .map_err(|e| anyhow::anyhow!("{}", e))
-        })
-        .await?;
-
-        debug!(
-            "Stored tool outcome: {} (category: {})",
-            outcome.content, outcome.category
-        );
-    }
-
-    Ok(())
 }
 
 /// An outcome extracted from a tool call

@@ -5,14 +5,12 @@
 // actionable insights about goals, code stability, and workflow.
 
 mod heuristic;
-mod llm;
 mod queries;
 mod storage;
 pub(crate) mod types;
 
 use crate::db::get_active_projects_sync;
 use crate::db::pool::DatabasePool;
-use crate::llm::LlmClient;
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -24,7 +22,6 @@ pub use storage::cleanup_stale_insights;
 /// Process pondering - analyze recent activity for patterns
 pub async fn process_pondering(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     // Get all projects with recent activity
     let projects = pool.run(|conn| get_active_projects_sync(conn, 24)).await?;
@@ -40,49 +37,26 @@ pub async fn process_pondering(
             continue;
         }
 
-        // Gather project-aware data (new rich queries)
+        // Gather project-aware data (rich queries)
         let data = queries::get_project_insight_data(pool, project_id).await?;
 
-        // Gather legacy data (still used as secondary context for LLM)
-        let (tool_history, memories, existing_insights) = tokio::join!(
-            queries::get_recent_tool_history(pool, project_id),
-            queries::get_recent_memories(pool, project_id),
-            queries::get_existing_insights(pool, project_id),
-        );
-        let tool_history = tool_history?;
-        let memories = memories?;
-        let existing_insights = existing_insights.unwrap_or_default();
+        // Gate: need project data OR sufficient tool history
+        let tool_history = queries::get_recent_tool_history(pool, project_id).await?;
 
-        // Gate: need either project data OR sufficient tool history
         if !data.has_data() && tool_history.len() < MIN_TOOL_CALLS {
             tracing::debug!(
                 "Project {} has insufficient data (no project signals, {} tool calls), skipping pondering",
                 name,
                 tool_history.len()
             );
-            // Update timestamp even when skipping — prevents the per-project
+            // Update timestamp even when skipping -- prevents the per-project
             // pondering timestamp from going stale on low-activity projects.
             let _ = update_last_pondering(pool, project_id).await;
             continue;
         }
 
-        // Generate insights
-        let insights = match client {
-            Some(c) => {
-                llm::generate_insights(
-                    pool,
-                    project_id,
-                    &name,
-                    &data,
-                    &tool_history,
-                    &memories,
-                    &existing_insights,
-                    c,
-                )
-                .await?
-            }
-            None => heuristic::generate_insights_heuristic(&data),
-        };
+        // Generate insights using heuristic analysis
+        let insights = heuristic::generate_insights_heuristic(&data);
 
         // Store insights as behavior patterns, then advance cooldown.
         // Cooldown must come AFTER persistence so transient DB failures
@@ -106,7 +80,7 @@ pub async fn process_pondering(
                     name,
                     e
                 );
-                // Don't advance cooldown — retry next cycle
+                // Don't advance cooldown -- retry next cycle
             }
         }
     }

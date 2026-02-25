@@ -56,9 +56,6 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     let context_header = pi.header;
     let path = Path::new(&project_path);
 
-    // Get LLM client for semantic analysis (optional — falls back to heuristic)
-    let llm_client = ctx.llm_factory().client_for_background();
-
     let include_impact = include_impact.unwrap_or(true);
 
     // Determine what to analyze
@@ -117,7 +114,6 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     // Perform full analysis
     let result = analyze_diff(
         ctx.pool(),
-        llm_client.as_ref(),
         path,
         project_id,
         &from,
@@ -158,10 +154,8 @@ async fn analyze_staged_or_working<C: ToolContext>(
     include_impact: bool,
 ) -> Result<Json<DiffOutput>, MiraError> {
     use crate::background::diff_analysis::{
-        analyze_diff_heuristic, analyze_diff_semantic, calculate_risk_level,
+        analyze_diff_heuristic, calculate_risk_level,
     };
-
-    let llm_client = ctx.llm_factory().client_for_background();
 
     // Get stats
     let stats = if analysis_type == "staged" {
@@ -178,12 +172,8 @@ async fn analyze_staged_or_working<C: ToolContext>(
         }));
     }
 
-    // Semantic analysis via LLM or heuristic fallback
-    let (changes, summary, risk_flags) = if let Some(ref client) = llm_client {
-        analyze_diff_semantic(diff_content, client, ctx.pool(), project_id).await?
-    } else {
-        analyze_diff_heuristic(diff_content, &stats)
-    };
+    // Heuristic analysis
+    let (changes, summary, risk_flags) = analyze_diff_heuristic(diff_content, &stats);
 
     // Build impact if requested
     let impact = if include_impact && !changes.is_empty() {

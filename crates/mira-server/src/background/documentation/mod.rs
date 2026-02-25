@@ -80,7 +80,6 @@ pub fn hash_normalized_signatures(signatures: &[&str]) -> Option<String> {
 pub async fn process_documentation(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn crate::llm::LlmClient>>,
 ) -> Result<usize, String> {
     // Scan for missing and stale documentation (detection only)
     let scan_count = scan_documentation_gaps(main_pool, code_pool).await?;
@@ -88,8 +87,8 @@ pub async fn process_documentation(
         tracing::info!("Documentation scan found {} gaps", scan_count);
     }
 
-    // Analyze impact of stale docs (LLM or heuristic)
-    let analyzed = analyze_stale_doc_impacts(main_pool, code_pool, client).await?;
+    // Analyze impact of stale docs (heuristic comparison)
+    let analyzed = analyze_stale_doc_impacts(main_pool, code_pool).await?;
     if analyzed > 0 {
         tracing::info!("Analyzed impact for {} stale docs", analyzed);
     }
@@ -98,14 +97,13 @@ pub async fn process_documentation(
 }
 
 /// Analyze the impact of changes for stale documentation.
-/// Uses LLM when available, otherwise falls back to heuristic comparison.
+/// Uses heuristic comparison of signature hashes.
 ///
-/// - `main_pool`: for documentation_inventory, LLM usage
+/// - `main_pool`: for documentation_inventory
 /// - `code_pool`: for code_symbols (current signatures)
 async fn analyze_stale_doc_impacts(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn crate::llm::LlmClient>>,
 ) -> Result<usize, String> {
     use crate::db::documentation::{get_stale_docs_needing_analysis, update_doc_impact_analysis};
 
@@ -138,30 +136,15 @@ async fn analyze_stale_doc_impacts(
                 .as_deref()
                 .and_then(|s| s.strip_prefix("source_file:"))
                 .unwrap_or_else(|| doc.source_symbols.as_deref().unwrap_or("unknown"));
-            let staleness_reason = doc.staleness_reason.as_deref().unwrap_or("source changed");
+            let _staleness_reason = doc.staleness_reason.as_deref().unwrap_or("source changed");
 
-            let (impact, summary) = if let Some(llm) = client {
-                // LLM path: full semantic analysis
-                analyze_impact_with_llm(
-                    llm,
-                    main_pool,
-                    code_pool,
-                    project_id,
-                    &doc.doc_path,
-                    source_file,
-                    staleness_reason,
-                )
-                .await
-            } else {
-                // Heuristic path: compare signature hashes
-                analyze_impact_heuristic(
-                    code_pool,
-                    project_id,
-                    source_file,
-                    doc.source_signature_hash.as_deref(),
-                )
-                .await
-            };
+            let (impact, summary) = analyze_impact_heuristic(
+                code_pool,
+                project_id,
+                source_file,
+                doc.source_signature_hash.as_deref(),
+            )
+            .await;
 
             // Update the database
             let doc_id = doc.id;
@@ -184,85 +167,6 @@ async fn analyze_stale_doc_impacts(
     }
 
     Ok(total_analyzed)
-}
-
-/// Analyze doc impact using LLM
-async fn analyze_impact_with_llm(
-    client: &Arc<dyn crate::llm::LlmClient>,
-    main_pool: &Arc<DatabasePool>,
-    code_pool: &Arc<DatabasePool>,
-    project_id: i64,
-    doc_path: &str,
-    source_file: &str,
-    staleness_reason: &str,
-) -> (String, String) {
-    use crate::llm::{PromptBuilder, record_llm_usage};
-
-    let current_signatures = get_current_signatures(code_pool, project_id, source_file).await;
-
-    let prompt = format!(
-        r#"Analyze the impact of source code changes on documentation.
-
-Documentation file: {}
-Source file: {}
-Change detected: {}
-
-Current source signatures:
-{}
-
-Classify the change impact as either "significant" or "minor":
-
-SIGNIFICANT changes (documentation MUST be updated):
-- Public function signatures changed (parameters, return types)
-- New public functions/methods added
-- Functions removed or renamed
-- Behavior changes that affect usage
-- New error conditions or edge cases
-
-MINOR changes (documentation update optional):
-- Internal refactoring (variable renames, code reorganization)
-- Performance optimizations without API changes
-- Comments or formatting changes
-- Private/internal function changes
-
-Respond in this exact format:
-IMPACT: [significant/minor]
-SUMMARY: [One sentence explaining what changed and why it matters or doesn't]"#,
-        doc_path,
-        source_file,
-        staleness_reason,
-        current_signatures.unwrap_or_else(|| "Unable to retrieve".to_string())
-    );
-
-    let messages = PromptBuilder::for_background().build_messages(prompt);
-
-    match client.chat(messages, None).await {
-        Ok(result) => {
-            let content = result.content.as_deref().unwrap_or("");
-            let (impact, summary) = parse_impact_response(content);
-
-            record_llm_usage(
-                main_pool,
-                client.provider_type(),
-                &client.model_name(),
-                "background:doc_impact_analysis",
-                &result,
-                Some(project_id),
-                None,
-            )
-            .await;
-
-            (impact, summary)
-        }
-        Err(e) => {
-            tracing::warn!("Failed LLM doc impact for {}: {}", doc_path, e);
-            // Default to significant when LLM fails
-            (
-                "significant".to_string(),
-                "LLM analysis failed, defaulting to significant".to_string(),
-            )
-        }
-    }
 }
 
 /// Heuristic doc impact analysis: compare old signature hash with current signatures.
@@ -348,48 +252,6 @@ async fn analyze_impact_heuristic(
             ),
         ),
     }
-}
-
-/// Get current source signatures for a file (reads from code_symbols in code DB)
-async fn get_current_signatures(
-    code_pool: &Arc<DatabasePool>,
-    project_id: i64,
-    source_file: &str,
-) -> Option<String> {
-    let source_file = source_file.to_string();
-    code_pool
-        .interact(move |conn| -> anyhow::Result<Option<String>> {
-            let mut stmt = conn.prepare(
-                "SELECT name, symbol_type, signature FROM code_symbols
-             WHERE project_id = ? AND file_path = ?
-             AND symbol_type IN ('function', 'method', 'struct', 'enum', 'trait')
-             ORDER BY start_line",
-            )?;
-
-            let rows: Vec<String> = stmt
-                .query_map(rusqlite::params![project_id, source_file], |row| {
-                    let name: String = row.get(0)?;
-                    let sym_type: String = row.get(1)?;
-                    let sig: Option<String> = row.get(2)?;
-                    Ok(format!(
-                        "- {} ({}): {}",
-                        name,
-                        sym_type,
-                        sig.unwrap_or_else(|| "no signature".to_string())
-                    ))
-                })?
-                .filter_map(crate::db::log_and_discard)
-                .collect();
-
-            if rows.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(rows.join("\n")))
-            }
-        })
-        .await
-        .ok()
-        .flatten()
 }
 
 /// Parse the LLM response to extract impact and summary

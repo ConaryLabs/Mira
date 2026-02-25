@@ -14,9 +14,8 @@ use crate::db::{
     StoreObservationParams, clear_health_issues_by_categories_sync, clear_old_health_issues_sync,
     delete_observation_by_key_sync, get_indexed_project_ids_sync, get_project_paths_by_ids_sync,
     get_unused_functions_sync, is_time_older_than_sync, mark_health_scanned_sync,
-    mark_llm_health_done_sync, observation_key_exists_sync, store_observation_sync,
+    observation_key_exists_sync, store_observation_sync,
 };
-use crate::llm::LlmClient;
 use crate::utils::ResultExt;
 use rusqlite::params;
 use std::path::Path;
@@ -266,99 +265,23 @@ pub async fn process_health_fast_scans(
 }
 
 /// LLM-based complexity analysis for large functions.
-/// Clears category: complexity.
-/// Uses its own timestamp tracking (independent of the scan-needed flag)
-/// so it can run on a slower cadence without starving or being starved.
+/// Currently a no-op since LLM dependency has been removed.
 pub async fn process_health_llm_complexity(
-    main_pool: &Arc<DatabasePool>,
-    code_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
+    _main_pool: &Arc<DatabasePool>,
+    _code_pool: &Arc<DatabasePool>,
 ) -> Result<usize, String> {
-    let Some(llm) = client else {
-        return Ok(0);
-    };
-
-    let Some((project_id, project_path)) =
-        find_project_for_llm_health(main_pool, code_pool, "health_llm_complexity_time").await?
-    else {
-        return Ok(0);
-    };
-
-    tracing::debug!(
-        "Code health LLM complexity: scanning project {}",
-        project_path
-    );
-
-    // Clear complexity category
-    main_pool
-        .run(move |conn| clear_health_issues_by_categories_sync(conn, project_id, &["complexity"]))
-        .await?;
-
-    let complexity =
-        analysis::scan_complexity(code_pool, main_pool, llm, project_id, &project_path).await?;
-    if complexity > 0 {
-        tracing::info!(
-            "Code health: found {} complexity issues via LLM",
-            complexity
-        );
-    }
-
-    // Mark this subtask as done so it doesn't re-run until the next scan cycle
-    main_pool
-        .run(move |conn| mark_llm_health_done_sync(conn, project_id, "health_llm_complexity_time"))
-        .await?;
-
-    Ok(complexity)
+    // LLM-based analysis removed; fast scans handle complexity detection heuristically
+    Ok(0)
 }
 
 /// LLM-based error handling quality analysis.
-/// Clears category: error_quality.
-/// Uses its own timestamp tracking (independent of the scan-needed flag)
-/// so it can run on a slower cadence without starving or being starved.
+/// Currently a no-op since LLM dependency has been removed.
 pub async fn process_health_llm_error_quality(
-    main_pool: &Arc<DatabasePool>,
-    code_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
+    _main_pool: &Arc<DatabasePool>,
+    _code_pool: &Arc<DatabasePool>,
 ) -> Result<usize, String> {
-    let Some(llm) = client else {
-        return Ok(0);
-    };
-
-    let Some((project_id, project_path)) =
-        find_project_for_llm_health(main_pool, code_pool, "health_llm_error_quality_time").await?
-    else {
-        return Ok(0);
-    };
-
-    tracing::debug!(
-        "Code health LLM error quality: scanning project {}",
-        project_path
-    );
-
-    // Clear error_quality category
-    main_pool
-        .run(move |conn| {
-            clear_health_issues_by_categories_sync(conn, project_id, &["error_quality"])
-        })
-        .await?;
-
-    let error_quality =
-        analysis::scan_error_quality(code_pool, main_pool, llm, project_id, &project_path).await?;
-    if error_quality > 0 {
-        tracing::info!(
-            "Code health: found {} error quality issues via LLM",
-            error_quality
-        );
-    }
-
-    // Mark this subtask as done so it doesn't re-run until the next scan cycle
-    main_pool
-        .run(move |conn| {
-            mark_llm_health_done_sync(conn, project_id, "health_llm_error_quality_time")
-        })
-        .await?;
-
-    Ok(error_quality)
+    // LLM-based analysis removed; fast scans handle error detection heuristically
+    Ok(0)
 }
 
 /// Module-level analysis: dependencies, patterns, tech debt scoring, and conventions.
@@ -491,7 +414,6 @@ pub async fn process_health_module_analysis(
 pub async fn scan_project_health_full(
     main_pool: &Arc<DatabasePool>,
     code_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
     project_id: i64,
     project_path: &str,
 ) -> Result<usize, String> {
@@ -547,20 +469,6 @@ pub async fn scan_project_health_full(
 
     let unused = scan_unused_functions_sharded(main_pool, code_pool, project_id).await?;
     total += unused;
-
-    // LLM analysis
-    if let Some(llm) = client {
-        match analysis::scan_complexity(code_pool, main_pool, llm, project_id, project_path).await {
-            Ok(c) => total += c,
-            Err(e) => tracing::warn!("Code health: complexity analysis failed: {}", e),
-        }
-        match analysis::scan_error_quality(code_pool, main_pool, llm, project_id, project_path)
-            .await
-        {
-            Ok(c) => total += c,
-            Err(e) => tracing::warn!("Code health: error quality analysis failed: {}", e),
-        }
-    }
 
     // Module analysis
     match dependencies::scan_dependencies_sharded(main_pool, code_pool, project_id).await {
@@ -895,6 +803,7 @@ fn clear_old_health_issues(conn: &rusqlite::Connection, project_id: i64) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::mark_llm_health_done_sync;
     use rusqlite::Connection;
 
     fn setup_main_db_with_project() -> (Connection, i64) {

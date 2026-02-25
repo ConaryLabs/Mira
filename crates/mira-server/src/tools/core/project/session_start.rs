@@ -291,24 +291,16 @@ pub async fn session_start<C: ToolContext>(
         .await
         .unwrap_or(0);
 
-    // Capability mode detection
+    // Capability mode detection (background LLM removed; only embeddings matter)
     let has_embeddings = ctx.embeddings().is_some();
-    let has_llm = ctx.llm_factory().has_providers();
 
-    let (mode, mode_detail) = match (has_embeddings, has_llm) {
-        (true, true) => ("full", None),
-        (true, false) => (
-            "semantic search only",
-            Some("background intelligence disabled — no LLM provider configured"),
-        ),
-        (false, true) => (
-            "background intelligence only",
-            Some("semantic search disabled — no embedding provider configured"),
-        ),
-        (false, false) => (
+    let (mode, mode_detail) = if has_embeddings {
+        ("semantic search", None)
+    } else {
+        (
             "basic",
-            Some("semantic search and background intelligence disabled — no API keys configured"),
-        ),
+            Some("semantic search disabled — no OPENAI_API_KEY configured"),
+        )
     };
 
     response.push_str(&format!(

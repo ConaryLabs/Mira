@@ -1,5 +1,5 @@
 // crates/mira-server/src/background/summaries.rs
-// Rate-limited LLM summary generation with heuristic fallback
+// Heuristic module summary generation
 
 use super::HEURISTIC_PREFIX;
 use crate::cartographer;
@@ -8,29 +8,23 @@ use crate::db::{
     get_modules_needing_summaries_sync, get_project_ids_needing_summaries_sync,
     get_project_paths_by_ids_sync, update_module_purposes_sync,
 };
-use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Maximum summaries to process per batch
 const BATCH_SIZE: usize = 5;
 
-/// Delay between API calls (rate limiting)
-const RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
-
 /// Max exports to list in heuristic summary
 const FALLBACK_MAX_EXPORTS: usize = 10;
 
-/// Process pending summaries with rate limiting.
+/// Process pending summaries.
 ///
 /// - `code_pool`: for reading/writing codebase_modules
-/// - `main_pool`: for recording LLM usage
+/// - `main_pool`: for project path lookup
 pub async fn process_queue(
     code_pool: &Arc<DatabasePool>,
     main_pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     // Step 1: Get project IDs with pending summaries (from code DB)
     let project_ids = code_pool
@@ -78,76 +72,26 @@ pub async fn process_queue(
             module.code_preview = cartographer::get_module_code_preview(path, &module.path);
         }
 
-        match client {
-            Some(client) => {
-                // LLM path
-                let prompt = cartographer::build_summary_prompt(&modules);
-                let messages = PromptBuilder::for_summaries().build_messages(prompt);
-                match chat_with_usage(
-                    &**client,
-                    main_pool,
-                    messages,
-                    "background:summaries",
-                    Some(project_id),
-                    None,
-                )
+        // Heuristic fallback
+        let summaries = generate_heuristic_summaries(&modules);
+        if !summaries.is_empty() {
+            match code_pool
+                .interact(move |conn| {
+                    update_module_purposes_sync(conn, project_id, &summaries)
+                        .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
+                })
                 .await
-                {
-                    Ok(content) => {
-                        let summaries = cartographer::parse_summary_response(&content);
-                        if !summaries.is_empty() {
-                            match code_pool
-                                .interact(move |conn| {
-                                    update_module_purposes_sync(conn, project_id, &summaries)
-                                        .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
-                                })
-                                .await
-                            {
-                                Ok(count) => {
-                                    tracing::info!(
-                                        "Updated {} module summaries for project {}",
-                                        count,
-                                        project_id
-                                    );
-                                    total_processed += count;
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to update summaries: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("LLM request failed: {}", e);
-                    }
+            {
+                Ok(count) => {
+                    tracing::info!(
+                        "Updated {} heuristic module summaries for project {}",
+                        count,
+                        project_id
+                    );
+                    total_processed += count;
                 }
-
-                // Rate limit between projects
-                tokio::time::sleep(RATE_LIMIT_DELAY).await;
-            }
-            None => {
-                // Heuristic fallback
-                let summaries = generate_heuristic_summaries(&modules);
-                if !summaries.is_empty() {
-                    match code_pool
-                        .interact(move |conn| {
-                            update_module_purposes_sync(conn, project_id, &summaries)
-                                .map_err(|e| anyhow::anyhow!("Failed to update: {}", e))
-                        })
-                        .await
-                    {
-                        Ok(count) => {
-                            tracing::info!(
-                                "Updated {} heuristic module summaries for project {}",
-                                count,
-                                project_id
-                            );
-                            total_processed += count;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to update heuristic summaries: {}", e);
-                        }
-                    }
+                Err(e) => {
+                    tracing::warn!("Failed to update heuristic summaries: {}", e);
                 }
             }
         }

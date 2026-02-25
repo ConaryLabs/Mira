@@ -299,7 +299,7 @@ pub async fn run_mcp_server() -> Result<()> {
     let ctx = init_server_context().await?;
     let mut server = ctx.server;
     let pool = ctx.pool;
-    let env_config = ctx.env_config;
+    let _env_config = ctx.env_config;
 
     // Warn if plugin MCP server conflicts with a project dev instance
     check_dev_mode_collision();
@@ -315,29 +315,12 @@ pub async fn run_mcp_server() -> Result<()> {
         info!("Semantic search disabled (no OPENAI_API_KEY or OLLAMA_HOST)");
     }
 
-    // Initialize LLM provider factory from centralized config
-    let llm_factory = Arc::new(mira::llm::ProviderFactory::from_api_keys(
-        env_config.api_keys.clone(),
-    ));
-
-    if llm_factory.has_providers() {
-        let providers: Vec<_> = llm_factory
-            .available_providers()
-            .iter()
-            .map(|p| p.to_string())
-            .collect();
-        info!("LLM providers available: {}", providers.join(", "));
-    } else {
-        info!("No LLM providers configured (set DEEPSEEK_API_KEY or OLLAMA_HOST)");
-    }
-
     // Spawn background workers with separate pools
     let bg_embeddings = server.embeddings.clone();
     let (_shutdown_tx, fast_lane_notify) = background::spawn_with_pools(
         server.code_pool.clone(),
         pool.clone(),
         bg_embeddings,
-        llm_factory.clone(),
     );
     info!("Background worker started");
 

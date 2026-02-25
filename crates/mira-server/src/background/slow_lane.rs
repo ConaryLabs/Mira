@@ -1,12 +1,11 @@
 // crates/mira-server/src/background/slow_lane.rs
-// Slow lane worker for LLM-dependent tasks (summaries, pondering, code health)
+// Slow lane worker for background tasks (summaries, pondering, code health)
 //
 // Tasks are assigned priority levels and executed in priority order.
 // When the previous cycle ran long, low-priority tasks are skipped.
 
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::{LlmClient, ProviderFactory};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,7 +59,7 @@ enum TaskPriority {
 }
 
 /// Enumeration of all background task types.
-/// Using an enum ensures compile-time exhaustiveness — adding a new task variant
+/// Using an enum ensures compile-time exhaustiveness -- adding a new task variant
 /// without handling it in `dispatch_task` will cause a compiler error.
 #[derive(Debug, Clone, Copy)]
 enum BackgroundTask {
@@ -215,15 +214,14 @@ struct TaskFailureState {
     last_warn_cycle: u64,
 }
 
-/// Slow lane worker for LLM-dependent background tasks
+/// Slow lane worker for background tasks
 pub struct SlowLaneWorker {
-    /// Main database pool (sessions, memory, LLM usage, etc.)
+    /// Main database pool (sessions, memory, etc.)
     pool: Arc<DatabasePool>,
     /// Code index database pool (code_symbols, vec_code, codebase_modules, etc.)
     code_pool: Arc<DatabasePool>,
     /// Embedding client for memory re-embedding
     embeddings: Option<Arc<EmbeddingClient>>,
-    llm_factory: Arc<ProviderFactory>,
     shutdown: watch::Receiver<bool>,
     cycle_count: u64,
     /// Duration of the previous cycle, used to decide whether to skip low-priority tasks
@@ -237,14 +235,12 @@ impl SlowLaneWorker {
         pool: Arc<DatabasePool>,
         code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
-        llm_factory: Arc<ProviderFactory>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         Self {
             pool,
             code_pool,
             embeddings,
-            llm_factory,
             shutdown,
             cycle_count: 0,
             last_cycle_duration: Duration::ZERO,
@@ -266,7 +262,7 @@ impl SlowLaneWorker {
                 break;
             }
 
-            // Process LLM-dependent tasks (errors are isolated per-subsystem)
+            // Process background tasks (errors are isolated per-subsystem)
             let start = Instant::now();
             let processed = self.process_batch().await;
             self.last_cycle_duration = start.elapsed();
@@ -299,7 +295,6 @@ impl SlowLaneWorker {
     /// Process a batch of background tasks.
     /// Each subsystem error is isolated -- a failure in one task does not prevent others
     /// from running, and does not trigger global backoff.
-    /// LLM client is optional -- tasks produce heuristic/template fallbacks when absent.
     async fn process_batch(&mut self) -> usize {
         let mut processed = 0;
 
@@ -327,17 +322,6 @@ impl SlowLaneWorker {
             );
         }
 
-        // Get LLM client for background tasks (optional -- fallbacks used when absent)
-        let client: Option<Arc<dyn LlmClient>> = self.llm_factory.client_for_background();
-
-        if let Some(ref c) = client {
-            tracing::debug!(provider = %c.provider_type(), "Slow lane: using LLM provider");
-        } else {
-            tracing::info!("Slow lane: no LLM provider available, using fallbacks");
-        }
-
-        let client = client.as_ref();
-
         // Walk the schedule in definition order (already grouped by priority)
         for task in task_schedule() {
             // Check for shutdown between tasks to avoid running the full schedule
@@ -358,7 +342,7 @@ impl SlowLaneWorker {
                 continue;
             }
 
-            processed += self.dispatch_task(task.task, client).await;
+            processed += self.dispatch_task(task.task).await;
         }
 
         processed
@@ -370,7 +354,6 @@ impl SlowLaneWorker {
     async fn dispatch_task(
         &mut self,
         task: BackgroundTask,
-        client: Option<&Arc<dyn LlmClient>>,
     ) -> usize {
         let name = task.to_string();
 
@@ -382,22 +365,22 @@ impl SlowLaneWorker {
             BackgroundTask::StaleSessions => {
                 self.run_task(
                     &name,
-                    session_summaries::process_stale_sessions(&pool, client),
+                    session_summaries::process_stale_sessions(&pool),
                 )
                 .await
             }
             BackgroundTask::Summaries => {
-                self.run_task(&name, summaries::process_queue(&code_pool, &pool, client))
+                self.run_task(&name, summaries::process_queue(&code_pool, &pool))
                     .await
             }
             BackgroundTask::Briefings => {
-                self.run_task(&name, briefings::process_briefings(&pool, client))
+                self.run_task(&name, briefings::process_briefings(&pool))
                     .await
             }
             BackgroundTask::DocumentationTasks => {
                 self.run_task(
                     &name,
-                    documentation::process_documentation(&pool, &code_pool, client),
+                    documentation::process_documentation(&pool, &code_pool),
                 )
                 .await
             }
@@ -411,14 +394,14 @@ impl SlowLaneWorker {
             BackgroundTask::HealthLlmComplexity => {
                 self.run_task(
                     &name,
-                    code_health::process_health_llm_complexity(&pool, &code_pool, client),
+                    code_health::process_health_llm_complexity(&pool, &code_pool),
                 )
                 .await
             }
             BackgroundTask::HealthLlmErrorQuality => {
                 self.run_task(
                     &name,
-                    code_health::process_health_llm_error_quality(&pool, &code_pool, client),
+                    code_health::process_health_llm_error_quality(&pool, &code_pool),
                 )
                 .await
             }
@@ -430,7 +413,7 @@ impl SlowLaneWorker {
                 .await
             }
             BackgroundTask::PonderingInsights => {
-                self.run_task(&name, pondering::process_pondering(&pool, client))
+                self.run_task(&name, pondering::process_pondering(&pool))
                     .await
             }
             BackgroundTask::InsightCleanup => {
@@ -578,17 +561,12 @@ impl SlowLaneWorker {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // Tests
-// ═══════════════════════════════════════════════════════════════════════════════
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ═══════════════════════════════════════
     // ScheduledTask::should_run
-    // ═══════════════════════════════════════
 
     #[test]
     fn should_run_none_always_runs() {
@@ -654,9 +632,7 @@ mod tests {
         assert!(!task.should_run(15));
     }
 
-    // ═══════════════════════════════════════
     // skip_low_priority
-    // ═══════════════════════════════════════
 
     #[tokio::test]
     async fn skip_low_priority_under_threshold() {
@@ -682,9 +658,7 @@ mod tests {
         assert!(!worker.skip_low_priority());
     }
 
-    // ═══════════════════════════════════════
     // task_schedule completeness
-    // ═══════════════════════════════════════
 
     #[test]
     fn task_schedule_contains_all_variants() {
@@ -741,9 +715,7 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════
     // Circuit breaker tests
-    // ═══════════════════════════════════════
 
     #[test]
     fn task_failure_state_tracks_consecutive_failures() {
@@ -915,9 +887,7 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════
     // Helpers
-    // ═══════════════════════════════════════
 
     /// Build a minimal SlowLaneWorker with a given last_cycle_duration for skip_low_priority tests.
     async fn make_test_worker(last_cycle_duration: Duration) -> SlowLaneWorker {
@@ -936,7 +906,6 @@ mod tests {
             pool,
             code_pool,
             embeddings: None,
-            llm_factory: Arc::new(crate::llm::ProviderFactory::new()),
             shutdown: rx,
             cycle_count: 0,
             last_cycle_duration,

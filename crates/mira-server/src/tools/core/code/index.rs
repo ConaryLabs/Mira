@@ -6,7 +6,6 @@ use std::path::Path;
 use crate::cartographer;
 use crate::error::MiraError;
 use crate::indexer;
-use crate::llm::{LlmClient, Message, record_llm_usage};
 use crate::mcp::requests::IndexAction;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
@@ -63,35 +62,10 @@ pub async fn index<C: ToolContext>(
                     cache.invalidate_code(project_id).await;
                 }
 
-                let mut response = format!(
+                let response = format!(
                     "Indexed {} files, {} symbols, {} chunks",
                     stats.files, stats.symbols, stats.chunks
                 );
-
-                // Auto-summarize modules that don't have descriptions yet
-                let mut modules_summarized = None;
-                if let Some(pid) = project_id
-                    && let Some(llm_client) = ctx.llm_factory().client_for_background()
-                {
-                    match auto_summarize_modules(
-                        ctx.code_pool(),
-                        ctx.pool(),
-                        pid,
-                        &project_path,
-                        &*llm_client,
-                    )
-                    .await
-                    {
-                        Ok(count) if count > 0 => {
-                            response.push_str(&format!(", summarized {} modules", count));
-                            modules_summarized = Some(count);
-                        }
-                        Ok(_) => {} // No modules needed summarization
-                        Err(e) => {
-                            tracing::warn!("Auto-summarize failed: {}", e);
-                        }
-                    }
-                }
 
                 // Auto-queue health scan after project indexing
                 if let Some(pid) = project_id {
@@ -110,7 +84,7 @@ pub async fn index<C: ToolContext>(
                         files: stats.files,
                         symbols: stats.symbols,
                         chunks: stats.chunks,
-                        modules_summarized,
+                        modules_summarized: None,
                     })),
                 }))
             } // #[cfg(feature = "parsers")]
@@ -169,73 +143,7 @@ pub async fn index<C: ToolContext>(
     }
 }
 
-/// System prompt for code summarization (stable prefix for KV cache optimization)
-const SUMMARIZE_SYSTEM_PROMPT: &str = "You are a code analysis assistant. Your task is to generate concise, accurate summaries of code modules. Focus on the primary purpose and functionality of each module. Be direct and technical.";
-
-/// Auto-summarize modules that don't have descriptions (called after indexing)
-async fn auto_summarize_modules(
-    code_pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
-    main_pool: &std::sync::Arc<crate::db::pool::DatabasePool>,
-    project_id: i64,
-    project_path: &str,
-    llm_client: &dyn LlmClient,
-) -> Result<usize, MiraError> {
-    // Get modules needing summaries (from code DB)
-    let mut modules = code_pool
-        .run(move |conn| cartographer::get_modules_needing_summaries(conn, project_id))
-        .await?;
-
-    if modules.is_empty() {
-        return Ok(0);
-    }
-
-    // Fill in code previews
-    let path = Path::new(project_path);
-    for module in &mut modules {
-        module.code_preview = cartographer::get_module_code_preview(path, &module.path);
-    }
-
-    // Build prompt and call LLM (system prompt first for KV cache optimization)
-    let prompt = cartographer::build_summary_prompt(&modules);
-    let messages = vec![
-        Message::system(SUMMARIZE_SYSTEM_PROMPT.to_string()),
-        Message::user(prompt),
-    ];
-    let result = llm_client
-        .chat(messages, None)
-        .await
-        .map_err(|e| MiraError::Llm(format!("LLM request failed: {}. Check API key configuration in ~/.mira/.env or run mira setup.", e)))?;
-
-    // Record usage (main DB)
-    record_llm_usage(
-        main_pool,
-        llm_client.provider_type(),
-        &llm_client.model_name(),
-        "tool:auto_summarize",
-        &result,
-        Some(project_id),
-        None,
-    )
-    .await;
-
-    let content = result
-        .content
-        .ok_or_else(|| MiraError::Llm("No content in LLM response".to_string()))?;
-
-    // Parse and update (code DB)
-    let summaries = cartographer::parse_summary_response(&content);
-    if summaries.is_empty() {
-        return Err(MiraError::Llm("Failed to parse summaries. The LLM response was malformed. Try re-indexing or check LLM provider configuration.".to_string()));
-    }
-
-    let updated = code_pool
-        .run(move |conn| cartographer::update_module_purposes(conn, project_id, &summaries))
-        .await?;
-
-    Ok(updated)
-}
-
-/// Summarize codebase modules using LLM (or heuristic fallback)
+/// Summarize codebase modules using heuristic analysis
 pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput>, MiraError> {
     use crate::background::summaries::generate_heuristic_summaries;
 
@@ -247,9 +155,6 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
             return Err(MiraError::ProjectNotSet);
         }
     };
-
-    // Get LLM client (optional — falls back to heuristic)
-    let llm_client = ctx.llm_factory().client_for_background();
 
     // Get modules needing summaries (from code DB)
     let mut modules = ctx
@@ -273,65 +178,23 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
         module.code_preview = cartographer::get_module_code_preview(project_path_ref, &module.path);
     }
 
-    let (summaries, used_llm) = if let Some(llm_client) = llm_client {
-        // LLM path (system prompt first for KV cache optimization)
-        let prompt = cartographer::build_summary_prompt(&modules);
-        let messages = vec![
-            Message::system(SUMMARIZE_SYSTEM_PROMPT.to_string()),
-            Message::user(prompt),
-        ];
-        let result = llm_client
-            .chat(messages, None)
-            .await
-            .map_err(|e| MiraError::Llm(format!("LLM request failed: {}. Check API key configuration in ~/.mira/.env or run mira setup.", e)))?;
-
-        record_llm_usage(
-            ctx.pool(),
-            llm_client.provider_type(),
-            &llm_client.model_name(),
-            "tool:summarize_codebase",
-            &result,
-            Some(project_id),
-            None,
-        )
-        .await;
-
-        let content = result
-            .content
-            .ok_or_else(|| MiraError::Llm("No content in LLM response".to_string()))?;
-        let parsed = cartographer::parse_summary_response(&content);
-        if parsed.is_empty() {
-            return Err(MiraError::Llm(format!(
-                "Failed to parse summaries from LLM response. The LLM response was malformed. Try re-indexing or check LLM provider configuration.\n{}",
-                content
-            )));
-        }
-        (parsed, true)
-    } else {
-        // Heuristic fallback — no LLM available
+    // Heuristic summaries (no external LLM dependency)
+    let summaries: std::collections::HashMap<String, String> = {
         let heuristic = generate_heuristic_summaries(&modules);
         if heuristic.is_empty() {
             return Err(MiraError::Other(
                 "No modules could be summarized heuristically.".to_string(),
             ));
         }
-        (heuristic.into_iter().collect(), false)
+        heuristic.into_iter().collect()
     };
 
     // Update database (code DB)
-    // Only clear cached modules when LLM actually generated summaries (heuristic ones are upgradeable)
-    let has_llm = used_llm;
     let summaries_clone = summaries.clone();
     let updated: usize = ctx
         .code_pool()
         .run(move |conn| {
             let count = cartographer::update_module_purposes(conn, project_id, &summaries_clone)?;
-
-            if has_llm {
-                use crate::db::clear_modules_without_purpose_sync;
-                clear_modules_without_purpose_sync(conn, project_id).map_err(MiraError::Db)?;
-            }
-
             Ok::<_, MiraError>(count)
         })
         .await?;
@@ -379,14 +242,10 @@ pub async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput
         ));
     }
 
-    // Get LLM client for complexity/error-quality analysis (optional)
-    let llm_client = ctx.llm_factory().client_for_background();
-
     // Run the full health scan (same as background worker, but forced)
     let issues = crate::background::code_health::scan_project_health_full(
         ctx.pool(),
         ctx.code_pool(),
-        llm_client.as_ref(),
         project_id,
         &project_path,
     )

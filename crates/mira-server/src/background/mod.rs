@@ -3,7 +3,7 @@
 //
 // Split into two lanes:
 // - Fast lane: embeddings/indexing (woken immediately by Notify)
-// - Slow lane: LLM tasks (summaries, pondering, code health)
+// - Slow lane: heuristic tasks (summaries, pondering, code health)
 
 mod briefings;
 
@@ -26,7 +26,6 @@ pub mod watcher;
 
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
-use crate::llm::ProviderFactory;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
@@ -72,10 +71,9 @@ impl FastLaneNotify {
 pub fn spawn(
     pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
-    llm_factory: Arc<ProviderFactory>,
 ) -> (watch::Sender<bool>, FastLaneNotify) {
     // When called with a single pool, use it for both (backwards compat for tests)
-    spawn_with_pools(pool.clone(), pool, embeddings, llm_factory)
+    spawn_with_pools(pool.clone(), pool, embeddings)
 }
 
 /// Spawn both background workers with separate main and code pools.
@@ -86,7 +84,6 @@ pub fn spawn_with_pools(
     code_pool: Arc<DatabasePool>,
     main_pool: Arc<DatabasePool>,
     embeddings: Option<Arc<EmbeddingClient>>,
-    llm_factory: Arc<ProviderFactory>,
 ) -> (watch::Sender<bool>, FastLaneNotify) {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let notify = Arc::new(Notify::new());
@@ -116,14 +113,12 @@ pub fn spawn_with_pools(
         let code_pool = code_pool.clone();
         let main_pool = main_pool.clone();
         let embeddings = embeddings.clone();
-        let llm_factory = llm_factory.clone();
         tokio::spawn(async move {
             supervise_worker("slow_lane", shutdown_rx.clone(), || {
                 let worker = SlowLaneWorker::new(
                     main_pool.clone(),
                     code_pool.clone(),
                     embeddings.clone(),
-                    llm_factory.clone(),
                     shutdown_rx.clone(),
                 );
                 tokio::spawn(async move { worker.run().await })

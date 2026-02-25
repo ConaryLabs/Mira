@@ -316,16 +316,11 @@ pub(super) async fn get_capabilities<C: ToolContext>(
         },
     });
 
-    // Background LLM (requires LLM provider)
-    let has_llm = ctx.llm_factory().has_any_capability();
+    // Background LLM (removed -- all background tasks use local heuristics)
     caps.push(CapabilityStatus {
         name: "background_llm".into(),
-        status: if has_llm { "available" } else { "unavailable" }.into(),
-        detail: if !has_llm {
-            Some("Set DEEPSEEK_API_KEY or configure Ollama for background intelligence".into())
-        } else {
-            None
-        },
+        status: "disabled".into(),
+        detail: Some("Background tasks use local heuristic analysis".into()),
     });
 
     // Fuzzy search (requires cache)

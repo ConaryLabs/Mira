@@ -384,7 +384,6 @@ impl MiraServer {
             super::extraction::spawn_tool_extraction(
                 self.pool.clone(),
                 self.embeddings.clone(),
-                self.llm_factory.client_for_background(),
                 project_id,
                 tool_name,
                 args_json,

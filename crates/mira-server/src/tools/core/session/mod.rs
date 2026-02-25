@@ -189,9 +189,7 @@ pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, MiraEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ApiKeys;
     use crate::db::pool::DatabasePool;
-    use crate::llm::ProviderFactory;
     use crate::mcp::requests::{SessionAction, SessionRequest};
     use crate::mcp::responses::SessionData;
     use async_trait::async_trait;
@@ -206,7 +204,6 @@ mod tests {
     struct MockToolContext {
         pool: Arc<DatabasePool>,
         code_pool: Arc<DatabasePool>,
-        llm_factory: ProviderFactory,
         project: RwLock<Option<ProjectContext>>,
         session_id: RwLock<Option<String>>,
         branch: RwLock<Option<String>>,
@@ -224,16 +221,9 @@ mod tests {
                     .await
                     .expect("Failed to open in-memory code pool"),
             );
-            let llm_factory = ProviderFactory::from_api_keys(ApiKeys {
-                deepseek: None,
-                ollama: None,
-                openai: None,
-                brave: None,
-            });
             Self {
                 pool,
                 code_pool,
-                llm_factory,
                 project: RwLock::new(None),
                 session_id: RwLock::new(None),
                 branch: RwLock::new(None),
@@ -275,9 +265,6 @@ mod tests {
         }
         fn embeddings(&self) -> Option<&Arc<crate::embeddings::EmbeddingClient>> {
             None
-        }
-        fn llm_factory(&self) -> &ProviderFactory {
-            &self.llm_factory
         }
         async fn get_project(&self) -> Option<ProjectContext> {
             self.project.read().await.clone()
@@ -938,7 +925,7 @@ mod tests {
                     .iter()
                     .find(|c| c.name == "background_llm")
                     .unwrap();
-                assert_eq!(llm.status, "unavailable");
+                assert_eq!(llm.status, "disabled");
             }
             other => panic!("Expected SessionData::Capabilities, got {:?}", other),
         }

@@ -15,7 +15,6 @@ use crate::background::watcher::WatcherHandle;
 use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
-use crate::llm::ProviderFactory;
 
 /// Information about an MCP tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,9 +43,6 @@ pub trait ToolContext: Send + Sync {
     fn fuzzy_cache(&self) -> Option<&Arc<FuzzyCache>> {
         None
     }
-
-    /// LLM provider factory for multi-provider support
-    fn llm_factory(&self) -> &ProviderFactory;
 
     // === Project/Session State ===
 

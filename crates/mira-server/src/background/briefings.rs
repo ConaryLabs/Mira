@@ -1,10 +1,9 @@
 // crates/mira-server/src/background/briefings.rs
 // Background worker for generating "What's New" project briefings
 
-use super::{HEURISTIC_PREFIX, is_fallback_content};
+use super::HEURISTIC_PREFIX;
 use crate::db::pool::DatabasePool;
 use crate::db::{get_projects_for_briefing_check_sync, update_project_briefing_sync};
-use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::{truncate, truncate_at_boundary};
 use std::path::Path;
 use std::process::Command;
@@ -18,7 +17,6 @@ const FALLBACK_MAX_LENGTH: usize = 200;
 /// Check all projects for git changes and generate briefings
 pub async fn process_briefings(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     let projects = pool.run(get_projects_for_briefing_check_sync).await?;
 
@@ -46,41 +44,11 @@ pub async fn process_briefings(
             continue;
         }
 
-        // Check if existing briefing is LLM-generated (don't overwrite with fallback)
-        let should_skip_fallback = client.is_none() && {
-            let pid = project_id;
-            let pool_clone = pool.clone();
-            pool_clone
-                .interact(move |conn| {
-                    let text: Option<String> = conn
-                        .query_row(
-                            "SELECT briefing_text FROM projects WHERE id = ?",
-                            [pid],
-                            |row| row.get(0),
-                        )
-                        .ok()
-                        .flatten();
-                    Ok::<bool, anyhow::Error>(
-                        text.as_ref()
-                            .is_some_and(|t| !t.is_empty() && !is_fallback_content(t)),
-                    )
-                })
-                .await
-                .unwrap_or(false)
-        };
-
-        if should_skip_fallback {
-            continue;
-        }
-
         // Generate the briefing
         let briefing = generate_briefing(
             &project_path,
             last_known_commit.as_deref(),
             &current_commit,
-            client,
-            pool,
-            project_id,
         )
         .await;
 
@@ -201,14 +169,11 @@ fn get_files_changed(project_path: &str, from_commit: Option<&str>) -> Option<St
     Some(truncate(&stat, 1000))
 }
 
-/// Generate a briefing — LLM when available, heuristic fallback otherwise
+/// Generate a heuristic briefing from git log
 async fn generate_briefing(
     project_path: &str,
     from_commit: Option<&str>,
     _to_commit: &str,
-    client: Option<&Arc<dyn LlmClient>>,
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
 ) -> Option<String> {
     // Run blocking git calls on the blocking threadpool so they don't stall the
     // async runtime and can be cancelled by the slow-lane task timeout.
@@ -222,68 +187,10 @@ async fn generate_briefing(
     .await
     .ok()?;
 
-    match client {
-        Some(client) => {
-            // LLM path requires git_log
-            let git_log = git_log?;
-            generate_briefing_llm(&git_log, file_stats.as_deref(), client, pool, project_id).await
-        }
-        None => Some(generate_briefing_fallback(
-            git_log.as_deref(),
-            file_stats.as_deref(),
-        )),
-    }
-}
-
-/// Generate briefing using LLM
-async fn generate_briefing_llm(
-    git_log: &str,
-    file_stats: Option<&str>,
-    client: &Arc<dyn LlmClient>,
-    pool: &Arc<DatabasePool>,
-    project_id: i64,
-) -> Option<String> {
-    let mut context = format!("Git commits:\n{}", git_log);
-    if let Some(stats) = file_stats {
-        context.push_str(&format!("\n\nFiles changed:\n{}", stats));
-    }
-
-    let prompt = format!(
-        r#"Summarize these git changes in 1-2 concise sentences for a developer returning to the project.
-Focus on: what was done, which areas of code changed.
-Be specific but brief. No preamble, just the summary.
-
-{}
-
-Summary:"#,
-        context
-    );
-
-    let messages = PromptBuilder::for_briefings().build_messages(prompt);
-
-    match chat_with_usage(
-        &**client,
-        pool,
-        messages,
-        "background:briefing",
-        Some(project_id),
-        None,
-    )
-    .await
-    {
-        Ok(content) => {
-            let summary = content.trim().to_string();
-            if summary.is_empty() {
-                None
-            } else {
-                Some(summary)
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Failed to generate briefing: {}", e);
-            None
-        }
-    }
+    Some(generate_briefing_fallback(
+        git_log.as_deref(),
+        file_stats.as_deref(),
+    ))
 }
 
 /// Generate a heuristic briefing from git log (no LLM required)
@@ -296,7 +203,7 @@ fn generate_briefing_fallback(git_log: Option<&str>, file_stats: Option<&str>) -
     let lines: Vec<&str> = git_log.lines().collect();
     let total_commits = lines.len();
 
-    // Extract first commit message — strip hash prefix, truncate at 72 chars
+    // Extract first commit message -- strip hash prefix, truncate at 72 chars
     let latest_msg = lines
         .first()
         .map(|line| {

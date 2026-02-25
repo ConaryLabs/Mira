@@ -3,8 +3,6 @@
 // Designed to be fast (<50ms). All queries use indexed columns.
 
 use anyhow::Result;
-use mira::config::MiraConfig;
-use mira::llm::Provider;
 use rusqlite::Connection;
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -126,58 +124,6 @@ fn query_pending(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Check if a provider has credentials configured via env vars.
-fn provider_has_key(provider: Provider) -> bool {
-    match provider {
-        Provider::DeepSeek => std::env::var("DEEPSEEK_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .is_some(),
-        Provider::Ollama => std::env::var("OLLAMA_HOST")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .is_some(),
-        Provider::Sampling => false, // no LlmClient impl — not usable for background tasks
-    }
-}
-
-/// Determine the active background LLM provider and its model name.
-/// Mirrors the runtime fallback chain in ProviderFactory::client_for_background():
-/// background_provider -> default_provider -> DeepSeek -> Ollama
-fn get_llm_info() -> Option<(String, String)> {
-    let config = MiraConfig::load();
-
-    let default_provider = config.default_provider().or_else(|| {
-        std::env::var("DEFAULT_LLM_PROVIDER")
-            .ok()
-            .and_then(|s| Provider::from_str(&s))
-    });
-
-    // Build candidate list matching ProviderFactory::client_for_background()
-    // Exclude Sampling — it has no LlmClient impl, so the factory can't use it.
-    let fallback_chain = [Provider::DeepSeek, Provider::Ollama];
-    let candidates: Vec<Provider> = config
-        .background_provider()
-        .into_iter()
-        .chain(default_provider)
-        .chain(fallback_chain)
-        .filter(|p| *p != Provider::Sampling)
-        .collect();
-
-    // Pick the first candidate that actually has credentials
-    let provider = candidates.into_iter().find(|p| provider_has_key(*p))?;
-
-    let model = match provider {
-        Provider::Ollama => std::env::var("OLLAMA_MODEL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| provider.default_model().to_string()),
-        _ => provider.default_model().to_string(),
-    };
-
-    Some((provider.to_string(), model))
-}
-
 /// Format seconds into a compact human-readable duration.
 #[cfg(test)]
 fn format_duration(seconds: i64) -> String {
@@ -249,15 +195,10 @@ pub fn run() -> Result<()> {
         .map(|c| query_pending(c, project_id))
         .unwrap_or(0);
 
-    // Build output: Mira Name · ⚡model · 🎯 goals · 💡 insights · ...
+    // Build output: Mira Name · 🎯 goals · 💡 insights · ...
     let mut parts = Vec::new();
 
-    // 1. LLM model info
-    if let Some((_provider, model)) = get_llm_info() {
-        parts.push(format!("⚡{DIM}{model}{RESET}"));
-    }
-
-    // 3. Active workload
+    // Active workload
     if goals > 0 {
         parts.push(format!("🎯 {GREEN}{goals}{RESET} goals"));
     }

@@ -4,9 +4,6 @@
 mod format;
 mod heuristic;
 mod impact;
-mod llm;
-#[cfg(test)]
-mod tests;
 mod types;
 
 // Re-export public API (preserves all existing import paths)
@@ -19,7 +16,6 @@ pub use crate::git::{
 };
 pub use heuristic::{analyze_diff_heuristic, calculate_risk_level};
 pub use impact::{build_impact_graph, compute_historical_risk, map_to_symbols};
-pub use llm::analyze_diff_semantic;
 pub use types::{
     DiffAnalysisResult, DiffStats, HistoricalRisk, ImpactAnalysis, MatchedPattern, RiskAssessment,
     SemanticChange,
@@ -29,7 +25,6 @@ use crate::db::pool::DatabasePool;
 use crate::db::{
     DiffAnalysis, StoreDiffAnalysisParams, get_cached_diff_analysis_sync, store_diff_analysis_sync,
 };
-use crate::llm::LlmClient;
 use std::sync::Arc;
 
 /// Reconstruct a DiffAnalysisResult from cached database row
@@ -137,10 +132,9 @@ async fn cache_result(
     .await;
 }
 
-/// Perform complete diff analysis (LLM optional — falls back to heuristic)
+/// Perform complete diff analysis using heuristic analysis
 pub async fn analyze_diff(
     pool: &Arc<DatabasePool>,
-    llm_client: Option<&Arc<dyn LlmClient>>,
     project_path: &std::path::Path,
     project_id: Option<i64>,
     from_ref: &str,
@@ -151,7 +145,7 @@ pub async fn analyze_diff(
     let from_commit = resolve_ref(project_path, from_ref)?;
     let to_commit = resolve_ref(project_path, to_ref)?;
 
-    // Check cache first (skip heuristic-cached results so LLM can re-analyze when available)
+    // Check cache first
     let from_for_cache = from_commit.clone();
     let to_for_cache = to_commit.clone();
     let cached = pool
@@ -161,16 +155,12 @@ pub async fn analyze_diff(
         .await?;
 
     if let Some(cached) = cached {
-        // If LLM is available and cached result is heuristic, skip cache to re-analyze
-        let is_heuristic_cache = cached.analysis_type == "heuristic";
-        if !is_heuristic_cache || llm_client.is_none() {
-            tracing::info!(
-                "Using cached diff analysis for {}..{}",
-                from_commit,
-                to_commit
-            );
-            return Ok(result_from_cache(cached, from_commit, to_commit));
-        }
+        tracing::info!(
+            "Using cached diff analysis for {}..{}",
+            from_commit,
+            to_commit
+        );
+        return Ok(result_from_cache(cached, from_commit, to_commit));
     }
 
     // Get diff content and derive stats from it (avoids a second git process)
@@ -195,14 +185,9 @@ pub async fn analyze_diff(
         });
     }
 
-    // Semantic analysis via LLM or heuristic fallback
-    let (changes, summary, risk_flags, analysis_type) = if let Some(client) = llm_client {
-        let (c, s, f) = analyze_diff_semantic(&diff_content, client, pool, project_id).await?;
-        (c, s, f, "commit")
-    } else {
-        let (c, s, f) = analyze_diff_heuristic(&diff_content, &stats);
-        (c, s, f, "heuristic")
-    };
+    // Heuristic analysis
+    let (changes, summary, risk_flags) = analyze_diff_heuristic(&diff_content, &stats);
+    let analysis_type = "heuristic";
 
     // Build impact analysis if requested (DB-based, works without LLM)
     let impact = if include_impact && !changes.is_empty() {

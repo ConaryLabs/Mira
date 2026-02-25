@@ -22,7 +22,6 @@ use crate::db::pool::DatabasePool;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
-use crate::llm::ProviderFactory;
 use mira_types::ProjectContext;
 use rmcp::{
     handler::server::router::tool::ToolRouter, service::RoleServer,
@@ -51,7 +50,6 @@ pub struct MiraServer {
     /// Async connection pool for code index database (code_symbols, vec_code, etc.)
     pub code_pool: Arc<DatabasePool>,
     pub embeddings: Option<Arc<EmbeddingClient>>,
-    pub llm_factory: Arc<ProviderFactory>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
     /// Current session ID (generated on first tool call or session_start)
     pub session_id: Arc<RwLock<Option<String>>>,
@@ -80,23 +78,16 @@ impl MiraServer {
         pool: Arc<DatabasePool>,
         code_pool: Arc<DatabasePool>,
         embeddings: Option<Arc<EmbeddingClient>>,
-        api_keys: &ApiKeys,
+        _api_keys: &ApiKeys,
         fuzzy_enabled: bool,
     ) -> Self {
-        // Create provider factory from pre-loaded keys
-        let mut factory = ProviderFactory::from_api_keys(api_keys.clone());
-
         // Shared peer slot — populated on first call_tool, used by SamplingClient
         let peer = Arc::new(RwLock::new(None));
-        factory.set_sampling_peer(peer.clone());
-
-        let llm_factory = Arc::new(factory);
 
         Self {
             pool,
             code_pool,
             embeddings,
-            llm_factory,
             project: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
             branch: Arc::new(RwLock::new(None)),

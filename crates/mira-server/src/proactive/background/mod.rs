@@ -3,16 +3,14 @@
 //
 // Two-tier frequency:
 // - Pattern mining: Every 3rd cycle (~15 minutes) - SQL only, no LLM
-// - LLM enhancement: Every 10th cycle (~50 minutes) - generates contextual suggestions
+// - Template suggestions: Every 10th cycle (~50 minutes) - generates template-based suggestions
 
-mod llm;
 mod lookup;
 mod mining;
 mod storage;
 mod templates;
 
 use crate::db::pool::DatabasePool;
-use crate::llm::LlmClient;
 use std::sync::Arc;
 
 pub use lookup::{
@@ -40,71 +38,22 @@ pub(super) struct PreGeneratedSuggestion {
 /// Process proactive suggestions in background
 ///
 /// - Every 3rd cycle: Mine patterns from behavior logs (SQL only, fast)
-/// - Every 10th cycle: Enhance high-confidence patterns with LLM-generated suggestions
+/// - Every 10th cycle: Generate template-based suggestions from high-confidence patterns
 pub async fn process_proactive(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
     cycle_count: u64,
 ) -> Result<usize, String> {
     let mut processed = 0;
 
-    // Pattern mining every 3rd cycle (fast, SQL only — always runs)
+    // Pattern mining every 3rd cycle (fast, SQL only -- always runs)
     if cycle_count.is_multiple_of(3) {
         processed += mining::mine_patterns(pool).await?;
     }
 
-    // LLM enhancement every 10th cycle (or template fallback when no LLM)
+    // Template suggestions every 10th cycle
     if cycle_count.is_multiple_of(10) {
-        match client {
-            Some(client) => {
-                processed += llm::enhance_suggestions(pool, client).await?;
-            }
-            None => {
-                processed += templates::generate_template_suggestions(pool).await?;
-            }
-        }
+        processed += templates::generate_template_suggestions(pool).await?;
     }
 
     Ok(processed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::proactive::PatternType;
-    use crate::proactive::patterns::{BehaviorPattern, PatternData};
-
-    #[test]
-    fn test_parse_suggestions_json() {
-        let patterns = vec![BehaviorPattern {
-            id: Some(1),
-            project_id: 1,
-            pattern_type: PatternType::FileSequence,
-            pattern_key: "test".to_string(),
-            pattern_data: PatternData::FileSequence {
-                files: vec!["src/main.rs".to_string()],
-                transitions: vec![("src/main.rs".to_string(), "src/lib.rs".to_string())],
-            },
-            confidence: 0.8,
-            occurrence_count: 5,
-        }];
-
-        let json = r#"[{"trigger": "src/main.rs", "hint": "Check lib.rs for related code"}]"#;
-        let suggestions = llm::parse_suggestions(json, &patterns).unwrap();
-
-        assert_eq!(suggestions.len(), 1);
-        assert_eq!(suggestions[0].trigger_key, "src/main.rs");
-        assert!(suggestions[0].suggestion_text.contains("lib.rs"));
-    }
-
-    #[test]
-    fn test_parse_suggestions_markdown() {
-        let patterns = vec![];
-        let markdown = r#"Here are suggestions:
-```json
-[{"trigger": "grep", "hint": "Consider semantic search"}]
-```"#;
-        let suggestions = llm::parse_suggestions(markdown, &patterns).unwrap();
-        assert_eq!(suggestions.len(), 1);
-    }
 }

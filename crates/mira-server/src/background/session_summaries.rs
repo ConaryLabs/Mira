@@ -7,7 +7,6 @@ use crate::db::{
     close_session_sync, get_session_behavior_summary_sync, get_session_tool_summary_sync,
     get_sessions_needing_summary_sync, get_stale_sessions_sync, update_session_summary_sync,
 };
-use crate::llm::{LlmClient, PromptBuilder, chat_with_usage};
 use crate::utils::truncate_at_boundary;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,15 +24,14 @@ const MAX_FILES_IN_SUMMARY: usize = 5;
 /// Also generates summaries for already-closed sessions that don't have one
 pub async fn process_stale_sessions(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     let mut processed = 0;
 
     // First, close stale active sessions
-    processed += close_stale_sessions(pool, client).await?;
+    processed += close_stale_sessions(pool).await?;
 
     // Then, generate summaries for completed sessions that need them
-    processed += generate_missing_summaries(pool, client).await?;
+    processed += generate_missing_summaries(pool).await?;
 
     Ok(processed)
 }
@@ -41,7 +39,6 @@ pub async fn process_stale_sessions(
 /// Close stale active sessions
 async fn close_stale_sessions(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     let stale = pool
         .run(move |conn| get_stale_sessions_sync(conn, STALE_SESSION_MINUTES))
@@ -56,7 +53,7 @@ async fn close_stale_sessions(
     for (session_id, project_id, tool_count) in stale {
         // If session has enough tool calls, generate a summary
         let summary = if tool_count >= MIN_TOOLS_FOR_SUMMARY {
-            generate_session_summary(pool, client, &session_id, project_id).await
+            generate_session_summary(pool, &session_id, project_id).await
         } else {
             None
         };
@@ -96,7 +93,6 @@ async fn close_stale_sessions(
 /// Generate summaries for completed sessions that don't have one
 async fn generate_missing_summaries(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
 ) -> Result<usize, String> {
     let sessions = pool.run(get_sessions_needing_summary_sync).await?;
 
@@ -107,7 +103,7 @@ async fn generate_missing_summaries(
     let mut processed = 0;
 
     for (session_id, project_id, _tool_count) in sessions {
-        if let Some(summary) = generate_session_summary(pool, client, &session_id, project_id).await
+        if let Some(summary) = generate_session_summary(pool, &session_id, project_id).await
         {
             let session_id_clone = session_id.clone();
             let summary_clone = summary.clone();
@@ -136,12 +132,11 @@ async fn generate_missing_summaries(
     Ok(processed)
 }
 
-/// Generate a summary of the session — LLM when available, heuristic fallback otherwise
+/// Generate a heuristic summary of the session
 async fn generate_session_summary(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
     session_id: &str,
-    project_id: Option<i64>,
+    _project_id: Option<i64>,
 ) -> Option<String> {
     // Get both sources and use whichever is richer.
     // This avoids the case where a session qualifies via behavior_log (>= 3 events)
@@ -176,61 +171,7 @@ async fn generate_session_summary(
         return None;
     };
 
-    match client {
-        Some(client) => generate_session_summary_llm(pool, client, summary_text, project_id).await,
-        None => generate_session_summary_fallback(summary_text),
-    }
-}
-
-/// Generate session summary using LLM
-async fn generate_session_summary_llm(
-    pool: &Arc<DatabasePool>,
-    client: &Arc<dyn LlmClient>,
-    tool_summary: &str,
-    project_id: Option<i64>,
-) -> Option<String> {
-    let prompt = format!(
-        r#"Summarize this Claude Code session in 1-2 concise sentences.
-
-Focus on USER-FACING WORK: code written, bugs fixed, features added, files modified, questions answered.
-De-emphasize or skip internal housekeeping: project switching, indexing, recall/remember operations, goal management.
-
-If the session was mostly housekeeping with no substantive user work, respond with just: "Housekeeping session"
-
-Be specific but brief. No preamble, just the summary.
-
-Tool calls in session:
-{}
-
-Summary:"#,
-        tool_summary
-    );
-
-    let messages = PromptBuilder::for_briefings().build_messages(prompt);
-
-    match chat_with_usage(
-        &**client,
-        pool,
-        messages,
-        "background:session_summary",
-        project_id,
-        None,
-    )
-    .await
-    {
-        Ok(content) => {
-            let summary = content.trim().to_string();
-            if summary.is_empty() || summary.len() < 10 {
-                None
-            } else {
-                Some(summary)
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Failed to generate session summary: {}", e);
-            None
-        }
-    }
+    generate_session_summary_fallback(summary_text)
 }
 
 /// Generate a heuristic session summary from tool usage (no LLM required)
@@ -241,9 +182,9 @@ fn generate_session_summary_fallback(tool_summary: &str) -> Option<String> {
 
     for line in tool_summary.lines() {
         total_calls += 1;
-        // Lines are formatted as: "✓ ToolName(args) -> result" or "✗ ToolName(args) -> result"
+        // Lines are formatted as: "... ToolName(args) -> result" or "... ToolName(args) -> result"
         let line = line.trim();
-        let line = if line.starts_with('✓') || line.starts_with('✗') {
+        let line = if line.starts_with('\u{2713}') || line.starts_with('\u{2717}') {
             line[line.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)..].trim()
         } else {
             line
@@ -256,7 +197,7 @@ fn generate_session_summary_fallback(tool_summary: &str) -> Option<String> {
         }
 
         // Extract file paths from known path patterns in arguments
-        // Look for file_path arguments (safe — no raw secrets)
+        // Look for file_path arguments (safe -- no raw secrets)
         if let Some(args_start) = line.find('(')
             && let Some(args_end) = line.rfind(')')
         {
@@ -353,7 +294,6 @@ fn shorten_path(path: &str) -> String {
 /// This is synchronous-friendly - called from hook context
 pub async fn close_session_now(
     pool: &Arc<DatabasePool>,
-    client: Option<&Arc<dyn LlmClient>>,
     session_id: &str,
     project_id: Option<i64>,
 ) -> Result<Option<String>, String> {
@@ -369,9 +309,9 @@ pub async fn close_session_now(
         })
         .await?;
 
-    // Generate summary if enough tool calls (LLM or fallback)
+    // Generate summary if enough tool calls (heuristic fallback)
     let summary = if tool_count >= MIN_TOOLS_FOR_SUMMARY {
-        generate_session_summary(pool, client, session_id, project_id).await
+        generate_session_summary(pool, session_id, project_id).await
     } else {
         // Fallback: check behavior log
         let session_id_clone2 = session_id.to_string();
@@ -387,7 +327,7 @@ pub async fn close_session_now(
             .unwrap_or(0);
 
         if behavior_count >= MIN_TOOLS_FOR_SUMMARY {
-            generate_session_summary(pool, client, session_id, project_id).await
+            generate_session_summary(pool, session_id, project_id).await
         } else {
             None
         }
@@ -409,11 +349,11 @@ mod tests {
     #[test]
     fn test_fallback_summary_coding_session() {
         let tool_summary = "\
-✓ Read(src/main.rs) -> ok
-✓ Edit(src/main.rs) -> ok
-✓ Edit(src/lib.rs) -> ok
-✓ Write(src/new_file.rs) -> ok
-✓ Bash(cargo build) -> ok";
+\u{2713} Read(src/main.rs) -> ok
+\u{2713} Edit(src/main.rs) -> ok
+\u{2713} Edit(src/lib.rs) -> ok
+\u{2713} Write(src/new_file.rs) -> ok
+\u{2713} Bash(cargo build) -> ok";
 
         let summary = generate_session_summary_fallback(tool_summary).unwrap();
         assert!(summary.starts_with(HEURISTIC_PREFIX));
@@ -424,11 +364,11 @@ mod tests {
     #[test]
     fn test_fallback_summary_exploration_session() {
         let tool_summary = "\
-✓ Read(src/main.rs) -> ok
-✓ Grep(pattern) -> ok
-✓ Glob(**/*.rs) -> ok
-✓ Read(src/lib.rs) -> ok
-✓ Read(Cargo.toml) -> ok";
+\u{2713} Read(src/main.rs) -> ok
+\u{2713} Grep(pattern) -> ok
+\u{2713} Glob(**/*.rs) -> ok
+\u{2713} Read(src/lib.rs) -> ok
+\u{2713} Read(Cargo.toml) -> ok";
 
         let summary = generate_session_summary_fallback(tool_summary).unwrap();
         assert!(summary.starts_with(HEURISTIC_PREFIX));
