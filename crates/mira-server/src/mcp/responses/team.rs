@@ -44,4 +44,3 @@ pub struct TeamReviewData {
     pub files_modified: Vec<String>,
     pub file_count: usize,
 }
-

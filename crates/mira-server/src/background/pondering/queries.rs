@@ -620,5 +620,4 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
-
 }

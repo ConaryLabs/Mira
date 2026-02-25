@@ -1,8 +1,8 @@
 // db/test_support.rs
 // Shared test helpers and macros for database tests
 
-use super::pool::DatabasePool;
 use super::get_or_create_project_sync;
+use super::pool::DatabasePool;
 use rusqlite::Connection;
 use std::sync::Arc;
 

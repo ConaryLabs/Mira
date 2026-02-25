@@ -18,9 +18,8 @@ mod semantic;
 mod working_context;
 
 pub use budget::{
-    BudgetEntry, BudgetManager, BudgetResult, PRIORITY_CONVENTION,
-    PRIORITY_FILE_AWARE, PRIORITY_GOALS, PRIORITY_REACTIVE,
-    PRIORITY_SEMANTIC, PRIORITY_TASKS, PRIORITY_TEAM,
+    BudgetEntry, BudgetManager, BudgetResult, PRIORITY_CONVENTION, PRIORITY_FILE_AWARE,
+    PRIORITY_GOALS, PRIORITY_REACTIVE, PRIORITY_SEMANTIC, PRIORITY_TASKS, PRIORITY_TEAM,
 };
 pub use cache::InjectionCache;
 pub use config::InjectionConfig;
@@ -373,7 +372,6 @@ impl ContextInjectionManager {
             from_cache: false,
         }
     }
-
 }
 
 #[cfg(test)]

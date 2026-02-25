@@ -2,8 +2,8 @@
 // IPC client for hooks — connects to MCP server via Unix socket, falls back to direct DB
 
 mod goal_ops;
-mod state_ops;
 mod session_ops;
+mod state_ops;
 mod team_ops;
 
 use crate::db::pool::DatabasePool;

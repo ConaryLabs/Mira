@@ -286,4 +286,3 @@ fn fetch_doc_gap_insights(
 
     Ok(insights)
 }
-

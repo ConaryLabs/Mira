@@ -315,7 +315,9 @@ fn assemble_output_from_ipc(
     session_id: &str,
     recovery_context: Option<&str>,
 ) -> Result<()> {
-    use crate::context::{BudgetEntry, BudgetManager, PRIORITY_REACTIVE, PRIORITY_TASKS, PRIORITY_TEAM};
+    use crate::context::{
+        BudgetEntry, BudgetManager, PRIORITY_REACTIVE, PRIORITY_TASKS, PRIORITY_TEAM,
+    };
 
     // Derive project label from path for context tags
     let project_label = ctx

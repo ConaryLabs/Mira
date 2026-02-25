@@ -997,7 +997,6 @@ async fn test_context_injection_file_extraction() {
     assert!(paths.contains(&"package.json".to_string()));
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Documentation System Integration Tests
 // ═══════════════════════════════════════════════════════════════════════════════

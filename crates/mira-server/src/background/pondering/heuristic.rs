@@ -379,5 +379,4 @@ mod tests {
         let insights = generate_insights_heuristic(&data);
         assert_eq!(insights.len(), 3); // stale goal + fragile module + recurring error
     }
-
 }

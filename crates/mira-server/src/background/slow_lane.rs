@@ -12,8 +12,8 @@ use tokio::sync::watch;
 use tokio::time::timeout;
 
 use super::{
-    briefings, code_health, documentation, outcome_scanner, pondering, session_summaries, summaries,
-    team_monitor,
+    briefings, code_health, documentation, outcome_scanner, pondering, session_summaries,
+    summaries, team_monitor,
 };
 
 /// Delay before first cycle to let the service start up

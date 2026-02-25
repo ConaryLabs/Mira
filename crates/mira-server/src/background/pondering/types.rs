@@ -86,4 +86,3 @@ pub(crate) struct RecurringError {
     #[allow(dead_code)] // Stored for future cross-session linking
     pub last_seen_session_id: Option<String>,
 }
-

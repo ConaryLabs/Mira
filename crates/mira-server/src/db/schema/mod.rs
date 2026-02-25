@@ -365,7 +365,6 @@ pub fn run_all_migrations(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-
 /// Drop the injection_feedback table (dead code removed)
 fn drop_injection_feedback(conn: &Connection) -> Result<()> {
     conn.execute_batch("DROP TABLE IF EXISTS injection_feedback;")?;
@@ -445,7 +444,6 @@ fn drop_dead_tables_v3(conn: &Connection) -> Result<()> {
     )?;
     Ok(())
 }
-
 
 /// Add updated_at column to goals table for accurate stale-goal detection
 fn migrate_goals_updated_at(conn: &Connection) -> Result<()> {

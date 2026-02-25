@@ -1,7 +1,7 @@
 // background/diff_analysis/impact.rs
 // Impact analysis via call graph traversal
 
-use super::types::{ImpactAnalysis};
+use super::types::ImpactAnalysis;
 use crate::db::map_files_to_symbols_sync;
 use crate::search::find_callers;
 use std::collections::HashSet;

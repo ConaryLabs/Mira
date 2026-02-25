@@ -319,9 +319,7 @@ pub enum TeamAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TeamRequest {
-    #[schemars(
-        description = "Action: status (team overview), review (teammate's work)"
-    )]
+    #[schemars(description = "Action: status (team overview), review (teammate's work)")]
     pub action: TeamAction,
     #[schemars(description = "Teammate name (for review action, defaults to self)")]
     pub teammate: Option<String>,

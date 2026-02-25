@@ -110,11 +110,8 @@ pub fn spawn_with_pools(
         let main_pool = main_pool.clone();
         tokio::spawn(async move {
             supervise_worker("slow_lane", shutdown_rx.clone(), || {
-                let worker = SlowLaneWorker::new(
-                    main_pool.clone(),
-                    code_pool.clone(),
-                    shutdown_rx.clone(),
-                );
+                let worker =
+                    SlowLaneWorker::new(main_pool.clone(), code_pool.clone(), shutdown_rx.clone());
                 tokio::spawn(async move { worker.run().await })
             })
             .await;

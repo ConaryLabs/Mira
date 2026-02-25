@@ -881,5 +881,3 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
         "config_max_chars": config.max_chars,
     }))
 }
-
-

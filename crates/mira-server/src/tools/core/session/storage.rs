@@ -95,8 +95,7 @@ pub(super) async fn storage_status<C: ToolContext>(
         })
         .await?;
 
-    let (sessions, tool_history, llm_usage, embed_usage, behavior, goals, observations) =
-        counts;
+    let (sessions, tool_history, llm_usage, embed_usage, behavior, goals, observations) = counts;
 
     // Load retention config and count candidates
     let config = MiraConfig::load();

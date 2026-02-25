@@ -334,4 +334,3 @@ pub fn get_active_projects_sync(
     })?;
     rows.collect()
 }
-
