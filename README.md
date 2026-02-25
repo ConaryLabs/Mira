@@ -4,17 +4,12 @@
 [![Release](https://img.shields.io/github/v/release/ConaryLabs/Mira)](https://github.com/ConaryLabs/Mira/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Persistent memory and code intelligence for Claude Code.**
+**A local MCP server that gives Claude Code persistent context and code intelligence.**
 
-Claude Code is powerful but amnesiac. Every session starts from scratch --
-architecture decisions forgotten, codebase reduced to what it can grep. You
-spend the first ten minutes of every conversation re-explaining context it
-had yesterday.
-
-Mira is a local MCP server that fixes this. It gives Claude Code persistent
-memory, semantic code search, and background codebase analysis. Everything
-runs on your machine, stored in SQLite. Install it and forget about it --
-lifecycle hooks make context injection automatic.
+Mira runs alongside Claude Code over stdio. It tracks sessions, indexes your
+codebase with tree-sitter, and injects relevant context on every prompt via
+lifecycle hooks. Decisions, preferences, and code structure persist in SQLite
+across sessions. No cloud services, no accounts -- one binary, two database files.
 
 ## Install
 
@@ -29,7 +24,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for alternative methods (cargo 
 
 ## What Mira Does
 
-- **Session memory.** Decisions, preferences, and context persist across sessions and surface automatically on every prompt. Memories are evidence-based -- they earn trust through repeated cross-session use, not blind storage.
+- **Session continuity.** Decisions, preferences, and context persist across sessions and surface automatically on every prompt. Stored facts are evidence-based -- they earn trust through repeated cross-session use, not blind storage.
 - **Semantic code search.** "Where do we handle auth?" finds `verify_credentials` in `middleware.rs`, even when the word "auth" never appears. Falls back to keyword search without API keys.
 - **Background analysis.** Indexes your codebase with tree-sitter, detects unused functions, doc gaps, and error patterns without being asked. Learns how errors were fixed and surfaces solutions in future sessions.
 - **Change intelligence.** Diff analysis with call graph impact tracing and cross-session change tracking.
@@ -39,8 +34,8 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for alternative methods (cargo 
 ## Design Principles
 
 - **Local-first.** Two SQLite databases in `~/.mira/`. No cloud services, no accounts, no external databases required.
-- **Evidence-based.** Memories start as candidates and are promoted through cross-session use. What surfaces in your session is traceable and earnable, not just whatever was written last.
-- **Zero-config defaults.** Memory, code intelligence, goal tracking, and background analysis all work without API keys. Add OpenAI embeddings for semantic search when you want it.
+- **Evidence-based.** Stored facts start as candidates and are promoted through cross-session use. What surfaces in your session is traceable, not just whatever was written last.
+- **Zero-config defaults.** Context persistence, code intelligence, goal tracking, and background analysis all work without API keys. Add OpenAI embeddings for semantic search when you want it.
 - **Honest tooling.** Context injection is conservative -- tight relevance thresholds, cross-prompt deduplication, suppression of signals that aren't being used. Mira tells Claude what it actually knows.
 
 ## How It Works
