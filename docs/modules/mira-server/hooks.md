@@ -20,15 +20,13 @@ Hooks are invoked by Claude Code at specific events during a session. Each hook 
 | Module | Hook Event | Purpose |
 |--------|-----------|---------|
 | `session` | SessionStart | Initialize Mira session, capture session ID, working directory, and team membership |
-| `user_prompt` | UserPromptSubmit | Inject pending tasks, relevant memories, proactive predictions, and team context |
-| `pre_tool` | PreToolUse | Inject relevant memories before Grep/Glob/Read searches |
+| `user_prompt` | UserPromptSubmit | Inject pending tasks, reactive code intelligence, and team context |
+| `pre_tool` | PreToolUse | File reread advisory, symbol hints for large files, change pattern warnings |
 | `post_tool` | PostToolUse | Track file modifications, queue re-indexing, detect team conflicts |
 | `precompact` | PreCompact | Extract decisions, TODOs, and errors from transcript before summarization |
-| `stop` | Stop / SessionEnd | Session snapshot, task export, goal progress check, auto-export to CLAUDE.local.md |
-| `permission` | PermissionRequest | Pass-through to Claude Code's native permission handling |
-| `recall` | (shared) | Memory recall utilities used by other hooks |
+| `stop` | Stop / SessionEnd | Session snapshot, task export, goal progress check |
 | `subagent` | SubagentStart/Stop | Inject context for subagents, capture discoveries from subagent work |
-| `post_tool_failure` | PostToolFailure | Track tool failures, recall relevant memories after repeated failures |
+| `post_tool_failure` | PostToolFailure | Track tool failures for recurring error detection |
 | `task_completed` | TaskCompleted | Log task completions, auto-complete matching goal milestones |
 | `teammate_idle` | TeammateIdle | Log teammate idle events for team activity tracking |
 

@@ -65,12 +65,10 @@ mira debug-carto     # Debug cartographer module detection
 
 ## Environment
 
-API keys are in `~/.mira/.env` (optional with MCP Sampling):
-- `DEEPSEEK_API_KEY` - Background LLM tasks (pondering, summaries)
-- `OPENAI_API_KEY` - Embeddings (OpenAI text-embedding-3-small)
-- `OLLAMA_HOST` - Local LLM for background tasks (no API key needed)
+API keys are in `~/.mira/.env` (all optional):
+- `OPENAI_API_KEY` - Embeddings (OpenAI text-embedding-3-small). Without this, search falls back to keyword/fuzzy matching.
 
-Optional: `OLLAMA_MODEL`, `BRAVE_API_KEY` (web search), `DEFAULT_LLM_PROVIDER`, `MIRA_DISABLE_LLM`, `MIRA_USER_ID`.
+Optional: `MIRA_USER_ID`.
 See `.env.example` for all options.
 
 ## Claude Code Config Locations
@@ -97,7 +95,6 @@ See `.env.example` for all options.
 | `/mira:qa-hardening` | Production readiness review and hardening backlog |
 | `/mira:refactor` | Safe code restructuring with architect + reviewer validation |
 | `/mira:help` | Show all available Mira commands and tools |
-| `/mira:efficiency` | Token efficiency stats and active optimization features |
 | `/mira:status` | Quick health check: index stats, storage, active goals |
 
 ## Hook Integration
@@ -107,7 +104,7 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | Hook | What It Injects |
 |------|-----------------|
 | `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info, incomplete tasks from previous session |
-| `UserPromptSubmit` | Pending tasks, proactive predictions, pre-generated suggestions, team context |
+| `UserPromptSubmit` | Pending tasks, team context, reactive code intelligence |
 | `PreToolUse` | File reread advisory and symbol hints for Read |
 | `PostToolUse` | Tracks file modifications, team conflict detection |
 | `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |
@@ -115,7 +112,6 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | `SessionEnd` | Snapshot tasks on user interrupt, team session cleanup |
 | `SubagentStart` | Injects active goals for subagent context |
 | `SubagentStop` | Captures discoveries from subagent work |
-| `PermissionRequest` | Auto-approve tools based on stored rules |
 | `PostToolUseFailure` | Tracks tool failures |
 | `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |
 | `TeammateIdle` | Logs teammate idle events for team activity tracking |

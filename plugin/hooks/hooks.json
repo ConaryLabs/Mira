@@ -1,5 +1,5 @@
 {
-  "description": "Mira bidirectional communication hooks for proactive context injection and event handling",
+  "description": "Mira lifecycle hooks for context injection and event tracking",
   "hooks": {
     "SessionStart": [
       {
@@ -20,7 +20,7 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook user-prompt",
             "timeout": 8,
-            "statusMessage": "Mira: Searching memories..."
+            "statusMessage": "Mira: Loading context..."
           }
         ]
       }

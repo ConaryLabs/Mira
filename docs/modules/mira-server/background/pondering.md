@@ -5,7 +5,7 @@ Active reasoning loops that analyze project data during idle time to discover ac
 
 ## Overview
 
-Runs during the slow lane's background cycle, examining recent project activity (tool usage, memories, goals, code health) to generate insights about workflow patterns, potential issues, and improvement opportunities. Each project is pondered at most once every 6 hours. Requires either meaningful project data or at least 10 tool calls before processing.
+Runs during the slow lane's background cycle, examining recent project activity (goals, code stability, and error patterns) to generate insights about workflow patterns, potential issues, and improvement opportunities. Each project is pondered at most once every 6 hours. Requires either meaningful project data or at least 10 tool calls before processing.
 
 ## Key Functions
 
@@ -16,8 +16,8 @@ Runs during the slow lane's background cycle, examining recent project activity 
 
 | Module | Purpose |
 |--------|---------|
-| `queries` | Rich data gathering queries (tool history, memories, project signals) |
-| `heuristic` | Heuristic insight generation (tool usage stats, friction detection, focus areas) |
+| `queries` | DB queries for stale goals, fragile modules, revert clusters, recurring errors |
+| `heuristic` | Threshold-based insight generation from factual DB signals |
 | `storage` | Insight persistence and cleanup |
 | `types` | Data types for insight context |
 

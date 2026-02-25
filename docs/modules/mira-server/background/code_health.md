@@ -1,35 +1,21 @@
 <!-- docs/modules/mira-server/background/code_health.md -->
 # background/code_health
 
-Background worker for detecting code health issues using pattern-based analysis.
+Background worker for detecting code health issues using compiler output and call graph analysis.
 
 ## Detection Methods
 
-1. **Pattern-based** - TODOs, unwraps, unused functions
-2. **Cargo warnings** - Runs `cargo check` and parses warnings
+1. **Cargo warnings** - Runs `cargo check --message-format=json` and stores real compiler warnings
+2. **Unused functions** - Queries the code index call graph for functions with zero callers
 
 ## Key Functions
 
-### Background entry points (called by slow lane)
-
-- `process_health_fast_scans()` - Fast pattern-based detection pass
-
-### On-demand (called by MCP tool)
-
-- `scan_project_health_full()` - Orchestrates full health scan for MCP tool use
-
-### Utilities
-
+- `process_health_fast_scans()` - Background entry point (called by slow lane)
+- `scan_project_health_full()` - Full health scan for MCP tool use
 - `mark_health_scan_needed_sync()` - Flag for rescan (triggered by file watcher)
 
 ## Sub-modules
 
 | Module | Purpose |
 |--------|---------|
-| `detection` | Pattern-based issue detection |
-| `cargo` | Cargo check integration |
-| `analysis` | LLM-based code analysis |
-| `conventions` | Code convention detection |
-| `dependencies` | Dependency analysis |
-| `patterns` | Architectural pattern detection |
-| `scoring` | Tech debt scoring |
+| `cargo` | Cargo check integration and warning parsing |

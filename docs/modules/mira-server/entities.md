@@ -1,11 +1,11 @@
 <!-- docs/modules/mira-server/entities.md -->
 # entities
 
-Heuristic entity extraction for memory recall boosting.
+Heuristic entity extraction from text content.
 
 ## Overview
 
-Extracts code identifiers, file paths, and crate names from text content using precompiled regexes. When a user recalls memories, entities found in both the query and stored facts are used to boost ranking scores, improving recall relevance without requiring embeddings.
+Extracts code identifiers, file paths, and crate names from text content using precompiled regexes. Used by subagent hooks to extract entities from subagent output for discovery tracking.
 
 ## Key Types
 
@@ -27,4 +27,4 @@ Extracts code identifiers, file paths, and crate names from text content using p
 
 ## Architecture Notes
 
-All regexes are compiled once via `LazyLock` statics. The module is designed to run in under 1ms on typical memory content. Entity data is stored in the `entity_mentions` table (see `db/entities.rs`) and used by `recall_semantic_with_entity_boost_sync()` for ranked memory retrieval.
+All regexes are compiled once via `LazyLock` statics. The module is designed to run in under 1ms on typical content.

@@ -1,11 +1,11 @@
 <!-- docs/modules/mira-server/context.md -->
 # context
 
-Proactive context injection system for enriching user prompts with relevant information.
+Context injection system for enriching user prompts with relevant information.
 
 ## Overview
 
-Orchestrates multiple injectors to automatically provide relevant context (memories, conventions, goals, file info) alongside user messages. The `ContextInjectionManager` evaluates whether a message warrants injection, gathers context from several sources, applies a character budget, caches results, and records analytics. Simple commands, very short/long messages, and non-code-related messages are skipped.
+Orchestrates multiple injectors to automatically provide relevant context (conventions, goals, file info) alongside user messages. The `ContextInjectionManager` evaluates whether a message warrants injection, gathers context from several sources, applies a character budget, and caches results. Simple commands and very short messages are skipped.
 
 ## Key Types
 
@@ -27,4 +27,3 @@ Orchestrates multiple injectors to automatically provide relevant context (memor
 | `budget` | Character budget management across injectors |
 | `cache` | TTL-based caching of injection results |
 | `config` | Injection configuration (persisted to database) |
-| `analytics` | Injection event recording and summary reporting |

@@ -8,7 +8,7 @@
 
 Claude Code is powerful but amnesiac. Every session starts from scratch — architecture decisions gone, codebase reduced to what it can grep. You spend the first ten minutes re-explaining things it knew yesterday.
 
-Mira eliminates that. It's a local Rust MCP server that gives Claude Code persistent memory, deep code understanding, background analysis, and continuous learning. Runs on your machine, stored in SQLite, 13 hooks that make it all automatic.
+Mira eliminates that. It's a local Rust MCP server that gives Claude Code persistent context, deep code understanding, and background analysis. Runs on your machine, stored in SQLite, 13 hooks that make it all automatic.
 
 ## The Short Version
 
@@ -30,12 +30,11 @@ That's it. Mira auto-configures itself, starts injecting context on every prompt
 ### With Mira
 - **Sessions have continuity.** Decisions, preferences, and context persist and surface automatically on every prompt.
 - **Search works by meaning.** "Where do we handle auth?" finds `verify_credentials` in `middleware.rs`. Hybrid semantic + keyword search with call graph traversal.
-- **The codebase is always understood.** Background workers track code health, score tech debt, detect doc gaps, and surface insights — without you asking.
-- **Changes are analyzed, not just diffed.** Semantic classification, call graph impact tracing, risk scoring based on historical churn patterns.
+- **The codebase is always understood.** Background workers detect compiler warnings, unused functions, doc gaps, and surface cross-session insights — without you asking.
+- **Changes are analyzed, not just diffed.** Factual stats, call graph impact tracing, and cross-session change tracking.
 - **Agent teams share a brain.** File ownership tracking, conflict detection, and built-in recipes for expert review, QA hardening, and safe refactoring.
-- **Knowledge compounds.** Memories gain confidence through repeated use and get distilled into higher-level insights over time.
-- **Cross-project knowledge.** Mira surfaces relevant solutions from your other projects when applicable.
-- **Token-efficient by design.** Hooks inject only what matters: tight semantic thresholds, cross-prompt dedup, type-aware subagent budgets, file-read caching, and symbol hints for large files. Context that isn't used gets tracked and suppressed. Run `/mira:efficiency` to see injection hit rates.
+- **Knowledge compounds.** Session context, decisions, and goals persist and compound across sessions.
+- **Token-efficient by design.** Hooks inject only what matters: tight semantic thresholds, cross-prompt dedup, type-aware subagent budgets, file-read caching, and symbol hints for large files. Context that isn't used gets tracked and suppressed.
 
 ## How It Works
 
@@ -46,7 +45,7 @@ Claude Code  <--MCP (stdio)-->  Mira  <-->  SQLite + sqlite-vec
     +--MCP Sampling (host LLM)
 ```
 
-Everything runs locally. Two SQLite databases in `~/.mira/`: one for memories, sessions, and goals; one for the code index. No cloud, no accounts, no external databases.
+Everything runs locally. Two SQLite databases in `~/.mira/`: one for sessions, goals, and observations; one for the code index. No cloud, no accounts, no external databases.
 
 **No API keys required.** Memory, code intelligence, goal tracking, and documentation detection all work out of the box — search falls back to keyword/fuzzy matching, analysis uses heuristic parsers. OpenAI embeddings upgrade search to semantic when configured.
 
@@ -176,7 +175,6 @@ Plugin install handles this automatically. For MCP-only installs, add to `~/.cla
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "mira hook session-start", "timeout": 10}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mira hook user-prompt", "timeout": 8}]}],
-    "PermissionRequest": [{"hooks": [{"type": "command", "command": "mira hook permission", "timeout": 3}]}],
     "PreToolUse": [{"matcher": "Grep|Glob|Read", "hooks": [{"type": "command", "command": "mira hook pre-tool", "timeout": 3}]}],
     "PostToolUse": [{"matcher": "Write|Edit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "mira hook post-tool", "timeout": 5}]}],
     "PreCompact": [{"matcher": "*", "hooks": [{"type": "command", "command": "mira hook pre-compact", "timeout": 30, "async": true}]}],
@@ -195,7 +193,7 @@ Plugin install handles this automatically. For MCP-only installs, add to `~/.cla
 
 The **plugin** (quick install) is the full experience — hooks and skills auto-configured, context injected on every prompt.
 
-The **MCP server** (cargo install / build from source) gives you the core tools. Add hooks manually for the proactive stuff.
+The **MCP server** (cargo install / build from source) gives you the core tools. Add hooks manually for context injection and session tracking.
 
 ### Add Mira Instructions to Your Project
 
