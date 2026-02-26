@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.4] - 2026-02-25
+
+### Added
+- **SubagentStart code bundle injection** -- Subagents now receive relevant code context bundles automatically via IPC, reducing round-trip tool calls inside subagents.
+- **Compaction findings survival** -- Findings, decisions, and active work now persist across context compactions via `merge_compaction_contexts`. User intent preserves the original (first) value.
+- **Unavailability advisory** -- When Mira's database is unreachable, UserPromptSubmit injects a status advisory instead of silently failing.
+- **Post-compaction recovery** -- UserPromptSubmit detects recent compaction events and re-injects surviving context.
+- **~29 new tests** -- Coverage for merge_compaction_contexts, record_hook_outcome, save_compaction_context transactions, path validation, PII exclusion, flag behavior, unavailability detection, compaction summary rendering, findings extraction headers.
+
+### Fixed
+- **SQL parameterization** -- `query_deps` in bundle.rs now uses parameterized `?` placeholders instead of string interpolation for IN clauses.
+- **Symlink safety** -- `follow_links` defaults to `false` in FileWalker, preventing symlink traversal during indexing.
+- **PII in system context** -- `User` and `Home` environment variables no longer persisted to database in system context.
+- **SubagentStart timeout alignment** -- `generate_bundle` IPC op timeout lowered to 4s (under the 5s hook timeout) to prevent orphaned server-side tasks.
+- **Findings extraction consistency** -- `is_individual_finding` no longer requires `:` or `--` in headers, matching PreCompact's FINDINGS_KEYWORDS behavior.
+- **Injection telemetry accuracy** -- `sources_kept` only includes "goals" when goals were actually injected into subagent context.
+- **IPC handler drain comment** -- Corrected misleading comment about connection reuse on oversized requests.
+- **merge_vec_field allocation** -- HashSet uses `&str` instead of cloning `String` on every iteration.
+- **DatabasePool::open_hook arg type** -- Fixed pre-existing type mismatch in IPC client fallback path.
+
+### Removed
+- **Direct DB access in hooks** -- All hook database access now goes through `DatabasePool` instead of raw `rusqlite::Connection::open`.
+
+---
+
 ## [0.9.3] - 2026-02-25
 
 ### Added
