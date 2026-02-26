@@ -82,6 +82,14 @@ pub async fn handle_session<C: ToolContext>(
         SessionAction::ErrorPatterns => analytics::get_error_patterns(ctx, req.limit).await,
         SessionAction::SessionLineage => analytics::get_session_lineage(ctx, req.limit).await,
         SessionAction::Capabilities => analytics::get_capabilities(ctx).await,
+        SessionAction::Report => {
+            let message = get_injection_report(ctx, req.session_id).await?;
+            Ok(Json(SessionOutput {
+                action: "report".into(),
+                message,
+                data: None,
+            }))
+        }
     }
 }
 
@@ -183,6 +191,85 @@ pub async fn get_session_recap<C: ToolContext>(ctx: &C) -> Result<String, MiraEr
     } else {
         Ok(recap)
     }
+}
+
+/// Get injection efficiency report for a session (or cumulative)
+async fn get_injection_report<C: ToolContext>(
+    ctx: &C,
+    session_id: Option<String>,
+) -> Result<String, MiraError> {
+    let pool = ctx.pool();
+    let project_id = ctx.project_id().await;
+
+    let message = pool
+        .run(move |conn| {
+            let mut lines = Vec::new();
+
+            if let Some(sid) = &session_id {
+                // Session-specific report
+                let stats =
+                    crate::db::injection::get_injection_stats_for_session(conn, sid)
+                        .map_err(|e| e.to_string())?;
+
+                if stats.total_injections == 0 {
+                    return Ok::<_, String>("No injection data for this session.".to_string());
+                }
+
+                lines.push(format!("Session Injection Report ({})", &sid[..sid.len().min(8)]));
+                lines.push(format!("  Injections: {}", stats.total_injections));
+                lines.push(format!("  Total chars: {}", stats.total_chars));
+                lines.push(format!("  Avg chars/injection: {:.0}", stats.avg_chars));
+                lines.push(format!("  Deduped (suppressed): {}", stats.total_deduped));
+                lines.push(format!("  Cache hits: {}", stats.total_cached));
+                if let Some(ms) = stats.avg_latency_ms {
+                    lines.push(format!("  Avg latency: {:.0}ms", ms));
+                }
+
+                // Efficiency ratio: non-deduped injections / total
+                let effective = stats.total_injections - stats.total_deduped;
+                let ratio = if stats.total_injections > 0 {
+                    effective as f64 / stats.total_injections as f64 * 100.0
+                } else {
+                    0.0
+                };
+                lines.push(format!(
+                    "  Injection efficiency: {:.0}% ({}/{} delivered)",
+                    ratio, effective, stats.total_injections
+                ));
+            } else {
+                // Cumulative report
+                let stats = crate::db::injection::get_injection_stats_cumulative(
+                    conn,
+                    project_id,
+                    None,
+                )
+                .map_err(|e| e.to_string())?;
+
+                if stats.total_injections == 0 {
+                    return Ok::<_, String>("No injection data recorded yet.".to_string());
+                }
+
+                let sessions =
+                    crate::db::injection::count_tracked_sessions(conn, project_id)
+                        .map_err(|e| e.to_string())?;
+
+                lines.push("Cumulative Injection Report".to_string());
+                lines.push(format!("  Sessions tracked: {}", sessions));
+                lines.push(format!("  Total injections: {}", stats.total_injections));
+                lines.push(format!("  Total chars injected: {}", stats.total_chars));
+                lines.push(format!("  Avg chars/injection: {:.0}", stats.avg_chars));
+                lines.push(format!("  Total deduped: {}", stats.total_deduped));
+                lines.push(format!("  Total cached: {}", stats.total_cached));
+                if let Some(ms) = stats.avg_latency_ms {
+                    lines.push(format!("  Avg latency: {:.0}ms", ms));
+                }
+            }
+
+            Ok(lines.join("\n"))
+        })
+        .await?;
+
+    Ok(message)
 }
 
 #[cfg(test)]

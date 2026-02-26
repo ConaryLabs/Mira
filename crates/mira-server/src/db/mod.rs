@@ -11,6 +11,7 @@ pub mod documentation;
 mod embeddings;
 pub mod error_patterns;
 mod index;
+pub mod injection;
 mod insights;
 mod migration_helpers;
 mod milestones;

@@ -88,7 +88,9 @@ pub enum InjectionSource {
     Semantic,
     FileAware,
     TaskAware,
+    GoalAware,
     Convention,
+    Team,
 }
 
 impl InjectionSource {
@@ -97,7 +99,9 @@ impl InjectionSource {
             Self::Semantic => "semantic",
             Self::FileAware => "files",
             Self::TaskAware => "tasks",
+            Self::GoalAware => "goals",
             Self::Convention => "convention",
+            Self::Team => "team",
         }
     }
 }
@@ -353,7 +357,7 @@ impl ContextInjectionManager {
                         goal_context,
                         "goals",
                     ));
-                    sources.push(InjectionSource::TaskAware);
+                    sources.push(InjectionSource::GoalAware);
                 }
             }
         }

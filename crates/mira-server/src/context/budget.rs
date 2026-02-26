@@ -103,7 +103,8 @@ impl BudgetManager {
         let mut truncated = false;
 
         for entry in entries {
-            if result.len() + entry.content.len() + 2 > self.max_chars {
+            let separator_len = if result.is_empty() { 0 } else { 2 };
+            if result.len() + separator_len + entry.content.len() > self.max_chars {
                 dropped_sources.push(entry.source.clone());
                 truncated = true;
                 continue;
@@ -333,5 +334,17 @@ mod tests {
         assert!(result.content.contains("[Context truncated: dropped low]"));
         assert_eq!(result.kept_sources, vec!["high"]);
         assert_eq!(result.dropped_sources, vec!["low"]);
+    }
+
+    #[test]
+    fn test_first_entry_no_separator_penalty() {
+        // First entry should not be penalized by the \n\n separator cost.
+        // With limit=10, a 10-char first entry should fit exactly.
+        let manager = BudgetManager::with_limit(10);
+        let entries = vec![BudgetEntry::new(0.9, "0123456789".to_string(), "exact")];
+        let result = manager.apply_budget_prioritized(entries);
+        assert_eq!(result.content, "0123456789");
+        assert_eq!(result.kept_sources, vec!["exact"]);
+        assert!(result.dropped_sources.is_empty());
     }
 }

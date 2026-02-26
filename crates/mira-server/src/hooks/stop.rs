@@ -80,6 +80,32 @@ pub async fn run() -> Result<()> {
         }
     }
 
+    // Log brief injection stats for this session
+    if !stop_input.session_id.is_empty() {
+        let db_path = crate::hooks::get_db_path();
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+            if let Ok(stats) = crate::db::injection::get_injection_stats_for_session(
+                &conn,
+                &stop_input.session_id,
+            ) {
+                if stats.total_injections > 0 {
+                    let avg_latency = stats
+                        .avg_latency_ms
+                        .map(|ms| format!(", avg {:.0}ms", ms))
+                        .unwrap_or_default();
+                    tracing::warn!(
+                        "[mira] Session injection stats: {} injections, {} chars total ({} deduped, {} cached{})",
+                        stats.total_injections,
+                        stats.total_chars,
+                        stats.total_deduped,
+                        stats.total_cached,
+                        avg_latency,
+                    );
+                }
+            }
+        }
+    }
+
     // Build session summary, save snapshot, and close the session
     client.close_session(&stop_input.session_id).await;
 

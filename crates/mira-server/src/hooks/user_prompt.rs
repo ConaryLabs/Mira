@@ -268,6 +268,24 @@ async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
     result
 }
 
+/// Record a context injection event. Best-effort, never blocks the hook.
+/// Uses pool if available (direct path), otherwise opens a direct connection (IPC path).
+async fn record_injection(
+    pool: Option<&Arc<DatabasePool>>,
+    record: crate::db::injection::InjectionRecord,
+) {
+    if let Some(pool) = pool {
+        pool.try_interact("record injection", move |conn| {
+            crate::db::injection::insert_injection_sync(conn, &record)?;
+            Ok(())
+        })
+        .await;
+    } else {
+        let db_path = get_db_path();
+        crate::db::injection::record_injection_fire_and_forget(&db_path, &record);
+    }
+}
+
 /// Run UserPromptSubmit hook
 pub async fn run() -> Result<()> {
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
@@ -302,7 +320,7 @@ pub async fn run() -> Result<()> {
         .get_user_prompt_context(user_message, session_id)
         .await
     {
-        return assemble_output_from_ipc(ctx, session_id, recovery_context.as_deref());
+        return assemble_output_from_ipc(ctx, session_id, recovery_context.as_deref()).await;
     }
 
     // Direct fallback: open local pools and run full logic
@@ -310,7 +328,7 @@ pub async fn run() -> Result<()> {
 }
 
 /// Assemble hook output from the composite IPC result.
-fn assemble_output_from_ipc(
+async fn assemble_output_from_ipc(
     ctx: crate::ipc::client::UserPromptContextResult,
     session_id: &str,
     recovery_context: Option<&str>,
@@ -318,6 +336,8 @@ fn assemble_output_from_ipc(
     use crate::context::{
         BudgetEntry, BudgetManager, PRIORITY_REACTIVE, PRIORITY_TASKS, PRIORITY_TEAM,
     };
+
+    let inject_start = std::time::Instant::now();
 
     // Derive project label from path for context tags
     let project_label = ctx
@@ -366,11 +386,44 @@ fn assemble_output_from_ipc(
 
     if !final_context.is_empty() {
         // Cross-prompt dedup: suppress if identical context was recently injected
-        if check_and_record_injection(session_id, &final_context) {
+        let was_deduped = check_and_record_injection(session_id, &final_context);
+        if was_deduped {
             tracing::debug!("[mira] Context injection suppressed (cross-prompt dedup)");
+            record_injection(
+                None,
+                crate::db::injection::InjectionRecord {
+                    hook_name: "UserPromptSubmit".to_string(),
+                    session_id: Some(session_id.to_string()),
+                    project_id: ctx.project_id,
+                    chars_injected: 0,
+                    sources_kept: budget_result.kept_sources.clone(),
+                    sources_dropped: budget_result.dropped_sources.clone(),
+                    latency_ms: Some(inject_start.elapsed().as_millis() as u64),
+                    was_deduped: true,
+                    was_cached: ctx.reactive_from_cache,
+                },
+            )
+            .await;
             write_hook_output(&serde_json::json!({}));
             return Ok(());
         }
+
+        // Record successful injection
+        record_injection(
+            None,
+            crate::db::injection::InjectionRecord {
+                hook_name: "UserPromptSubmit".to_string(),
+                session_id: Some(session_id.to_string()),
+                project_id: ctx.project_id,
+                chars_injected: final_context.len(),
+                sources_kept: budget_result.kept_sources.clone(),
+                sources_dropped: budget_result.dropped_sources.clone(),
+                latency_ms: Some(inject_start.elapsed().as_millis() as u64),
+                was_deduped: false,
+                was_cached: ctx.reactive_from_cache,
+            },
+        )
+        .await;
 
         let mut output = serde_json::json!({});
         output["metadata"] = serde_json::json!({
@@ -398,6 +451,8 @@ async fn run_direct(
     session_id: &str,
     recovery_context: Option<&str>,
 ) -> Result<()> {
+    let inject_start = std::time::Instant::now();
+
     // Open database pools (main + code index)
     let db_path = get_db_path();
     let pool = Arc::new(
@@ -496,11 +551,44 @@ async fn run_direct(
 
     if !final_context.is_empty() {
         // Cross-prompt dedup: suppress if identical context was recently injected
-        if check_and_record_injection(session_id, &final_context) {
+        let was_deduped = check_and_record_injection(session_id, &final_context);
+        if was_deduped {
             tracing::debug!("[mira] Context injection suppressed (cross-prompt dedup)");
+            record_injection(
+                Some(&pool),
+                crate::db::injection::InjectionRecord {
+                    hook_name: "UserPromptSubmit".to_string(),
+                    session_id: Some(session_id.to_string()),
+                    project_id: _project_id,
+                    chars_injected: 0,
+                    sources_kept: budget_result.kept_sources.clone(),
+                    sources_dropped: budget_result.dropped_sources.clone(),
+                    latency_ms: Some(inject_start.elapsed().as_millis() as u64),
+                    was_deduped: true,
+                    was_cached: result.from_cache,
+                },
+            )
+            .await;
             write_hook_output(&serde_json::json!({}));
             return Ok(());
         }
+
+        // Record successful injection
+        record_injection(
+            Some(&pool),
+            crate::db::injection::InjectionRecord {
+                hook_name: "UserPromptSubmit".to_string(),
+                session_id: Some(session_id.to_string()),
+                project_id: _project_id,
+                chars_injected: final_context.len(),
+                sources_kept: budget_result.kept_sources.clone(),
+                sources_dropped: budget_result.dropped_sources.clone(),
+                latency_ms: Some(inject_start.elapsed().as_millis() as u64),
+                was_deduped: false,
+                was_cached: result.from_cache,
+            },
+        )
+        .await;
 
         let mut output = serde_json::json!({});
         output["metadata"] = serde_json::json!({

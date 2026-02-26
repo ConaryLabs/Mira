@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 pub mod code;
 mod fts;
+mod injection;
 mod intelligence;
 mod memory;
 mod reviews;
@@ -275,6 +276,11 @@ fn migration_registry() -> Vec<Migration> {
             version: 50,
             name: "drop_heuristic_health_tables",
             func: drop_heuristic_health_tables,
+        },
+        Migration {
+            version: 51,
+            name: "context_injections_table",
+            func: injection::migrate_context_injections_table,
         },
     ]
 }

@@ -338,10 +338,26 @@ pub async fn run() -> Result<()> {
         }
 
         if !hints.is_empty() {
+            let context = hints.join("\n");
+            let db_path = crate::hooks::get_db_path();
+            crate::db::injection::record_injection_fire_and_forget(
+                &db_path,
+                &crate::db::injection::InjectionRecord {
+                    hook_name: "PreToolUse".to_string(),
+                    session_id: Some(pre_input.session_id.clone()),
+                    project_id: None,
+                    chars_injected: context.len(),
+                    sources_kept: vec!["symbol_hints".to_string()],
+                    sources_dropped: vec![],
+                    latency_ms: None,
+                    was_deduped: false,
+                    was_cached: false,
+                },
+            );
             let output = serde_json::json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
-                    "additionalContext": hints.join("\n")
+                    "additionalContext": context
                 }
             });
             write_hook_output(&output);
@@ -470,6 +486,20 @@ async fn handle_edit_write_patterns(
         serde_json::json!({})
     } else {
         let context = format!("[Mira/patterns] \u{26a0} {}", warnings.join("; "),);
+        crate::db::injection::record_injection_fire_and_forget(
+            &db_path,
+            &crate::db::injection::InjectionRecord {
+                hook_name: "PreToolUse".to_string(),
+                session_id: Some(pre_input.session_id.clone()),
+                project_id: Some(project_id),
+                chars_injected: context.len(),
+                sources_kept: vec!["change_patterns".to_string()],
+                sources_dropped: vec![],
+                latency_ms: None,
+                was_deduped: false,
+                was_cached: false,
+            },
+        );
         serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

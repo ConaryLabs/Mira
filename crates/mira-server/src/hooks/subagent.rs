@@ -170,6 +170,23 @@ pub async fn run_start() -> Result<()> {
             }
             context.push_str("\n...");
         }
+
+        let db_path = crate::hooks::get_db_path();
+        crate::db::injection::record_injection_fire_and_forget(
+            &db_path,
+            &crate::db::injection::InjectionRecord {
+                hook_name: "SubagentStart".to_string(),
+                session_id: Some(start_input.session_id.clone()),
+                project_id: Some(project_id),
+                chars_injected: context.len(),
+                sources_kept: vec!["goals".to_string()],
+                sources_dropped: vec![],
+                latency_ms: None,
+                was_deduped: false,
+                was_cached: false,
+            },
+        );
+
         serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "SubagentStart",

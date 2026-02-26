@@ -248,12 +248,14 @@ pub enum SessionAction {
     SessionLineage,
     /// Show capability status: what features are available vs degraded (CLI-only)
     Capabilities,
+    /// Session injection efficiency report
+    Report,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), session_lineage (show session history with resume chains)"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), session_lineage (show session history with resume chains), report (injection efficiency report)"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]

@@ -177,7 +177,7 @@ pub fn query_llm_usage_stats(
 
     if let Some(days) = since_days {
         sql.push_str(" AND created_at >= datetime('now', ? || ' days')");
-        params_vec.push(Box::new(-(days as i32)));
+        params_vec.push(Box::new(-(days as i64)));
     }
 
     sql.push_str(&format!(
@@ -254,7 +254,7 @@ pub fn query_embedding_usage_stats(
 
     if let Some(days) = since_days {
         sql.push_str(" AND created_at >= datetime('now', ? || ' days')");
-        params_vec.push(Box::new(-(days as i32)));
+        params_vec.push(Box::new(-(days as i64)));
     }
 
     sql.push_str(&format!(
@@ -307,7 +307,7 @@ pub fn get_embedding_usage_summary(
 
     if let Some(days) = since_days {
         sql.push_str(" AND created_at >= datetime('now', ? || ' days')");
-        params_vec.push(Box::new(-(days as i32)));
+        params_vec.push(Box::new(-(days as i64)));
     }
 
     let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
@@ -354,7 +354,7 @@ pub fn get_llm_usage_summary(
 
     if let Some(days) = since_days {
         sql.push_str(" AND created_at >= datetime('now', ? || ' days')");
-        params_vec.push(Box::new(-(days as i32)));
+        params_vec.push(Box::new(-(days as i64)));
     }
 
     let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();

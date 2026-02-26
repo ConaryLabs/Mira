@@ -296,9 +296,13 @@ pub async fn run() -> Result<()> {
     let mut client = HookClient::connect().await;
 
     // Register session in DB so the background loop sees activity
+    let mut project_id: Option<i64> = None;
     if let (Some(sid), Some(cwd_val)) = (session_id, cwd) {
         match client.register_session(sid, cwd_val, source).await {
-            Some(pid) => tracing::debug!(project_id = pid, "Session registered in DB"),
+            Some(pid) => {
+                project_id = Some(pid);
+                tracing::debug!(project_id = pid, "Session registered in DB");
+            }
             None => tracing::warn!("Failed to register session"),
         }
     }
@@ -346,6 +350,7 @@ pub async fn run() -> Result<()> {
     }
 
     // Inject context about previous work via IPC
+    let inject_start = std::time::Instant::now();
     let cwd_owned = cwd.map(String::from);
     let session_id_owned = session_id.map(String::from);
 
@@ -359,7 +364,23 @@ pub async fn run() -> Result<()> {
             .await
     };
 
-    if let Some(ctx) = context {
+    if let Some(ref ctx) = context {
+        let db_path = super::get_db_path();
+        crate::db::injection::record_injection_fire_and_forget(
+            &db_path,
+            &crate::db::injection::InjectionRecord {
+                hook_name: "SessionStart".to_string(),
+                session_id: session_id.map(String::from),
+                project_id,
+                chars_injected: ctx.len(),
+                sources_kept: vec![source.to_string()],
+                sources_dropped: vec![],
+                latency_ms: Some(inject_start.elapsed().as_millis() as u64),
+                was_deduped: false,
+                was_cached: false,
+            },
+        );
+
         let output = serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
