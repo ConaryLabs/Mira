@@ -8,7 +8,7 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use cli::{Cli, Commands, ConfigAction, HookAction};
+use cli::{Cli, Commands, ConfigAction, HookAction, analyze};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -62,6 +62,7 @@ async fn main() -> Result<()> {
                 Some(Commands::Setup { .. }) => Level::WARN,
                 Some(Commands::Cleanup { .. }) => Level::INFO,
                 Some(Commands::StatusLine) => Level::WARN,
+                Some(Commands::AnalyzeSession { .. }) => Level::WARN,
                 _ => Level::WARN,
             };
             let subscriber = FmtSubscriber::builder()
@@ -149,6 +150,14 @@ async fn main() -> Result<()> {
         }
         Some(Commands::StatusLine) => {
             cli::statusline::run()?;
+        }
+        Some(Commands::AnalyzeSession {
+            session,
+            turns,
+            tools,
+            correlate,
+        }) => {
+            analyze::run(session, turns, tools, correlate)?;
         }
     }
 

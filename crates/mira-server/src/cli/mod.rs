@@ -4,6 +4,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+pub mod analyze;
 pub mod cleanup;
 pub mod clients;
 pub mod config;
@@ -115,6 +116,26 @@ pub enum Commands {
     /// Output status line for Claude Code (reads stdin, prints stats to stdout)
     #[command(name = "statusline")]
     StatusLine,
+
+    /// Analyze a Claude Code session JSONL log
+    #[command(name = "analyze-session")]
+    AnalyzeSession {
+        /// Session ID or path to JSONL file
+        #[arg(index = 1)]
+        session: Option<String>,
+
+        /// Show per-turn breakdown
+        #[arg(long)]
+        turns: bool,
+
+        /// Show tool call breakdown
+        #[arg(long)]
+        tools: bool,
+
+        /// Include injection correlation from Mira DB
+        #[arg(long)]
+        correlate: bool,
+    },
 }
 
 #[derive(Subcommand)]

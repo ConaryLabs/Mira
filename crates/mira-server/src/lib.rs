@@ -17,6 +17,7 @@ pub mod fuzzy;
 pub mod git;
 pub mod hooks;
 pub mod http;
+pub mod jsonl;
 pub mod identity;
 pub mod indexer;
 pub mod ipc;
