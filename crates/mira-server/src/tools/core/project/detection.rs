@@ -126,29 +126,8 @@ pub(super) fn gather_system_context_content() -> Option<String> {
         context_parts.push(format!("Shell: {}", shell));
     }
 
-    // User (try env, fallback to whoami)
-    if let Ok(user) = std::env::var("USER") {
-        if !user.is_empty() {
-            context_parts.push(format!("User: {}", user));
-        }
-    } else if let Ok(output) = Command::new("whoami").output()
-        && output.status.success()
-    {
-        let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        context_parts.push(format!("User: {}", user));
-    }
-
-    // Home directory (try env, fallback to ~)
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            context_parts.push(format!("Home: {}", home));
-        }
-    } else if let Ok(output) = Command::new("sh").args(["-c", "echo ~"]).output()
-        && output.status.success()
-    {
-        let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        context_parts.push(format!("Home: {}", home));
-    }
+    // User and Home intentionally omitted -- available via env vars at runtime
+    // but not persisted to DB to avoid storing PII.
 
     // Timezone
     if let Ok(output) = Command::new("date").arg("+%Z (UTC%:z)").output()
