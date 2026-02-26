@@ -331,15 +331,16 @@ fn process_user_entry(entry: &RawEntry, summary: &mut SessionSummary) {
     };
 
     // User entries with array content containing tool_result are tool results.
+    // A single user message can carry multiple tool_results (parallel tool use).
     // User entries with string content are actual user prompts.
     if let Some(blocks) = message.content.as_array() {
-        let has_tool_result = blocks.iter().any(|b| {
+        let tool_result_count = blocks.iter().filter(|b| {
             b.get("type")
                 .and_then(|t| t.as_str())
                 .is_some_and(|t| t == "tool_result")
-        });
-        if has_tool_result {
-            summary.tool_result_count += 1;
+        }).count();
+        if tool_result_count > 0 {
+            summary.tool_result_count += tool_result_count as u64;
         } else {
             summary.user_prompt_count += 1;
         }
@@ -432,6 +433,15 @@ mod tests {
 
         assert_eq!(summary.user_prompt_count, 2);
         assert_eq!(summary.tool_result_count, 1);
+    }
+
+    #[test]
+    fn test_multi_tool_result_counted_individually() {
+        // A single user message carrying two parallel tool results
+        let multi_result = r#"{"type":"user","uuid":"u3","timestamp":"2026-01-01T00:00:02Z","sessionId":"sess1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok","is_error":false},{"type":"tool_result","tool_use_id":"t2","content":"ok","is_error":false}]}}"#;
+        let summary = parse_session_entries(multi_result);
+        assert_eq!(summary.tool_result_count, 2);
+        assert_eq!(summary.user_prompt_count, 0);
     }
 
     #[test]

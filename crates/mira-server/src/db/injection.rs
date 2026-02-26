@@ -160,7 +160,7 @@ pub fn count_tracked_sessions(
     project_id: Option<i64>,
 ) -> Result<u64> {
     let mut sql = String::from(
-        "SELECT COUNT(DISTINCT session_id) FROM context_injections WHERE session_id IS NOT NULL",
+        "SELECT COUNT(DISTINCT session_id) FROM context_injections WHERE session_id IS NOT NULL AND session_id != ''",
     );
 
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();

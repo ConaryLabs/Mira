@@ -156,7 +156,7 @@ pub fn run(
 /// Accepts:
 ///   - A path to a .jsonl file
 ///   - A session ID (UUID)
-///   - None (uses most recent session in the current project)
+///   - None (uses most recent session for the current working directory)
 fn resolve_session(session: Option<String>) -> Result<(PathBuf, String)> {
     if let Some(ref s) = session {
         // Check if it's a file path
@@ -178,26 +178,28 @@ fn resolve_session(session: Option<String>) -> Result<(PathBuf, String)> {
         bail!("Could not find session JSONL for: {s}");
     }
 
-    // No argument: find most recent JSONL in any project directory
-    let claude_dir = dirs::home_dir()
-        .map(|h| h.join(".claude/projects"))
-        .filter(|p| p.exists());
+    // No argument: find most recent JSONL scoped to the current working directory.
+    // Claude Code stores sessions in ~/.claude/projects/<slug>/ where slug is
+    // derived from the absolute CWD path (e.g. /home/user/Mira -> -home-user-Mira).
+    let cwd = std::env::current_dir().ok();
+    let project_dir = cwd.as_ref().and_then(|cwd| {
+        // Claude Code slug: replace '/' with '-', keeping the leading dash
+        // e.g. /home/peter/Mira -> -home-peter-Mira
+        let slug = cwd.to_string_lossy().replace('/', "-");
+        let dir = dirs::home_dir()?.join(".claude/projects").join(&*slug);
+        if dir.exists() { Some(dir) } else { None }
+    });
 
-    if let Some(claude_dir) = claude_dir {
+    if let Some(project_dir) = project_dir {
         let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
 
-        for project_dir in std::fs::read_dir(&claude_dir)?.flatten() {
-            if !project_dir.file_type()?.is_dir() {
-                continue;
-            }
-            for file in std::fs::read_dir(project_dir.path())?.flatten() {
-                let fpath = file.path();
-                if fpath.extension().is_some_and(|e| e == "jsonl") {
-                    if let Ok(meta) = fpath.metadata() {
-                        if let Ok(modified) = meta.modified() {
-                            if newest.as_ref().is_none_or(|(_, t)| modified > *t) {
-                                newest = Some((fpath, modified));
-                            }
+        for file in std::fs::read_dir(&project_dir)?.flatten() {
+            let fpath = file.path();
+            if fpath.extension().is_some_and(|e| e == "jsonl") {
+                if let Ok(meta) = fpath.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        if newest.as_ref().is_none_or(|(_, t)| modified > *t) {
+                            newest = Some((fpath, modified));
                         }
                     }
                 }

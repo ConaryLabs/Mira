@@ -4,7 +4,7 @@
 
 use super::parser::{self, SessionSummary, TurnSummary};
 use std::collections::HashMap;
-use std::io::{self, BufRead, Seek, SeekFrom};
+use std::io::{self, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
@@ -286,24 +286,31 @@ async fn read_new_entries(watched: &mut WatchedFile) -> io::Result<()> {
         }
 
         file.seek(SeekFrom::Start(offset))?;
-        let reader = io::BufReader::new(&file);
-        let mut lines = Vec::new();
-        let mut bytes_read: u64 = 0;
+        let mut raw = String::new();
+        std::io::Read::read_to_string(&mut file, &mut raw)?;
 
-        for line_result in reader.lines() {
-            match line_result {
-                Ok(line) => {
-                    // +1 for the newline character
-                    bytes_read += line.len() as u64 + 1;
-                    if !line.trim().is_empty() {
-                        lines.push(line);
-                    }
-                }
-                Err(_) => break,
+        // Only advance offset through complete lines (terminated by '\n').
+        // A partial last line (no trailing newline) means the writer hasn't
+        // finished flushing -- leave it for the next read cycle.
+        let mut lines = Vec::new();
+        let mut committed_bytes: u64 = 0;
+
+        for line in raw.split('\n') {
+            // The last element after split is either "" (if raw ends with \n)
+            // or a partial unterminated line. Either way, don't count it.
+            let line_with_newline = line.len() as u64 + 1; // +1 for '\n'
+            if committed_bytes + line_with_newline > raw.len() as u64 {
+                // This is the last segment and there's no trailing '\n' for it
+                break;
+            }
+            committed_bytes += line_with_newline;
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                lines.push(trimmed.to_string());
             }
         }
 
-        Ok((lines, offset + bytes_read))
+        Ok((lines, offset + committed_bytes))
     })
     .await
     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
@@ -483,6 +490,46 @@ mod tests {
         assert_eq!(watched.summary.user_prompt_count, 2);
         assert_eq!(watched.summary.total_output_tokens(), 80);
         assert_eq!(*watched.summary.tool_calls.get("Grep").unwrap_or(&0), 1);
+    }
+
+    #[tokio::test]
+    async fn test_partial_line_not_consumed() {
+        // Write two complete lines + one partial (no trailing newline)
+        let mut tmpfile = NamedTempFile::new().expect("create temp file");
+        writeln!(tmpfile, "{}", make_user_line()).expect("write");
+        writeln!(tmpfile, "{}", make_assistant_line(10, 50, None)).expect("write");
+        // Write partial line WITHOUT trailing newline
+        write!(tmpfile, "{}", make_assistant_line(5, 30, Some("Grep"))).expect("write");
+        tmpfile.flush().expect("flush");
+
+        let initial_len = {
+            // Only count the two complete lines
+            let full = format!("{}\n{}\n", make_user_line(), make_assistant_line(10, 50, None));
+            full.len() as u64
+        };
+
+        let mut watched = WatchedFile {
+            path: tmpfile.path().to_path_buf(),
+            byte_offset: initial_len,
+            summary: parser::parse_session_file(tmpfile.path()).expect("parse"),
+        };
+
+        // The partial line should NOT be consumed yet
+        // (initial full parse may have read it, but incremental should not advance past it)
+        let offset_before = watched.byte_offset;
+        read_new_entries(&mut watched).await.expect("read");
+        // Offset should NOT advance past the partial line
+        assert_eq!(watched.byte_offset, offset_before,
+            "offset should not advance past unterminated partial line");
+
+        // Now complete the line
+        writeln!(tmpfile).expect("write newline");
+        tmpfile.flush().expect("flush");
+
+        read_new_entries(&mut watched).await.expect("read");
+        // NOW the line should be consumed
+        assert_eq!(watched.summary.turn_count(), 2 + 1,
+            "completed line should now be parsed (initial 2 from full parse + 1 new)");
     }
 
     #[tokio::test]
