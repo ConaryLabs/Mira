@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mira": {
+      "command": "./plugin/bin/mira-wrapper",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}

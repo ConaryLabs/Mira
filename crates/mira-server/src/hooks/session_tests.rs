@@ -821,13 +821,19 @@ async fn record_hook_outcome_tracks_failures() {
             stats["last_error"], "connection timeout",
             "last_error should be set on failure"
         );
-        assert_eq!(stats["last_latency_ms"], 50, "latency should be from last call");
+        assert_eq!(
+            stats["last_latency_ms"], 50,
+            "latency should be from last call"
+        );
 
         // Third: another success -- should preserve last_error from previous failure
         record_hook_outcome_on_conn(conn, "FailHook", true, 5, None);
         let stats2 = read_hook_health(conn, "FailHook");
         assert_eq!(stats2["runs"], 3);
-        assert_eq!(stats2["failures"], 1, "failures should not increment on success");
+        assert_eq!(
+            stats2["failures"], 1,
+            "failures should not increment on success"
+        );
         assert_eq!(
             stats2["last_error"], "connection timeout",
             "success should preserve previous last_error"

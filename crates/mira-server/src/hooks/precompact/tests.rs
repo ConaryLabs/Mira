@@ -1510,18 +1510,12 @@ fn merge_preserves_user_intent_from_first() {
 #[test]
 fn merge_deduplicates_decisions() {
     let old = serde_json::to_value(CompactionContext {
-        decisions: vec![
-            "use builder pattern".into(),
-            "use SQLite".into(),
-        ],
+        decisions: vec!["use builder pattern".into(), "use SQLite".into()],
         ..Default::default()
     })
     .unwrap();
     let new = serde_json::to_value(CompactionContext {
-        decisions: vec![
-            "use SQLite".into(),
-            "use async runtime".into(),
-        ],
+        decisions: vec!["use SQLite".into(), "use async runtime".into()],
         ..Default::default()
     })
     .unwrap();

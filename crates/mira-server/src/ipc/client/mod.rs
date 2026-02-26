@@ -326,21 +326,26 @@ mod tests {
         let client = HookClient {
             inner: Backend::Unavailable,
         };
-        assert!(client.is_unavailable(), "Unavailable backend must return true");
-        assert!(!client.is_ipc(), "Unavailable backend must not report as IPC");
+        assert!(
+            client.is_unavailable(),
+            "Unavailable backend must return true"
+        );
+        assert!(
+            !client.is_ipc(),
+            "Unavailable backend must not report as IPC"
+        );
     }
 
     #[tokio::test]
     async fn is_unavailable_returns_false_for_direct_backend() {
         let db_dir = tempfile::tempdir().unwrap();
         let db_path = db_dir.path().join("test.db");
-        let pool = Arc::new(
-            DatabasePool::open_hook(&db_path)
-                .await
-                .unwrap(),
-        );
+        let pool = Arc::new(DatabasePool::open_hook(&db_path).await.unwrap());
         let client = HookClient::from_pool(pool);
-        assert!(!client.is_unavailable(), "Direct backend must not be unavailable");
+        assert!(
+            !client.is_unavailable(),
+            "Direct backend must not be unavailable"
+        );
         assert!(!client.is_ipc(), "Direct backend must not report as IPC");
     }
 }

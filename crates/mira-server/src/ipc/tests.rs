@@ -531,7 +531,11 @@ async fn test_save_compaction_context_basic() {
         }),
     };
     let resp = send_request(&mut reader, &mut writer, &req).await;
-    assert!(resp.ok, "save_compaction_context should succeed: {:?}", resp.error);
+    assert!(
+        resp.ok,
+        "save_compaction_context should succeed: {:?}",
+        resp.error
+    );
 
     // Verify the snapshot was stored correctly
     let snapshot_str: String = pool_verify
@@ -656,7 +660,10 @@ async fn test_save_compaction_context_merges_on_second_call() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert!(issues.contains(&"issue A"), "should keep issue A from first call");
+    assert!(
+        issues.contains(&"issue A"),
+        "should keep issue A from first call"
+    );
 
     // pending_tasks: first had none, second had "task B"
     let tasks: Vec<&str> = cc["pending_tasks"]
@@ -665,7 +672,10 @@ async fn test_save_compaction_context_merges_on_second_call() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert!(tasks.contains(&"task B"), "should add task B from second call");
+    assert!(
+        tasks.contains(&"task B"),
+        "should add task B from second call"
+    );
 
     // user_intent: merge keeps the FIRST one (original intent)
     assert_eq!(
@@ -683,8 +693,7 @@ async fn test_save_compaction_context_preserves_other_snapshot_fields() {
     let pool_verify = pool.clone();
 
     pool.interact(move |conn| {
-        crate::db::create_session_sync(conn, "ctx-preserve", Some(project_id))
-            .map_err(Into::into)
+        crate::db::create_session_sync(conn, "ctx-preserve", Some(project_id)).map_err(Into::into)
     })
     .await
     .unwrap();
@@ -723,7 +732,11 @@ async fn test_save_compaction_context_preserves_other_snapshot_fields() {
         }),
     };
     let resp = send_request(&mut reader, &mut writer, &req).await;
-    assert!(resp.ok, "save_compaction_context should succeed: {:?}", resp.error);
+    assert!(
+        resp.ok,
+        "save_compaction_context should succeed: {:?}",
+        resp.error
+    );
 
     // Verify the pre-existing fields survived
     let snapshot_str: String = pool_verify

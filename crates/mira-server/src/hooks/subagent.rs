@@ -1110,7 +1110,10 @@ mod tests {
     fn findings_extracts_actionable_section() {
         let output = "## Summary\n\nOverview here.\n\n## Actionable Items\n\n1. Fix the auth bypass\n2. Add rate limiting\n3. Update dependencies\n\n## Appendix\n\nExtra details.";
         let findings = extract_findings_from_output(output);
-        assert!(findings.len() >= 2, "should extract both Summary and Actionable");
+        assert!(
+            findings.len() >= 2,
+            "should extract both Summary and Actionable"
+        );
         let actionable = findings
             .iter()
             .find(|f| f.contains("Actionable"))
@@ -1123,7 +1126,10 @@ mod tests {
     fn findings_extracts_individual_finding_without_colon_or_dashes() {
         let output = "## Overview\n\nSome text\n\n### Finding 1\n\nThis finding has no colon or dashes in its header.\nIt should still be extracted.\n\n### Finding 2\n\nAnother finding without punctuation.";
         let findings = extract_findings_from_output(output);
-        assert!(!findings.is_empty(), "findings with plain headers should be extracted");
+        assert!(
+            !findings.is_empty(),
+            "findings with plain headers should be extracted"
+        );
         assert!(findings[0].contains("Finding 1"));
     }
 }
