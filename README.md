@@ -13,12 +13,19 @@ across sessions. No cloud services, no accounts -- one binary, two database file
 
 ## Install
 
+**Claude Code:**
 ```bash
 claude plugin install mira
 mira setup  # optional: configure API keys for semantic search
 ```
 
-Start a new Claude Code session. Mira begins injecting context automatically.
+**Gemini CLI:**
+```bash
+gemini mcp add mira --command mira-wrapper --args serve
+gemini skills link /path/to/mira/plugin/skills
+```
+
+Start a new session. Mira begins injecting context automatically via lifecycle hooks.
 
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for alternative methods (cargo install, manual binary, build from source).
 
@@ -50,7 +57,7 @@ Mira runs as a local process spawned by Claude Code over stdio. Two databases: o
 
 ## Quick Start
 
-After installing, these slash commands are available in Claude Code:
+After installing, Mira's slash commands are available natively in Claude Code and Gemini CLI:
 
 ```
 /mira:recap           -- session context, preferences, and active goals
