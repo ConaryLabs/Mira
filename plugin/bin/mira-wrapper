@@ -21,8 +21,9 @@ REPO="ConaryLabs/Mira"
 MIRA_HOME="${HOME}/.mira"
 BIN_DIR="${MIRA_HOME}/bin"
 MIRA_EXE_EXT=""
-case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) MIRA_EXE_EXT=".exe" ;;
+OS_NAME="$(uname -s 2>/dev/null || echo "Windows")"
+case "$OS_NAME" in
+    MINGW*|MSYS*|CYGWIN*|Windows*) MIRA_EXE_EXT=".exe" ;;
 esac
 MIRA_BIN="${BIN_DIR}/mira${MIRA_EXE_EXT}"
 VERSION_FILE="${BIN_DIR}/.mira-version"
@@ -57,7 +58,7 @@ fi
 
 # --- Fast path: binary exists, version known, update cache fresh ---
 if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ]; then
-    installed="$(cat "$VERSION_FILE")"
+    installed="$(cat "$VERSION_FILE" 2>/dev/null || echo "")"
     # If pinned, only accept exact match
     if [ -n "${MIRA_VERSION_PIN:-}" ]; then
         if [ "$installed" = "$MIRA_VERSION" ]; then
@@ -67,7 +68,7 @@ if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ]; then
         # Accept any installed version if update cache is fresh
         if [ -f "$UPDATE_CACHE" ]; then
             file_mtime=$(stat -c %Y "$UPDATE_CACHE" 2>/dev/null || stat -f %m "$UPDATE_CACHE" 2>/dev/null || date -r "$UPDATE_CACHE" +%s 2>/dev/null || echo 0)
-            cache_age=$(( $(date +%s) - file_mtime ))
+            cache_age=$(( $(date +%s 2>/dev/null || echo "$file_mtime") - file_mtime ))
             if [ "$cache_age" -lt "$CACHE_TTL" ]; then
                 exec "$MIRA_BIN" "$@"
             fi
@@ -108,17 +109,19 @@ get_latest_version() {
 
 # Detect platform
 detect_platform() {
-    case "$(uname -s)" in
+    _os_name="$(uname -s 2>/dev/null || echo "Windows")"
+    case "$_os_name" in
         Linux*)                    os="unknown-linux-gnu" ;;
         Darwin*)                   os="apple-darwin" ;;
-        MINGW*|MSYS*|CYGWIN*)     os="pc-windows-msvc" ;;
-        *)       log "[mira] Unsupported OS: $(uname -s). Install manually: https://github.com/${REPO}"; exit 1 ;;
+        MINGW*|MSYS*|CYGWIN*|Windows*)     os="pc-windows-msvc" ;;
+        *)       log "[mira] Unsupported OS: $_os_name. Install manually: https://github.com/${REPO}"; exit 1 ;;
     esac
 
-    case "$(uname -m)" in
+    _arch_name="$(uname -m 2>/dev/null || echo "x86_64")"
+    case "$_arch_name" in
         x86_64|amd64)   arch="x86_64" ;;
         arm64|aarch64)  arch="aarch64" ;;
-        *) log "[mira] Unsupported architecture: $(uname -m)"; exit 1 ;;
+        *) log "[mira] Unsupported architecture: $_arch_name"; exit 1 ;;
     esac
 
     printf '%s' "${arch}-${os}"
@@ -149,7 +152,7 @@ fetch() {
 # Resolve target version
 installed=""
 if [ -f "$VERSION_FILE" ]; then
-    installed="$(cat "$VERSION_FILE")"
+    installed="$(cat "$VERSION_FILE" 2>/dev/null || echo "")"
 fi
 
 target="$MIRA_VERSION"  # Start with floor
@@ -283,7 +286,7 @@ mv -f "${VERSION_FILE}.tmp" "$VERSION_FILE"
 touch "$UPDATE_CACHE"
 
 # Strip macOS quarantine attribute if present
-case "$(uname -s)" in
+case "$(uname -s 2>/dev/null || echo "Windows")" in
     Darwin*) xattr -d com.apple.quarantine "$MIRA_BIN" 2>/dev/null || true ;;
 esac
 
@@ -294,9 +297,9 @@ install_jq() {
     fi
     local jq_version="1.7.1" jq_url="" jq_expected_hash="" jq_bin="${BIN_DIR}/jq"
     # URLs and SHA256 checksums for jq 1.7.1 (from jqlang/jq releases)
-    case "$(uname -s)" in
+    case "$(uname -s 2>/dev/null || echo "Windows")" in
         Linux*)
-            case "$(uname -m)" in
+            case "$(uname -m 2>/dev/null || echo "x86_64")" in
                 x86_64|amd64)
                     jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-linux-amd64"
                     jq_expected_hash="5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5" ;;
@@ -305,7 +308,7 @@ install_jq() {
                     jq_expected_hash="4dd2d8a0661df0b22f1bb9a1f9830f06b6f3b8f7d91211a1ef5d7c4f06a8b4a5" ;;
             esac ;;
         Darwin*)
-            case "$(uname -m)" in
+            case "$(uname -m 2>/dev/null || echo "x86_64")" in
                 x86_64|amd64)
                     jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-macos-amd64"
                     jq_expected_hash="4155822bbf5ea90f5c79cf254665975eb4274d426d0709770c21774de5407443" ;;
@@ -313,7 +316,7 @@ install_jq() {
                     jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-macos-arm64"
                     jq_expected_hash="0bbe619e663e0de2c550be2fe0d240d076799d6f8a652b70fa04aea8a8362e8a" ;;
             esac ;;
-        MINGW*|MSYS*|CYGWIN*)
+        MINGW*|MSYS*|CYGWIN*|Windows*)
             jq_url="https://github.com/jqlang/jq/releases/download/jq-${jq_version}/jq-windows-amd64.exe"
             jq_expected_hash="7451fbbf37feffb9bf262bd97c54f0da558c63f0748e64152dd87b0a07b6d6ab"
             jq_bin="${BIN_DIR}/jq.exe" ;;
@@ -380,7 +383,7 @@ setup_statusline() {
     if ! mkdir "$lockdir" 2>/dev/null; then
         local lock_mtime
         lock_mtime=$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)
-        local lock_age=$(( $(date +%s) - lock_mtime ))
+        local lock_age=$(( $(date +%s 2>/dev/null || echo "$lock_mtime") - lock_mtime ))
         if [ "$lock_age" -gt 60 ]; then
             rmdir "$lockdir" 2>/dev/null || true
             mkdir "$lockdir" 2>/dev/null || return
