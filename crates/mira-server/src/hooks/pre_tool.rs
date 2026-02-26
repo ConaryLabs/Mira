@@ -345,7 +345,11 @@ pub async fn run() -> Result<()> {
                 &db_path,
                 &crate::db::injection::InjectionRecord {
                     hook_name: "PreToolUse".to_string(),
-                    session_id: if pre_input.session_id.is_empty() { None } else { Some(pre_input.session_id.clone()) },
+                    session_id: if pre_input.session_id.is_empty() {
+                        None
+                    } else {
+                        Some(pre_input.session_id.clone())
+                    },
                     project_id: None,
                     chars_injected: context.len(),
                     sources_kept: vec!["symbol_hints".to_string()],
@@ -491,7 +495,11 @@ async fn handle_edit_write_patterns(
             &db_path,
             &crate::db::injection::InjectionRecord {
                 hook_name: "PreToolUse".to_string(),
-                session_id: if pre_input.session_id.is_empty() { None } else { Some(pre_input.session_id.clone()) },
+                session_id: if pre_input.session_id.is_empty() {
+                    None
+                } else {
+                    Some(pre_input.session_id.clone())
+                },
                 project_id: Some(project_id),
                 chars_injected: context.len(),
                 sources_kept: vec!["change_patterns".to_string()],

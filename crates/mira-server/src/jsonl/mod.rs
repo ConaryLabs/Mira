@@ -6,12 +6,12 @@ pub mod correlation;
 pub mod parser;
 pub mod watcher;
 
+pub use correlation::CorrelatedSession;
 pub use parser::{
-    parse_session_file, parse_session_entries, SessionSummary, TurnSummary,
-    TokenUsage, ToolCallSummary, EntryType,
+    EntryType, SessionSummary, TokenUsage, ToolCallSummary, TurnSummary, parse_session_entries,
+    parse_session_file,
 };
 pub use watcher::{
-    SessionWatcherHandle, SessionSnapshot, find_session_jsonl,
-    spawn_watcher, spawn_watcher_for_path,
+    SessionSnapshot, SessionWatcherHandle, find_session_jsonl, spawn_watcher,
+    spawn_watcher_for_path,
 };
-pub use correlation::CorrelatedSession;

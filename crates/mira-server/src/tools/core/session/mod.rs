@@ -207,15 +207,17 @@ async fn get_injection_report<C: ToolContext>(
 
             if let Some(sid) = &session_id {
                 // Session-specific report
-                let stats =
-                    crate::db::injection::get_injection_stats_for_session(conn, sid)
-                        .map_err(|e| e.to_string())?;
+                let stats = crate::db::injection::get_injection_stats_for_session(conn, sid)
+                    .map_err(|e| e.to_string())?;
 
                 if stats.total_injections == 0 {
                     return Ok::<_, String>("No injection data for this session.".to_string());
                 }
 
-                lines.push(format!("Session Injection Report ({})", &sid[..sid.len().min(8)]));
+                lines.push(format!(
+                    "Session Injection Report ({})",
+                    &sid[..sid.len().min(8)]
+                ));
                 lines.push(format!("  Injections: {}", stats.total_injections));
                 lines.push(format!("  Total chars: {}", stats.total_chars));
                 lines.push(format!("  Avg chars/injection: {:.0}", stats.avg_chars));
@@ -238,20 +240,16 @@ async fn get_injection_report<C: ToolContext>(
                 ));
             } else {
                 // Cumulative report
-                let stats = crate::db::injection::get_injection_stats_cumulative(
-                    conn,
-                    project_id,
-                    None,
-                )
-                .map_err(|e| e.to_string())?;
+                let stats =
+                    crate::db::injection::get_injection_stats_cumulative(conn, project_id, None)
+                        .map_err(|e| e.to_string())?;
 
                 if stats.total_injections == 0 {
                     return Ok::<_, String>("No injection data recorded yet.".to_string());
                 }
 
-                let sessions =
-                    crate::db::injection::count_tracked_sessions(conn, project_id)
-                        .map_err(|e| e.to_string())?;
+                let sessions = crate::db::injection::count_tracked_sessions(conn, project_id)
+                    .map_err(|e| e.to_string())?;
 
                 lines.push("Cumulative Injection Report".to_string());
                 lines.push(format!("  Sessions tracked: {}", sessions));

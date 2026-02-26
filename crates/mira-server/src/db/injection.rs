@@ -2,7 +2,7 @@
 // Database operations for context injection tracking
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// Record for a single context injection event.
 #[derive(Debug, Clone)]
@@ -155,10 +155,7 @@ pub fn get_injection_stats_cumulative(
 }
 
 /// Count distinct sessions that have injection records
-pub fn count_tracked_sessions(
-    conn: &Connection,
-    project_id: Option<i64>,
-) -> Result<u64> {
+pub fn count_tracked_sessions(conn: &Connection, project_id: Option<i64>) -> Result<u64> {
     let mut sql = String::from(
         "SELECT COUNT(DISTINCT session_id) FROM context_injections WHERE session_id IS NOT NULL AND session_id != ''",
     );

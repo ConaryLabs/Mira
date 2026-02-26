@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.3] - 2026-02-25
+
+### Added
+- **Hook health monitoring** -- Every hook execution now records success/failure/latency to `system_observations`. Silent failures become visible via `mira status`.
+- **context_injections retention** -- Added to data retention rules with 30-day default (matching tool_history cadence).
+
+### Fixed
+- **Watcher binary data safety** -- Non-UTF-8 content (binary tool output) no longer stalls the JSONL watcher. Uses byte-level reads with per-line UTF-8 validation.
+- **Watcher truncation double-count** -- Truncated JSONL files now reset the running summary instead of re-counting all entries.
+- **Watcher unbounded memory** -- Capped read buffer at 2MB per cycle and retained turns at 100 in the watcher's running summary.
+- **Calibration integer division bug** -- `chars_to_tokens` fallback used integer division instead of float, underestimating token counts.
+- **Calibration NaN/infinity guard** -- `chars_to_tokens` now handles NaN and infinity inputs safely.
+- **Calibration dead code** -- Replaced unused `samples` vec with a simple qualifying turn counter in `calibrate_from_summary`.
+- **Analyze CLI comma formatting** -- Large token numbers now display with comma separators for readability.
+- **Analyze CLI parse errors display** -- `parse_errors` count is now shown when non-zero.
+- **Analyze CLI --tools flag** -- Tool breakdown is now opt-in via `--tools` flag instead of always displayed.
+- **Analyze CLI path validation** -- Non-.jsonl files now produce a clear error instead of falling through to session ID lookup.
+- **Parser trait shadow** -- Renamed `EntryType::from_str` to `EntryType::parse` to avoid shadowing `std::str::FromStr`.
+- **Collapsible if warnings** -- Fixed all clippy collapsible-if warnings across JSONL and hook modules.
+
+### Removed
+- **Deprecated CodeAction variants** -- Removed `patterns`, `tech_debt`, `conventions`, `debt_delta` from internal `CodeAction` enum. These were already rejected at the MCP schema level; the dead match arms and enum variants are now gone.
+
+---
+
 ## [0.9.2] - 2026-02-25
 
 ### Added

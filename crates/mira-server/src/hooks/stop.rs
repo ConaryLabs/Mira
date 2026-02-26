@@ -84,10 +84,8 @@ pub async fn run() -> Result<()> {
     if !stop_input.session_id.is_empty() {
         let db_path = crate::hooks::get_db_path();
         if let Ok(conn) = rusqlite::Connection::open(&db_path)
-            && let Ok(stats) = crate::db::injection::get_injection_stats_for_session(
-                &conn,
-                &stop_input.session_id,
-            )
+            && let Ok(stats) =
+                crate::db::injection::get_injection_stats_for_session(&conn, &stop_input.session_id)
             && stats.total_injections > 0
         {
             let avg_latency = stats

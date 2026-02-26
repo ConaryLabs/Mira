@@ -126,7 +126,12 @@ const HOOK_PERF_THRESHOLD_MS: u128 = 100;
 /// Stores a JSON counter in `system_observations` with key `hook_health:{name}`.
 /// Each call increments `runs` (and `failures` on error), updates `last_run_at`,
 /// and tracks `last_error` for debugging.
-pub fn record_hook_outcome(hook_name: &str, success: bool, latency_ms: u128, error_msg: Option<&str>) {
+pub fn record_hook_outcome(
+    hook_name: &str,
+    success: bool,
+    latency_ms: u128,
+    error_msg: Option<&str>,
+) {
     let db_path = get_db_path();
     let Ok(conn) = rusqlite::Connection::open(&db_path) else {
         return;
@@ -149,7 +154,9 @@ pub fn record_hook_outcome(hook_name: &str, success: bool, latency_ms: u128, err
                 (
                     v.get("runs").and_then(|v| v.as_u64()).unwrap_or(0),
                     v.get("failures").and_then(|v| v.as_u64()).unwrap_or(0),
-                    v.get("last_error").and_then(|v| v.as_str()).map(String::from),
+                    v.get("last_error")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                 )
             } else {
                 (0, 0, None)

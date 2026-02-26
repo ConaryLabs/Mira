@@ -230,9 +230,7 @@ async fn run_watcher(
 
         // Watch the parent directory (the file might not exist at the exact path yet
         // if we're racing with Claude Code's first write)
-        let watch_path = path
-            .parent()
-            .unwrap_or(&path);
+        let watch_path = path.parent().unwrap_or(&path);
         watcher
             .watch(watch_path, notify::RecursiveMode::NonRecursive)
             .map_err(io::Error::other)?;
@@ -449,7 +447,10 @@ mod tests {
 
     fn make_assistant_line(input: u64, output: u64, tool: Option<&str>) -> String {
         let content = if let Some(name) = tool {
-            format!(r#"[{{"type":"tool_use","name":"{}","id":"t1","input":{{}}}}]"#, name)
+            format!(
+                r#"[{{"type":"tool_use","name":"{}","id":"t1","input":{{}}}}]"#,
+                name
+            )
         } else {
             r#"[{"type":"text","text":"hi"}]"#.to_string()
         };
@@ -567,7 +568,11 @@ mod tests {
 
         let initial_len = {
             // Only count the two complete lines
-            let full = format!("{}\n{}\n", make_user_line(), make_assistant_line(10, 50, None));
+            let full = format!(
+                "{}\n{}\n",
+                make_user_line(),
+                make_assistant_line(10, 50, None)
+            );
             full.len() as u64
         };
 
@@ -582,8 +587,10 @@ mod tests {
         let offset_before = watched.byte_offset;
         read_new_entries(&mut watched).await.expect("read");
         // Offset should NOT advance past the partial line
-        assert_eq!(watched.byte_offset, offset_before,
-            "offset should not advance past unterminated partial line");
+        assert_eq!(
+            watched.byte_offset, offset_before,
+            "offset should not advance past unterminated partial line"
+        );
 
         // Now complete the line
         writeln!(tmpfile).expect("write newline");
@@ -591,8 +598,11 @@ mod tests {
 
         read_new_entries(&mut watched).await.expect("read");
         // NOW the line should be consumed
-        assert_eq!(watched.summary.turn_count(), 2 + 1,
-            "completed line should now be parsed (initial 2 from full parse + 1 new)");
+        assert_eq!(
+            watched.summary.turn_count(),
+            2 + 1,
+            "completed line should now be parsed (initial 2 from full parse + 1 new)"
+        );
     }
 
     #[tokio::test]
@@ -630,16 +640,27 @@ mod tests {
         read_new_entries(&mut watched).await.expect("read");
 
         // Summary should reflect ONLY the new file content, not old + new (no double-count)
-        assert_eq!(watched.summary.turn_count(), 1,
-            "after truncation, should have 1 turn (not 2+1=3)");
-        assert_eq!(watched.summary.user_prompt_count, 1,
-            "after truncation, should have 1 user prompt (not 1+1=2)");
-        assert_eq!(watched.summary.total_output_tokens(), 100,
-            "after truncation, should have 100 output tokens (not 80+100=180)");
+        assert_eq!(
+            watched.summary.turn_count(),
+            1,
+            "after truncation, should have 1 turn (not 2+1=3)"
+        );
+        assert_eq!(
+            watched.summary.user_prompt_count, 1,
+            "after truncation, should have 1 user prompt (not 1+1=2)"
+        );
+        assert_eq!(
+            watched.summary.total_output_tokens(),
+            100,
+            "after truncation, should have 100 output tokens (not 80+100=180)"
+        );
         assert_eq!(*watched.summary.tool_calls.get("Edit").unwrap_or(&0), 1);
         // Old tool call should be gone after reset
-        assert_eq!(*watched.summary.tool_calls.get("Grep").unwrap_or(&0), 0,
-            "old tool calls should be cleared after truncation");
+        assert_eq!(
+            *watched.summary.tool_calls.get("Grep").unwrap_or(&0),
+            0,
+            "old tool calls should be cleared after truncation"
+        );
     }
 
     #[tokio::test]
@@ -653,7 +674,9 @@ mod tests {
         tmpfile.write_all(b"\n").expect("write newline");
 
         // Write a line with invalid UTF-8 bytes (simulating binary tool output)
-        tmpfile.write_all(b"{\"type\":\"result\",\"data\":\"\xff\xfe\xfd\"}\n").expect("write binary");
+        tmpfile
+            .write_all(b"{\"type\":\"result\",\"data\":\"\xff\xfe\xfd\"}\n")
+            .expect("write binary");
 
         // Write another valid assistant line
         let asst_line = make_assistant_line(10, 50, None);
@@ -669,7 +692,9 @@ mod tests {
         };
 
         // Should not error -- non-UTF-8 lines are skipped
-        read_new_entries(&mut watched).await.expect("read should not fail on binary data");
+        read_new_entries(&mut watched)
+            .await
+            .expect("read should not fail on binary data");
 
         // Should have parsed the valid user and assistant lines
         assert_eq!(watched.summary.user_prompt_count, 1);
@@ -677,8 +702,10 @@ mod tests {
 
         // Byte offset should have advanced past all three lines
         let expected_len = tmpfile.as_file().metadata().expect("meta").len();
-        assert_eq!(watched.byte_offset, expected_len,
-            "byte offset should advance past all complete lines including non-UTF-8 ones");
+        assert_eq!(
+            watched.byte_offset, expected_len,
+            "byte offset should advance past all complete lines including non-UTF-8 ones"
+        );
     }
 
     #[test]

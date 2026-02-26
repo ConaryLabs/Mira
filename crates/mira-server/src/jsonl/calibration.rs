@@ -136,7 +136,8 @@ pub fn calibrate_from_file(path: &std::path::Path) -> std::io::Result<Calibratio
 
             // Get output tokens for this turn
             if let Some(usage) = message.get("usage") {
-                let out_tokens = usage.get("output_tokens")
+                let out_tokens = usage
+                    .get("output_tokens")
                     .and_then(|t| t.as_u64())
                     .unwrap_or(0);
 
@@ -192,7 +193,7 @@ fn estimate_from_content_mix(summary: &SessionSummary) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jsonl::parser::{SessionSummary, TurnSummary, TokenUsage};
+    use crate::jsonl::parser::{SessionSummary, TokenUsage, TurnSummary};
 
     fn make_turn(input: u64, output: u64, cache_create: u64, tools: Vec<&str>) -> TurnSummary {
         TurnSummary {
@@ -249,7 +250,9 @@ mod tests {
     fn test_calibrate_code_heavy_session() {
         let mut summary = SessionSummary::default();
         for _ in 0..10 {
-            summary.turns.push(make_turn(100, 200, 500, vec!["Read", "Bash"]));
+            summary
+                .turns
+                .push(make_turn(100, 200, 500, vec!["Read", "Bash"]));
         }
         summary.tool_calls.insert("Read".to_string(), 10);
         summary.tool_calls.insert("Bash".to_string(), 10);
@@ -309,8 +312,7 @@ mod tests {
 
     #[test]
     fn test_calibrate_from_real_file() {
-        let jsonl_dir = dirs::home_dir()
-            .map(|h| h.join(".claude/projects/-home-peter-Mira"));
+        let jsonl_dir = dirs::home_dir().map(|h| h.join(".claude/projects/-home-peter-Mira"));
 
         if let Some(dir) = jsonl_dir {
             if dir.exists() {
@@ -320,7 +322,9 @@ mod tests {
                     .flatten()
                     .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
                     .collect();
-                files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+                files.sort_by_key(|e| {
+                    std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
+                });
 
                 if let Some(file) = files.first() {
                     let cal = calibrate_from_file(&file.path()).expect("should calibrate");

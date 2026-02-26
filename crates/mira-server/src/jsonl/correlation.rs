@@ -158,16 +158,28 @@ impl CorrelatedSession {
         report.push_str(&format!("  Input tokens: {}\n", self.total_input_tokens));
         report.push_str(&format!("  Output tokens: {}\n", self.total_output_tokens));
         report.push_str(&format!("  Cache read: {}\n", self.total_cache_read_tokens));
-        report.push_str(&format!("  Cache creation: {}\n", self.total_cache_creation_tokens));
-        report.push_str(&format!("  Billable input: {}\n", self.total_billable_input));
+        report.push_str(&format!(
+            "  Cache creation: {}\n",
+            self.total_cache_creation_tokens
+        ));
+        report.push_str(&format!(
+            "  Billable input: {}\n",
+            self.total_billable_input
+        ));
         if self.compactions > 0 {
             report.push_str(&format!("  Compactions: {}\n", self.compactions));
         }
 
         report.push_str("\n--- Mira Injections ---\n");
         report.push_str(&format!("  Total injections: {}\n", self.injections));
-        report.push_str(&format!("  Total chars injected: {}\n", self.injected_chars));
-        report.push_str(&format!("  Avg chars/injection: {:.0}\n", self.injected_chars_avg));
+        report.push_str(&format!(
+            "  Total chars injected: {}\n",
+            self.injected_chars
+        ));
+        report.push_str(&format!(
+            "  Avg chars/injection: {:.0}\n",
+            self.injected_chars_avg
+        ));
         report.push_str(&format!("  Deduped: {}\n", self.injections_deduped));
         report.push_str(&format!("  Cached: {}\n", self.injections_cached));
         if let Some(lat) = self.injection_avg_latency_ms {
@@ -216,7 +228,7 @@ mod tests {
         s.last_timestamp = Some("2026-01-01T01:00:00Z".to_string());
 
         // Add turns with usage
-        use crate::jsonl::parser::{TurnSummary, TokenUsage};
+        use crate::jsonl::parser::{TokenUsage, TurnSummary};
         s.turns.push(TurnSummary {
             uuid: None,
             timestamp: None,
@@ -252,7 +264,7 @@ mod tests {
     fn make_stats() -> InjectionStats {
         InjectionStats {
             total_injections: 20,
-            total_chars: 8000,  // ~2000 tokens
+            total_chars: 8000, // ~2000 tokens
             total_deduped: 5,
             total_cached: 3,
             avg_chars: 400.0,
@@ -330,8 +342,7 @@ mod tests {
     #[test]
     fn test_from_file_and_db() {
         // Integration test: use a real JSONL file + test DB
-        let jsonl_dir = dirs::home_dir()
-            .map(|h| h.join(".claude/projects/-home-peter-Mira"));
+        let jsonl_dir = dirs::home_dir().map(|h| h.join(".claude/projects/-home-peter-Mira"));
 
         if let Some(dir) = jsonl_dir {
             if dir.exists() {
@@ -341,7 +352,9 @@ mod tests {
                     .flatten()
                     .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
                     .collect();
-                files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+                files.sort_by_key(|e| {
+                    std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
+                });
 
                 if let Some(file) = files.first() {
                     let conn = crate::db::test_support::setup_test_connection();
@@ -352,11 +365,8 @@ mod tests {
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown");
 
-                    let corr = CorrelatedSession::from_file_and_db(
-                        &path,
-                        &conn,
-                        session_id,
-                    ).expect("should correlate");
+                    let corr = CorrelatedSession::from_file_and_db(&path, &conn, session_id)
+                        .expect("should correlate");
 
                     assert!(corr.api_turns > 0);
                     // No injections in test DB, so injection fields should be zero

@@ -4,8 +4,8 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
-use mira::jsonl::{self, CorrelatedSession};
 use mira::jsonl::calibration;
+use mira::jsonl::{self, CorrelatedSession};
 
 /// Format a number with comma separators (e.g. 1234567 -> "1,234,567")
 fn fmt_num(n: u64) -> String {
@@ -48,14 +48,32 @@ pub fn run(
 
     // Token summary
     println!("--- Token Usage ---");
-    println!("  API turns:        {}", fmt_num(summary.turn_count() as u64));
+    println!(
+        "  API turns:        {}",
+        fmt_num(summary.turn_count() as u64)
+    );
     println!("  User prompts:     {}", fmt_num(summary.user_prompt_count));
     println!("  Tool results:     {}", fmt_num(summary.tool_result_count));
-    println!("  Input tokens:     {}", fmt_num(summary.total_input_tokens()));
-    println!("  Output tokens:    {}", fmt_num(summary.total_output_tokens()));
-    println!("  Cache read:       {}", fmt_num(summary.total_cache_read_tokens()));
-    println!("  Cache creation:   {}", fmt_num(summary.total_cache_creation_tokens()));
-    println!("  Billable input:   {}", fmt_num(summary.total_billable_input()));
+    println!(
+        "  Input tokens:     {}",
+        fmt_num(summary.total_input_tokens())
+    );
+    println!(
+        "  Output tokens:    {}",
+        fmt_num(summary.total_output_tokens())
+    );
+    println!(
+        "  Cache read:       {}",
+        fmt_num(summary.total_cache_read_tokens())
+    );
+    println!(
+        "  Cache creation:   {}",
+        fmt_num(summary.total_cache_creation_tokens())
+    );
+    println!(
+        "  Billable input:   {}",
+        fmt_num(summary.total_billable_input())
+    );
     if summary.compaction_count > 0 {
         println!("  Compactions:      {}", fmt_num(summary.compaction_count));
     }
@@ -69,7 +87,10 @@ pub fn run(
         let mut tools: Vec<_> = summary.tool_calls.iter().collect();
         tools.sort_by(|a, b| b.1.cmp(a.1));
 
-        println!("--- Tool Calls ({} total) ---", fmt_num(summary.total_tool_calls()));
+        println!(
+            "--- Tool Calls ({} total) ---",
+            fmt_num(summary.total_tool_calls())
+        );
         for (name, count) in &tools {
             println!("  {:<20} {}", name, fmt_num(**count));
         }
@@ -85,7 +106,11 @@ pub fn run(
             } else {
                 format!(" [{}]", turn.tool_calls.join(", "))
             };
-            let sidechain = if turn.is_sidechain { " (sidechain)" } else { "" };
+            let sidechain = if turn.is_sidechain {
+                " (sidechain)"
+            } else {
+                ""
+            };
             println!(
                 "  {:>4}. in={:<6} out={:<6} cache_r={:<7} cache_c={:<6}{}{}",
                 i + 1,
@@ -105,7 +130,10 @@ pub fn run(
         Ok(c) => {
             if !c.is_default {
                 println!("--- Calibration ---");
-                println!("  Chars/token:  {:.2} (from {} samples)", c.chars_per_token, c.sample_count);
+                println!(
+                    "  Chars/token:  {:.2} (from {} samples)",
+                    c.chars_per_token, c.sample_count
+                );
                 println!();
             }
             c
@@ -129,7 +157,9 @@ pub fn run(
                         Ok(s) => s,
                         Err(e) => {
                             eprintln!("Warning: Could not query injection stats: {e}");
-                            eprintln!("  (Run the MCP server first to create the context_injections table)");
+                            eprintln!(
+                                "  (Run the MCP server first to create the context_injections table)"
+                            );
                             return Ok(());
                         }
                     };
@@ -144,12 +174,21 @@ pub fn run(
                     println!("--- Mira Injection Correlation ---");
                     println!("  Injections:           {}", fmt_num(corr.injections));
                     println!("  Chars injected:       {}", fmt_num(corr.injected_chars));
-                    println!("  Est. injected tokens: {}", fmt_num(corr.estimated_injected_tokens));
+                    println!(
+                        "  Est. injected tokens: {}",
+                        fmt_num(corr.estimated_injected_tokens)
+                    );
                     if let Some(ratio) = corr.injection_overhead_ratio {
                         println!("  Overhead ratio:       {:.2}%", ratio * 100.0);
                     }
-                    println!("  Deduped:              {}", fmt_num(corr.injections_deduped));
-                    println!("  Cached:               {}", fmt_num(corr.injections_cached));
+                    println!(
+                        "  Deduped:              {}",
+                        fmt_num(corr.injections_deduped)
+                    );
+                    println!(
+                        "  Cached:               {}",
+                        fmt_num(corr.injections_cached)
+                    );
                     if let Some(rate) = corr.dedup_rate {
                         println!("  Dedup rate:           {:.1}%", rate * 100.0);
                     }
@@ -163,7 +202,10 @@ pub fn run(
                 }
             }
         } else {
-            eprintln!("Warning: Mira DB not found at {}, skipping correlation. Run Mira MCP server first.", db_path.display());
+            eprintln!(
+                "Warning: Mira DB not found at {}, skipping correlation. Run Mira MCP server first.",
+                db_path.display()
+            );
         }
     }
 

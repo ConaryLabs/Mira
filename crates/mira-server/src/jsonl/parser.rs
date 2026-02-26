@@ -63,17 +63,25 @@ impl SessionSummary {
 
     /// Sum of all cache-read tokens across turns.
     pub fn total_cache_read_tokens(&self) -> u64 {
-        self.turns.iter().map(|t| t.usage.cache_read_input_tokens).sum()
+        self.turns
+            .iter()
+            .map(|t| t.usage.cache_read_input_tokens)
+            .sum()
     }
 
     /// Sum of all cache-creation tokens across turns.
     pub fn total_cache_creation_tokens(&self) -> u64 {
-        self.turns.iter().map(|t| t.usage.cache_creation_input_tokens).sum()
+        self.turns
+            .iter()
+            .map(|t| t.usage.cache_creation_input_tokens)
+            .sum()
     }
 
     /// Total billable input = input + cache_creation + cache_read.
     pub fn total_billable_input(&self) -> u64 {
-        self.total_input_tokens() + self.total_cache_creation_tokens() + self.total_cache_read_tokens()
+        self.total_input_tokens()
+            + self.total_cache_creation_tokens()
+            + self.total_cache_read_tokens()
     }
 
     /// Total tool calls across all turns.
@@ -334,11 +342,14 @@ fn process_user_entry(entry: &RawEntry, summary: &mut SessionSummary) {
     // A single user message can carry multiple tool_results (parallel tool use).
     // User entries with string content are actual user prompts.
     if let Some(blocks) = message.content.as_array() {
-        let tool_result_count = blocks.iter().filter(|b| {
-            b.get("type")
-                .and_then(|t| t.as_str())
-                .is_some_and(|t| t == "tool_result")
-        }).count();
+        let tool_result_count = blocks
+            .iter()
+            .filter(|b| {
+                b.get("type")
+                    .and_then(|t| t.as_str())
+                    .is_some_and(|t| t == "tool_result")
+            })
+            .count();
         if tool_result_count > 0 {
             summary.tool_result_count += tool_result_count as u64;
         } else {
@@ -358,9 +369,18 @@ fn process_user_entry(entry: &RawEntry, summary: &mut SessionSummary) {
 mod tests {
     use super::*;
 
-    fn make_assistant_entry(input: u64, output: u64, cache_read: u64, cache_create: u64, tool_name: Option<&str>) -> String {
+    fn make_assistant_entry(
+        input: u64,
+        output: u64,
+        cache_read: u64,
+        cache_create: u64,
+        tool_name: Option<&str>,
+    ) -> String {
         let content = if let Some(name) = tool_name {
-            format!(r#"[{{"type":"tool_use","name":"{}","id":"toolu_test","input":{{}}}}]"#, name)
+            format!(
+                r#"[{{"type":"tool_use","name":"{}","id":"toolu_test","input":{{}}}}]"#,
+                name
+            )
         } else {
             r#"[{"type":"text","text":"hello"}]"#.to_string()
         };
@@ -460,8 +480,14 @@ mod tests {
         let data = lines.join("\n");
         let summary = parse_session_entries(&data);
 
-        assert_eq!(summary.first_timestamp, Some("2026-01-01T00:00:01Z".to_string()));
-        assert_eq!(summary.last_timestamp, Some("2026-01-01T00:00:00Z".to_string()));
+        assert_eq!(
+            summary.first_timestamp,
+            Some("2026-01-01T00:00:01Z".to_string())
+        );
+        assert_eq!(
+            summary.last_timestamp,
+            Some("2026-01-01T00:00:00Z".to_string())
+        );
     }
 
     #[test]
@@ -493,8 +519,7 @@ mod tests {
     #[test]
     fn test_parse_real_file() {
         // Integration test: parse an actual JSONL file if it exists
-        let jsonl_dir = dirs::home_dir()
-            .map(|h| h.join(".claude/projects/-home-peter-Mira"));
+        let jsonl_dir = dirs::home_dir().map(|h| h.join(".claude/projects/-home-peter-Mira"));
 
         if let Some(dir) = jsonl_dir {
             if dir.exists() {
@@ -504,14 +529,22 @@ mod tests {
                     .flatten()
                     .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
                     .collect();
-                files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+                files.sort_by_key(|e| {
+                    std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
+                });
 
                 if let Some(file) = files.first() {
                     let summary = parse_session_file(&file.path()).expect("should parse");
                     // Basic sanity: a real session should have at least one turn
                     assert!(summary.turn_count() > 0, "real session should have turns");
-                    assert!(summary.session_id.is_some(), "real session should have session_id");
-                    assert!(summary.total_output_tokens() > 0, "should have output tokens");
+                    assert!(
+                        summary.session_id.is_some(),
+                        "real session should have session_id"
+                    );
+                    assert!(
+                        summary.total_output_tokens() > 0,
+                        "should have output tokens"
+                    );
                 }
             }
         }
