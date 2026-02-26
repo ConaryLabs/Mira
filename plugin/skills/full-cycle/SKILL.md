@@ -2,7 +2,6 @@
 name: full-cycle
 description: This skill should be used when the user asks for a "full review and fix", "find and fix issues", "review and implement", "end-to-end review", "audit and fix", "comprehensive review", "full-cycle review", or wants experts to find issues AND have them implemented automatically.
 argument-hint: "[focus area or --discovery-only]"
-disable-model-invocation: true
 ---
 
 # Full-Cycle Review
