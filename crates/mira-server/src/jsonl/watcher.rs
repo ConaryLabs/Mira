@@ -485,9 +485,11 @@ mod tests {
 
     #[test]
     fn test_session_snapshot_from_summary() {
-        let mut summary = SessionSummary::default();
-        summary.session_id = Some("test".to_string());
-        summary.user_prompt_count = 3;
+        let mut summary = SessionSummary {
+            session_id: Some("test".to_string()),
+            user_prompt_count: 3,
+            ..Default::default()
+        };
         summary.tool_calls.insert("Bash".to_string(), 5);
 
         // Add a turn

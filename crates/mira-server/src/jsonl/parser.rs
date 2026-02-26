@@ -426,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_parse_tool_use_tracking() {
-        let lines = vec![
+        let lines = [
             make_assistant_entry(1, 10, 100, 50, Some("Read")),
             make_assistant_entry(1, 20, 200, 60, Some("Bash")),
             make_assistant_entry(1, 15, 150, 55, Some("Read")),
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_user_prompt_vs_tool_result() {
-        let lines = vec![
+        let lines = [
             make_user_prompt("hello there"),
             make_assistant_entry(1, 10, 100, 50, Some("Read")),
             make_tool_result(),
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_timestamp_tracking() {
-        let lines = vec![
+        let lines = [
             make_user_prompt("first"),
             make_assistant_entry(1, 10, 100, 50, None),
         ];
@@ -521,31 +521,30 @@ mod tests {
         // Integration test: parse an actual JSONL file if it exists
         let jsonl_dir = dirs::home_dir().map(|h| h.join(".claude/projects/-home-peter-Mira"));
 
-        if let Some(dir) = jsonl_dir {
-            if dir.exists() {
-                let mut files: Vec<_> = std::fs::read_dir(&dir)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
-                    .collect();
-                files.sort_by_key(|e| {
-                    std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
-                });
+        if let Some(dir) = jsonl_dir
+            && dir.exists()
+        {
+            let mut files: Vec<_> = std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+                .collect();
+            files.sort_by_key(|e| {
+                std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
+            });
 
-                if let Some(file) = files.first() {
-                    let summary = parse_session_file(&file.path()).expect("should parse");
-                    // Basic sanity: a real session should have at least one turn
-                    assert!(summary.turn_count() > 0, "real session should have turns");
-                    assert!(
-                        summary.session_id.is_some(),
-                        "real session should have session_id"
-                    );
-                    assert!(
-                        summary.total_output_tokens() > 0,
-                        "should have output tokens"
-                    );
-                }
+            if let Some(file) = files.first() {
+                let summary = parse_session_file(&file.path()).expect("should parse");
+                assert!(summary.turn_count() > 0, "real session should have turns");
+                assert!(
+                    summary.session_id.is_some(),
+                    "real session should have session_id"
+                );
+                assert!(
+                    summary.total_output_tokens() > 0,
+                    "should have output tokens"
+                );
             }
         }
     }

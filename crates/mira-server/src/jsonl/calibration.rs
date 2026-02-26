@@ -314,25 +314,25 @@ mod tests {
     fn test_calibrate_from_real_file() {
         let jsonl_dir = dirs::home_dir().map(|h| h.join(".claude/projects/-home-peter-Mira"));
 
-        if let Some(dir) = jsonl_dir {
-            if dir.exists() {
-                let mut files: Vec<_> = std::fs::read_dir(&dir)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
-                    .collect();
-                files.sort_by_key(|e| {
-                    std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
-                });
+        if let Some(dir) = jsonl_dir
+            && dir.exists()
+        {
+            let mut files: Vec<_> = std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+                .collect();
+            files.sort_by_key(|e| {
+                std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
+            });
 
-                if let Some(file) = files.first() {
-                    let cal = calibrate_from_file(&file.path()).expect("should calibrate");
-                    if !cal.is_default {
-                        assert!(cal.chars_per_token >= 2.5);
-                        assert!(cal.chars_per_token <= 6.0);
-                        assert!(cal.sample_count >= MIN_CALIBRATION_SAMPLES);
-                    }
+            if let Some(file) = files.first() {
+                let cal = calibrate_from_file(&file.path()).expect("should calibrate");
+                if !cal.is_default {
+                    assert!(cal.chars_per_token >= 2.5);
+                    assert!(cal.chars_per_token <= 6.0);
+                    assert!(cal.sample_count >= MIN_CALIBRATION_SAMPLES);
                 }
             }
         }

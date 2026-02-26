@@ -219,13 +219,15 @@ mod tests {
     use crate::jsonl::parser::SessionSummary;
 
     fn make_summary() -> SessionSummary {
-        let mut s = SessionSummary::default();
-        s.session_id = Some("test-session".to_string());
-        s.user_prompt_count = 5;
-        s.tool_result_count = 10;
-        s.compaction_count = 1;
-        s.first_timestamp = Some("2026-01-01T00:00:00Z".to_string());
-        s.last_timestamp = Some("2026-01-01T01:00:00Z".to_string());
+        let mut s = SessionSummary {
+            session_id: Some("test-session".to_string()),
+            user_prompt_count: 5,
+            tool_result_count: 10,
+            compaction_count: 1,
+            first_timestamp: Some("2026-01-01T00:00:00Z".to_string()),
+            last_timestamp: Some("2026-01-01T01:00:00Z".to_string()),
+            ..Default::default()
+        };
 
         // Add turns with usage
         use crate::jsonl::parser::{TokenUsage, TurnSummary};
@@ -344,34 +346,34 @@ mod tests {
         // Integration test: use a real JSONL file + test DB
         let jsonl_dir = dirs::home_dir().map(|h| h.join(".claude/projects/-home-peter-Mira"));
 
-        if let Some(dir) = jsonl_dir {
-            if dir.exists() {
-                let mut files: Vec<_> = std::fs::read_dir(&dir)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
-                    .collect();
-                files.sort_by_key(|e| {
-                    std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
-                });
+        if let Some(dir) = jsonl_dir
+            && dir.exists()
+        {
+            let mut files: Vec<_> = std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+                .collect();
+            files.sort_by_key(|e| {
+                std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok()))
+            });
 
-                if let Some(file) = files.first() {
-                    let conn = crate::db::test_support::setup_test_connection();
-                    // Extract session ID from filename
-                    let path = file.path();
-                    let session_id = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown");
+            if let Some(file) = files.first() {
+                let conn = crate::db::test_support::setup_test_connection();
+                // Extract session ID from filename
+                let path = file.path();
+                let session_id = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown");
 
-                    let corr = CorrelatedSession::from_file_and_db(&path, &conn, session_id)
-                        .expect("should correlate");
+                let corr = CorrelatedSession::from_file_and_db(&path, &conn, session_id)
+                    .expect("should correlate");
 
-                    assert!(corr.api_turns > 0);
-                    // No injections in test DB, so injection fields should be zero
-                    assert_eq!(corr.injections, 0);
-                }
+                assert!(corr.api_turns > 0);
+                // No injections in test DB, so injection fields should be zero
+                assert_eq!(corr.injections, 0);
             }
         }
     }
