@@ -70,33 +70,47 @@ pub(crate) fn ensure_sqlite_vec_registered() {
     });
 }
 
-/// Check if an error is SQLite contention (SQLITE_BUSY or SQLITE_LOCKED).
+/// Check if a rusqlite error is SQLITE_BUSY or SQLITE_LOCKED.
 ///
 /// SQLITE_BUSY ("database is locked") occurs with file-based databases under write contention.
 /// SQLITE_LOCKED ("database table is locked") occurs with shared-cache in-memory databases
 /// when another connection holds a write lock on the same table.
-///
-/// Prefers inspecting the rusqlite error code directly; falls back to string matching
-/// for errors wrapped in other types.
-fn is_sqlite_contention(err: &anyhow::Error) -> bool {
+fn is_rusqlite_contention(err: &rusqlite::Error) -> bool {
     use rusqlite::ffi;
-    if let Some(rusqlite_err) = err.downcast_ref::<rusqlite::Error>() {
-        return matches!(
-            rusqlite_err,
-            rusqlite::Error::SqliteFailure(
-                ffi::Error {
-                    code: ffi::ErrorCode::DatabaseBusy | ffi::ErrorCode::DatabaseLocked,
-                    ..
-                },
-                _,
-            )
-        );
+    matches!(
+        err,
+        rusqlite::Error::SqliteFailure(
+            ffi::Error {
+                code: ffi::ErrorCode::DatabaseBusy | ffi::ErrorCode::DatabaseLocked,
+                ..
+            },
+            _,
+        )
+    )
+}
+
+/// Check if a MiraError wraps a SQLite contention error.
+fn is_mira_contention(err: &MiraError) -> bool {
+    match err {
+        MiraError::Db(rusqlite_err) => is_rusqlite_contention(rusqlite_err),
+        _ => false,
     }
-    // Fallback to string matching for wrapped errors
-    let msg = err.to_string().to_lowercase();
-    msg.contains("database is locked")
-        || msg.contains("database is busy")
-        || msg.contains("database table is locked")
+}
+
+/// Check if an anyhow::Error chain contains a SQLite contention error.
+///
+/// Walks the error chain looking for rusqlite::Error or MiraError::Db variants
+/// with SQLITE_BUSY or SQLITE_LOCKED codes.
+fn is_sqlite_contention(err: &anyhow::Error) -> bool {
+    // Check direct downcast to rusqlite::Error
+    if let Some(rusqlite_err) = err.downcast_ref::<rusqlite::Error>() {
+        return is_rusqlite_contention(rusqlite_err);
+    }
+    // Check if wrapped in MiraError::Db
+    if let Some(mira_err) = err.downcast_ref::<MiraError>() {
+        return is_mira_contention(mira_err);
+    }
+    false
 }
 
 /// Retry delays for SQLite contention backoff (100ms, 500ms, 2s).
@@ -423,10 +437,7 @@ impl DatabasePool {
                 let f_clone = f.clone();
                 self.run(f_clone)
             },
-            |e: &MiraError| {
-                let anyhow_err = anyhow::anyhow!("{}", e);
-                is_sqlite_contention(&anyhow_err)
-            },
+            is_mira_contention,
         )
         .await
     }
@@ -847,6 +858,102 @@ mod tests {
             .expect("Count failed");
 
         assert_eq!(count, 10);
+    }
+
+    // ============================================================================
+    // Contention detection tests
+    // ============================================================================
+
+    #[test]
+    fn test_is_rusqlite_contention_busy() {
+        let err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::DatabaseBusy,
+                extended_code: 5,
+            },
+            Some("database is locked".to_string()),
+        );
+        assert!(is_rusqlite_contention(&err));
+    }
+
+    #[test]
+    fn test_is_rusqlite_contention_locked() {
+        let err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::DatabaseLocked,
+                extended_code: 6,
+            },
+            Some("database table is locked".to_string()),
+        );
+        assert!(is_rusqlite_contention(&err));
+    }
+
+    #[test]
+    fn test_is_rusqlite_contention_other_error() {
+        let err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::ConstraintViolation,
+                extended_code: 19,
+            },
+            Some("UNIQUE constraint failed".to_string()),
+        );
+        assert!(!is_rusqlite_contention(&err));
+    }
+
+    #[test]
+    fn test_is_mira_contention_db_busy() {
+        let rusqlite_err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::DatabaseBusy,
+                extended_code: 5,
+            },
+            None,
+        );
+        let mira_err = MiraError::Db(rusqlite_err);
+        assert!(is_mira_contention(&mira_err));
+    }
+
+    #[test]
+    fn test_is_mira_contention_other_variant() {
+        assert!(!is_mira_contention(&MiraError::ProjectNotSet));
+        assert!(!is_mira_contention(&MiraError::Other(
+            "database is locked".to_string()
+        )));
+    }
+
+    #[test]
+    fn test_is_sqlite_contention_anyhow_with_rusqlite() {
+        let rusqlite_err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::DatabaseBusy,
+                extended_code: 5,
+            },
+            None,
+        );
+        let anyhow_err: anyhow::Error = rusqlite_err.into();
+        assert!(is_sqlite_contention(&anyhow_err));
+    }
+
+    #[test]
+    fn test_is_sqlite_contention_anyhow_with_mira_error() {
+        let rusqlite_err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::DatabaseLocked,
+                extended_code: 6,
+            },
+            None,
+        );
+        let mira_err = MiraError::Db(rusqlite_err);
+        let anyhow_err: anyhow::Error = mira_err.into();
+        assert!(is_sqlite_contention(&anyhow_err));
+    }
+
+    #[test]
+    fn test_is_sqlite_contention_anyhow_string_not_matched() {
+        // String-only errors should NOT trigger contention detection
+        // (no more fragile string matching)
+        let anyhow_err = anyhow::anyhow!("database is locked");
+        assert!(!is_sqlite_contention(&anyhow_err));
     }
 
     #[test]

@@ -479,6 +479,62 @@ mod tests {
     }
 
     // ============================================================================
+    // Symlink safety tests
+    // ============================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_walk_paths_skips_symlinked_files_by_default() {
+        let dir = TempDir::new().unwrap();
+        let project = dir.path().join("project");
+        fs::create_dir(&project).unwrap();
+        fs::write(project.join("real.rs"), "fn real() {}").unwrap();
+
+        // Create a file outside the project and symlink to it
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("secret.rs"), "fn secret() {}").unwrap();
+        std::os::unix::fs::symlink(
+            outside.join("secret.rs"),
+            project.join("linked.rs"),
+        )
+        .unwrap();
+
+        // Default: follow_links=false -- symlinked file should be skipped
+        let walker = FileWalker::new(&project)
+            .for_language("rust")
+            .use_gitignore(false);
+        let paths: Vec<_> = walker.walk_paths().filter_map(|p| p.ok()).collect();
+
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("real.rs"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_walk_paths_skips_symlinked_dirs_by_default() {
+        let dir = TempDir::new().unwrap();
+        let project = dir.path().join("project");
+        fs::create_dir(&project).unwrap();
+        fs::write(project.join("real.rs"), "fn real() {}").unwrap();
+
+        // Create a directory outside the project and symlink to it
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("escape.rs"), "fn escape() {}").unwrap();
+        std::os::unix::fs::symlink(&outside, project.join("link_to_outside")).unwrap();
+
+        // Default: follow_links=false -- symlinked directory contents should be skipped
+        let walker = FileWalker::new(&project)
+            .for_language("rust")
+            .use_gitignore(false);
+        let paths: Vec<_> = walker.walk_paths().filter_map(|p| p.ok()).collect();
+
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("real.rs"));
+    }
+
+    // ============================================================================
     // Entry tests
     // ============================================================================
 

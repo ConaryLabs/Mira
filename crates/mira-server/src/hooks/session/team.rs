@@ -210,12 +210,18 @@ fn scan_team_configs(cwd: Option<&str>) -> Option<TeamConfigInfo> {
         // Check if cwd is under the team's project path (not the reverse —
         // matching proj_p.starts_with(cwd_p) would be overly broad, e.g.
         // cwd="/home/peter" would match project="/home/peter/Mira").
+        // Canonicalize both paths so symlinks and relative segments don't
+        // break the comparison.
         if let Some(project_path) = config.get("project_path").and_then(|v| v.as_str())
             && let Some(cwd_val) = cwd
         {
-            let cwd_p = std::path::Path::new(cwd_val);
-            let proj_p = std::path::Path::new(project_path);
-            if cwd_p.starts_with(proj_p) {
+            let cwd_p = std::path::Path::new(cwd_val)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(cwd_val));
+            let proj_p = std::path::Path::new(project_path)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(project_path));
+            if cwd_p.starts_with(&proj_p) {
                 let specificity = proj_p.components().count();
                 candidates.push((
                     specificity,

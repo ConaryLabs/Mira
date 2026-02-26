@@ -33,9 +33,12 @@ const SUPPORTED_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "g
 fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
 
-    // Walk all files (no extension filter) so we can count skipped extensions
+    // Walk all files (no extension filter) so we can count skipped extensions.
+    // follow_links=false: symlinks are skipped to prevent a malicious repo from
+    // tricking the indexer into reading files outside the project root
+    // (e.g., `src/exploit -> /etc/shadow`).
     let walker = FileWalker::new(path)
-        .follow_links(true)
+        .follow_links(false)
         .use_gitignore(true)
         .skip_hidden(true);
 
