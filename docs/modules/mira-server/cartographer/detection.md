@@ -18,3 +18,4 @@ Polyglot module detection. Dispatches to language-specific implementations to de
 | `python` | Python (packages, `__init__.py`) |
 | `node` | TypeScript/JavaScript (package.json, index files) |
 | `go` | Go (packages, go.mod) |
+| `java` | Java — detected only (no code intelligence; pom.xml/build.gradle) |

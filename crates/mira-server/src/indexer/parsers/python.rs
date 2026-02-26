@@ -103,12 +103,15 @@ fn get_docstring(node: Node, source: &[u8]) -> Option<String> {
     }
     let raw = node_text(expr, source);
     let stripped = if raw.starts_with("\"\"\"") || raw.starts_with("'''") {
-        raw.trim_start_matches("\"\"\"")
-            .trim_start_matches("'''")
-            .trim_end_matches("\"\"\"")
-            .trim_end_matches("'''")
-            .trim()
-            .to_string()
+        let text: &str = raw
+            .strip_prefix("\"\"\"")
+            .or_else(|| raw.strip_prefix("'''"))
+            .unwrap_or(&raw);
+        let text = text
+            .strip_suffix("\"\"\"")
+            .or_else(|| text.strip_suffix("'''"))
+            .unwrap_or(text);
+        text.trim().to_string()
     } else {
         raw.trim_matches('"').trim_matches('\'').to_string()
     };
@@ -196,11 +199,7 @@ fn extract_import(node: Node, source: &[u8]) -> Option<Import> {
                 }
             })
             .collect();
-        if names.is_empty() {
-            None
-        } else {
-            Some(names)
-        }
+        if names.is_empty() { None } else { Some(names) }
     } else {
         None
     };
@@ -421,10 +420,7 @@ def greet(name):
 "#;
         let (symbols, _, _) = parse_python(code);
         let sym = symbols.iter().find(|s| s.name == "greet").unwrap();
-        assert_eq!(
-            sym.documentation,
-            Some("Greet the given name.".to_string())
-        );
+        assert_eq!(sym.documentation, Some("Greet the given name.".to_string()));
     }
 
     #[test]

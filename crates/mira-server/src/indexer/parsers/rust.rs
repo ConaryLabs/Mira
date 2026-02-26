@@ -285,11 +285,7 @@ fn extract_names_from_use_list(node: Node, source: &[u8]) -> Option<Vec<String>>
             _ => {}
         }
     }
-    if names.is_empty() {
-        None
-    } else {
-        Some(names)
-    }
+    if names.is_empty() { None } else { Some(names) }
 }
 
 fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
@@ -366,7 +362,9 @@ fn has_test_attribute(node: Node, source: &[u8]) -> bool {
         for child in parent.children(&mut parent.walk()) {
             if child.kind() == "attribute_item" {
                 let text = node_text(child, source);
-                if text.contains("test") {
+                // Match #[test], #[tokio::test], #[rstest::test], etc.
+                // but not #[my_test_helper] or other false positives.
+                if text.contains("#[test]") || text.contains("::test]") {
                     return true;
                 }
             }
@@ -642,7 +640,13 @@ fn no_return() {
             with_return.return_type.is_some(),
             "expected return_type to be set"
         );
-        assert!(with_return.return_type.as_deref().unwrap().contains("String"));
+        assert!(
+            with_return
+                .return_type
+                .as_deref()
+                .unwrap()
+                .contains("String")
+        );
 
         let no_return = symbols.iter().find(|s| s.name == "no_return").unwrap();
         assert!(no_return.return_type.is_none());

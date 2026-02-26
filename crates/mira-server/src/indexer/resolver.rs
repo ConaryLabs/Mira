@@ -61,13 +61,13 @@ impl RustImportResolver {
 
         // Try as a file: path.rs
         let as_file = path.with_extension("rs");
-        if as_file.exists() {
+        if as_file.exists() && as_file.starts_with(src_root) {
             return Some(as_file);
         }
 
         // Try as a module directory: path/mod.rs
         let as_mod = path.join("mod.rs");
-        if as_mod.exists() {
+        if as_mod.exists() && as_mod.starts_with(src_root) {
             return Some(as_mod);
         }
 
@@ -84,7 +84,10 @@ impl RustImportResolver {
             return (vec![], None);
         }
 
-        let last = *segments.last().unwrap();
+        let last = match segments.last() {
+            Some(s) => *s,
+            None => return (vec![], None),
+        };
         // Heuristic: PascalCase or SCREAMING_SNAKE_CASE => symbol name
         let is_symbol = last
             .chars()
@@ -218,27 +221,33 @@ mod tests {
     fn returns_none_for_std_import() {
         let dir = make_project(&[("src/lib.rs", "")]);
         let resolver = RustImportResolver;
-        assert!(resolver
-            .resolve_import("std::collections::HashMap", dir.path())
-            .is_none());
+        assert!(
+            resolver
+                .resolve_import("std::collections::HashMap", dir.path())
+                .is_none()
+        );
     }
 
     #[test]
     fn returns_none_for_external_crate() {
         let dir = make_project(&[("src/lib.rs", "")]);
         let resolver = RustImportResolver;
-        assert!(resolver
-            .resolve_import("serde::Deserialize", dir.path())
-            .is_none());
+        assert!(
+            resolver
+                .resolve_import("serde::Deserialize", dir.path())
+                .is_none()
+        );
     }
 
     #[test]
     fn returns_none_when_file_not_found() {
         let dir = make_project(&[("src/lib.rs", "")]);
         let resolver = RustImportResolver;
-        assert!(resolver
-            .resolve_import("crate::nonexistent::module", dir.path())
-            .is_none());
+        assert!(
+            resolver
+                .resolve_import("crate::nonexistent::module", dir.path())
+                .is_none()
+        );
     }
 
     #[test]

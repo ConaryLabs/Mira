@@ -96,9 +96,7 @@ impl SemanticInjector {
                                             ))
                                         },
                                     )
-                                    .map(|rows| {
-                                        rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
-                                    })
+                                    .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
                                 })
                                 .unwrap_or_default();
                             result.push(syms);
@@ -106,7 +104,10 @@ impl SemanticInjector {
                         Ok::<_, crate::error::MiraError>(result)
                     })
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("Semantic injector: code DB query failed: {}", e);
+                        Vec::new()
+                    });
 
                 for (i, search_result) in hybrid_result.results.iter().enumerate() {
                     if i > 0 {

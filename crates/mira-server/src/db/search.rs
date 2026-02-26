@@ -54,7 +54,7 @@ pub fn find_callees_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<CrossRefResult>> {
     let mut stmt = conn.prepare(
-        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt,
+        "SELECT cg.callee_name, COALESCE(cs2.file_path, cs.file_path), COUNT(*) as cnt,
                 MIN(cs2.start_line) as callee_line
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
@@ -102,17 +102,19 @@ pub struct FtsSearchResult {
     pub start_line: Option<i64>,
 }
 
-/// Full-text search using FTS5
+/// Search the FTS5 index with a pre-built query expression.
+///
+/// # Safety (logical)
+/// The `query` parameter is passed directly to FTS5 MATCH. Callers MUST
+/// ensure the query is constructed from escaped terms (via `escape_fts_term`)
+/// or is a validated FTS5 expression. Passing raw user input may cause
+/// unexpected query behavior.
 pub fn fts_search_sync(
     conn: &Connection,
     query: &str,
     project_id: Option<i64>,
     limit: usize,
 ) -> Vec<FtsSearchResult> {
-    // Query is passed through as-is — callers (keyword.rs:fts5_search) already
-    // escape via escape_fts_term. Re-quoting here would break FTS5 operators
-    // like prefix *, NEAR(), and OR that callers intentionally construct.
-
     conn.prepare(
         "SELECT c.file_path, c.chunk_content, bm25(code_fts, 1.0, 2.0) as score, c.start_line
          FROM code_fts f

@@ -189,3 +189,72 @@ pub(super) fn gather_system_context_content() -> Option<String> {
         Some(context_parts.join("\n"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_project_types_rust_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"\n",
+        )
+        .unwrap();
+        let types = detect_project_types(dir.path().to_str().unwrap());
+        assert_eq!(types, vec!["rust"]);
+    }
+
+    #[test]
+    fn detect_project_types_rust_and_node() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let types = detect_project_types(dir.path().to_str().unwrap());
+        assert!(types.contains(&"rust"));
+        assert!(types.contains(&"node"));
+        assert_eq!(types.len(), 2);
+    }
+
+    #[test]
+    fn detect_project_types_go_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module test\n").unwrap();
+        let types = detect_project_types(dir.path().to_str().unwrap());
+        assert_eq!(types, vec!["go"]);
+    }
+
+    #[test]
+    fn detect_project_types_unknown_for_no_manifests() {
+        let dir = tempfile::tempdir().unwrap();
+        let types = detect_project_types(dir.path().to_str().unwrap());
+        assert_eq!(types, vec!["unknown"]);
+    }
+
+    #[test]
+    fn detect_project_type_returns_first_element() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let primary = detect_project_type(dir.path().to_str().unwrap());
+        let all = detect_project_types(dir.path().to_str().unwrap());
+        assert_eq!(primary, all[0]);
+    }
+}

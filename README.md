@@ -58,7 +58,6 @@ After installing, these slash commands are available in Claude Code:
 /mira:goals           -- manage cross-session goals and milestones
 /mira:diff            -- semantic analysis of recent changes
 /mira:insights        -- surface background analysis
-/mira:remember <text> -- store a decision or fact
 /mira:help            -- full command list
 ```
 

@@ -144,7 +144,7 @@ pub async fn session_start<C: ToolContext>(
         response.push_str(&format!("\nWhat's new: {}\n", text));
     }
 
-    // Phase 4: Load session history + recap data
+    // Phase 3: Load session history + recap data
     let recent_session_data = load_recent_sessions(ctx, project_id, &sid).await?;
     if !recent_session_data.is_empty() {
         response.push_str(&format_recent_sessions(&recent_session_data));
@@ -164,7 +164,7 @@ pub async fn session_start<C: ToolContext>(
 
     response.push_str(&format_session_insights(&doc_task_counts));
 
-    // Phase 5: Codebase map (supported languages: rust, python, node, go)
+    // Phase 4: Codebase map (supported languages: rust, python, node, go)
     let supported_for_map = project_types
         .iter()
         .any(|t| matches!(*t, "rust" | "python" | "node" | "go"));
@@ -330,7 +330,7 @@ pub async fn session_start<C: ToolContext>(
 
 /// Run first-session onboarding via elicitation.
 ///
-/// Memory storage removed (Phase 4). Returns false (no-op).
+/// Memory storage removed. Returns false (no-op).
 async fn run_first_session_onboarding<C: ToolContext>(
     _ctx: &C,
     _project_id: i64,

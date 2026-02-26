@@ -57,26 +57,9 @@ pub fn walk(
             }
         }
         "arrow_function" => {
-            // Only extract arrow functions inside a variable_declarator (they get their
-            // name from the declarator). Bare arrow functions produce "<anonymous>"
-            // and pollute the symbol table.
-            if let Some(parent) = node.parent()
-                && parent.kind() == "variable_declarator"
-            {
-                if let Some(sym) = extract_function(node, ctx.source, parent_name, ctx.language) {
-                    let func_name = sym
-                        .qualified_name
-                        .clone()
-                        .unwrap_or_else(|| sym.name.clone());
-                    ctx.symbols.push(sym);
-                    if let Some(body) = node.child_by_field_name("body") {
-                        for child in body.children(&mut body.walk()) {
-                            walk(child, ctx, parent_name, Some(&func_name));
-                        }
-                    }
-                    return;
-                }
-            }
+            // Named arrow functions are handled by the variable_declaration arm below.
+            // Bare (unnamed) arrow functions are skipped to avoid anonymous symbol pollution.
+            return;
         }
         "class_declaration" => {
             if let Some(sym) = extract_class(node, ctx.source, ctx.language) {
@@ -154,14 +137,10 @@ pub fn walk(
 /// Extract JSDoc comment preceding a node.
 /// Walks backwards through preceding siblings looking for `/** ... */` comments.
 fn get_jsdoc(node: Node, source: &[u8]) -> Option<String> {
-    let parent = node.parent()?;
-    let mut cursor = parent.walk();
-    let siblings: Vec<Node> = parent.children(&mut cursor).collect();
-    let pos = siblings.iter().position(|n| n.id() == node.id())?;
-    for i in (0..pos).rev() {
-        let sib = siblings[i];
-        if sib.kind() == "comment" {
-            let text = node_text(sib, source);
+    let mut sib = node.prev_sibling();
+    while let Some(n) = sib {
+        if n.kind() == "comment" {
+            let text = node_text(n, source);
             if text.starts_with("/**") {
                 let inner = text
                     .trim_start_matches("/**")
@@ -174,9 +153,10 @@ fn get_jsdoc(node: Node, source: &[u8]) -> Option<String> {
                 return if inner.is_empty() { None } else { Some(inner) };
             }
             break;
-        } else if sib.is_named() {
+        } else if n.is_named() {
             break;
         }
+        sib = n.prev_sibling();
     }
     None
 }
@@ -203,9 +183,7 @@ fn extract_function(
 
     let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
 
-    // Fixed: removed dead code `it(` / `describe(` — names are identifiers, never "it("
     let is_test = name.starts_with("test")
-        || name.contains("Test")
         || name == "it"
         || name == "describe"
         || name == "beforeEach"
@@ -365,11 +343,7 @@ fn extract_named_imports(node: Node, source: &[u8]) -> Option<Vec<String>> {
         })
         .collect();
 
-    if names.is_empty() {
-        None
-    } else {
-        Some(names)
-    }
+    if names.is_empty() { None } else { Some(names) }
 }
 
 fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
@@ -629,7 +603,10 @@ function describeFeature() {}
         let it_fn = symbols.iter().find(|s| s.name == "itDoesWork").unwrap();
         assert!(!it_fn.is_test, "itDoesWork should not be a test");
 
-        let desc_fn = symbols.iter().find(|s| s.name == "describeFeature").unwrap();
+        let desc_fn = symbols
+            .iter()
+            .find(|s| s.name == "describeFeature")
+            .unwrap();
         assert!(!desc_fn.is_test, "describeFeature should not be a test");
     }
 
@@ -798,7 +775,10 @@ import { Foo, Bar } from './module';
         assert!(syms.contains(&"useState".to_string()));
         assert!(syms.contains(&"useEffect".to_string()));
 
-        let module_import = imports.iter().find(|i| i.import_path == "./module").unwrap();
+        let module_import = imports
+            .iter()
+            .find(|i| i.import_path == "./module")
+            .unwrap();
         let syms = module_import.imported_symbols.as_ref().unwrap();
         assert!(syms.contains(&"Foo".to_string()));
         assert!(syms.contains(&"Bar".to_string()));

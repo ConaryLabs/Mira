@@ -12,6 +12,8 @@ Code indexing for symbol extraction, call graph construction, and semantic searc
 | TypeScript/JavaScript | `.ts`, `.tsx`, `.js`, `.jsx` |
 | Go | `.go` |
 
+> Note: Java projects are detected but not yet supported. Files with unsupported extensions are tracked and reported in index stats.
+
 ## Sub-modules
 
 | Module | Purpose |

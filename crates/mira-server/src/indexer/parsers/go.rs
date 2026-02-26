@@ -220,9 +220,7 @@ fn extract_type(node: Node, source: &[u8]) -> Vec<Symbol> {
 
 fn extract_import_spec(spec: Node, source: &[u8]) -> Option<Import> {
     let path_node = spec.child_by_field_name("path")?;
-    let path = node_text(path_node, source)
-        .trim_matches('"')
-        .to_string();
+    let path = node_text(path_node, source).trim_matches('"').to_string();
 
     let is_external = !path.starts_with('.');
 
@@ -249,10 +247,10 @@ fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
             }
         } else if child.kind() == "import_spec_list" {
             for spec in child.children(&mut child.walk()) {
-                if spec.kind() == "import_spec" {
-                    if let Some(import) = extract_import_spec(spec, source) {
-                        imports.push(import);
-                    }
+                if spec.kind() == "import_spec"
+                    && let Some(import) = extract_import_spec(spec, source)
+                {
+                    imports.push(import);
                 }
             }
         } else if child.kind() == "interpreted_string_literal" {
@@ -271,44 +269,51 @@ fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
     imports
 }
 
-fn extract_spec(
-    spec: Node,
-    source: &[u8],
-    symbol_type: &str,
-    symbols: &mut Vec<Symbol>,
-) {
-    let name_node = match spec.child_by_field_name("name") {
-        Some(n) => n,
-        None => return,
-    };
-    let name = node_text(name_node, source);
-    let return_type = spec.child_by_field_name("type").map(|t| node_text(t, source));
-    let visibility = if name
-        .chars()
-        .next()
-        .map(|c| c.is_uppercase())
-        .unwrap_or(false)
-    {
-        Some("public".to_string())
-    } else {
-        Some("private".to_string())
-    };
+fn extract_spec(spec: Node, source: &[u8], symbol_type: &str, symbols: &mut Vec<Symbol>) {
+    let return_type = spec
+        .child_by_field_name("type")
+        .map(|t| node_text(t, source));
     let documentation = get_doc_comment(spec, source);
-    symbols.push(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: symbol_type.to_string(),
-        language: "go".to_string(),
-        start_line: spec.start_line(),
-        end_line: spec.end_line(),
-        signature: None,
-        visibility,
-        documentation,
-        is_test: false,
-        is_async: false,
-        return_type,
-        decorators: None,
-    });
+
+    // Go allows multi-name specs: `const a, b = 1, 2`
+    // Iterate all identifier children to handle each name separately.
+    let names: Vec<String> = spec
+        .children(&mut spec.walk())
+        .filter(|n| n.kind() == "identifier")
+        .map(|n| node_text(n, source))
+        .collect();
+
+    if names.is_empty() {
+        return;
+    }
+
+    for name in names {
+        let visibility = if name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+        {
+            Some("public".to_string())
+        } else {
+            Some("private".to_string())
+        };
+        symbols.push(Symbol {
+            name: name.clone(),
+            qualified_name: Some(name),
+            symbol_type: symbol_type.to_string(),
+            language: "go".to_string(),
+            start_line: spec.start_line(),
+            end_line: spec.end_line(),
+            signature: None,
+            visibility,
+            documentation: documentation.clone(),
+            is_test: false,
+            is_async: false,
+            return_type: return_type.clone(),
+            decorators: None,
+        });
+    }
 }
 
 fn extract_const_or_var(node: Node, source: &[u8], is_const: bool) -> Vec<Symbol> {
@@ -336,30 +341,25 @@ fn extract_const_or_var(node: Node, source: &[u8], is_const: bool) -> Vec<Symbol
     symbols
 }
 
-
 /// Extract doc comment lines immediately preceding a node (Go `// ...` style).
 fn get_doc_comment(node: Node, source: &[u8]) -> Option<String> {
     let mut docs = Vec::new();
 
-    if let Some(parent) = node.parent() {
-        let siblings: Vec<_> = parent.children(&mut parent.walk()).collect();
-        let node_idx = siblings.iter().position(|n| n.id() == node.id())?;
-
-        // Walk backwards through preceding siblings
-        for sib in siblings[..node_idx].iter().rev() {
-            if sib.kind() == "comment" {
-                let text = node_text(*sib, source);
-                if let Some(stripped) = text.strip_prefix("// ") {
-                    docs.push(stripped.to_string());
-                } else if let Some(stripped) = text.strip_prefix("//") {
-                    docs.push(stripped.to_string());
-                } else {
-                    break;
-                }
+    let mut sib = node.prev_sibling();
+    while let Some(n) = sib {
+        if n.kind() == "comment" {
+            let text = node_text(n, source);
+            if let Some(stripped) = text.strip_prefix("// ") {
+                docs.push(stripped.to_string());
+            } else if let Some(stripped) = text.strip_prefix("//") {
+                docs.push(stripped.to_string());
             } else {
                 break;
             }
+        } else {
+            break;
         }
+        sib = n.prev_sibling();
     }
 
     if docs.is_empty() {
@@ -620,10 +620,7 @@ const SingleConst = "hello"
         assert_eq!(max_retries.symbol_type, "constant");
         assert_eq!(max_retries.visibility, Some("public".to_string()));
 
-        let default_timeout = symbols
-            .iter()
-            .find(|s| s.name == "DefaultTimeout")
-            .unwrap();
+        let default_timeout = symbols.iter().find(|s| s.name == "DefaultTimeout").unwrap();
         assert_eq!(default_timeout.symbol_type, "constant");
 
         let single = symbols.iter().find(|s| s.name == "SingleConst").unwrap();

@@ -924,6 +924,23 @@ mod tests {
     // ============================================================================
 
     #[test]
+    fn test_format_crossref_results_line_number_format() {
+        let results = vec![CrossRefResult {
+            symbol_name: "caller_fn".to_string(),
+            file_path: "src/file.rs".to_string(),
+            ref_type: CrossRefType::Caller,
+            call_count: 1,
+            line: Some(42),
+        }];
+        let output = format_crossref_results("target", CrossRefType::Caller, &results);
+        assert!(
+            output.contains("src/file.rs:42"),
+            "output should contain file:line format, got: {}",
+            output
+        );
+    }
+
+    #[test]
     fn test_format_crossref_results_single_result_numbering() {
         let results = vec![CrossRefResult {
             symbol_name: "only_caller".to_string(),

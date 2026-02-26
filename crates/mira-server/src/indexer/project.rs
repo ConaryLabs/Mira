@@ -42,10 +42,7 @@ fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path:
     for result in walker.walk_paths() {
         match result {
             Ok(file_path) => {
-                let ext = file_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
+                let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
                 if !SUPPORTED_EXTENSIONS.contains(&ext) {
                     // Count unsupported files by extension (skip extensionless files)
@@ -434,5 +431,55 @@ mod tests {
     #[test]
     fn test_max_index_file_bytes_is_one_mb() {
         assert_eq!(MAX_INDEX_FILE_BYTES, 1_024 * 1_024);
+    }
+
+    #[test]
+    fn test_collect_files_tracks_skipped_by_extension() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+        // Supported files — should be collected
+        std::fs::write(dir.path().join("lib.rs"), "pub fn foo() {}").unwrap();
+        std::fs::write(dir.path().join("script.py"), "def foo(): pass").unwrap();
+
+        // Unsupported file — should be skipped and tracked by extension
+        std::fs::write(dir.path().join("Main.java"), "public class Main {}").unwrap();
+
+        let mut stats = IndexStats {
+            files: 0,
+            symbols: 0,
+            chunks: 0,
+            errors: 0,
+            skipped: 0,
+            skipped_by_extension: HashMap::new(),
+        };
+
+        let files = collect_files_to_index(dir.path(), &mut stats);
+
+        // .rs and .py files should be collected
+        let collected: Vec<_> = files
+            .iter()
+            .filter_map(|p| p.extension().and_then(|e| e.to_str()))
+            .collect();
+        assert!(collected.contains(&"rs"), "expected .rs to be collected");
+        assert!(collected.contains(&"py"), "expected .py to be collected");
+
+        // .java should appear in skipped_by_extension
+        assert_eq!(
+            stats
+                .skipped_by_extension
+                .get(".java")
+                .copied()
+                .unwrap_or(0),
+            1,
+            "expected 1 java file in skipped_by_extension"
+        );
+        assert!(
+            !stats.skipped_by_extension.contains_key(".rs"),
+            ".rs should not appear in skipped_by_extension"
+        );
+        assert!(
+            !stats.skipped_by_extension.contains_key(".py"),
+            ".py should not appear in skipped_by_extension"
+        );
     }
 }

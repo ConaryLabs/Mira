@@ -10,7 +10,7 @@ Manage project context and workspace initialization.
 
 ### start
 
-Initialize a session with full project context. Detects project type, imports CLAUDE.local.md memories, loads preferences, recent sessions, health alerts, and generates a codebase map (Rust projects).
+Initialize a session with full project context. Detects project type, imports CLAUDE.local.md memories, loads preferences, recent sessions, health alerts, and generates a codebase map (supported languages: Rust, Python, TypeScript/JavaScript, Go).
 
 **Parameters:**
 - `action` (string, required) - `"start"`

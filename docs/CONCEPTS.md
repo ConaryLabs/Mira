@@ -90,6 +90,12 @@ Mira uses **Tree-sitter** to parse source code into an Abstract Syntax Tree (AST
 
 Supported languages: Rust, Python, TypeScript, JavaScript, Go
 
+> Note: Java projects are detected (via pom.xml/build.gradle) but not yet supported for code intelligence.
+
+### Symbol Notation
+
+Symbols use compact notation in output and context injection: `function_name:function(42)` means a function named `function_name` starting at line 42. The general format is `name:kind(line)`.
+
 ### Call Graph
 
 Mira builds a relational graph of function calls:
