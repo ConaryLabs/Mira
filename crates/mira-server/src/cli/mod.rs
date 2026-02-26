@@ -181,6 +181,26 @@ pub enum HookAction {
     TeammateIdle,
 }
 
+impl std::fmt::Display for HookAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::SessionStart => "SessionStart",
+            Self::PreCompact => "PreCompact",
+            Self::PreTool => "PreTool",
+            Self::UserPrompt => "UserPrompt",
+            Self::PostTool => "PostTool",
+            Self::Stop => "Stop",
+            Self::SessionEnd => "SessionEnd",
+            Self::SubagentStart => "SubagentStart",
+            Self::SubagentStop => "SubagentStop",
+            Self::PostToolFailure => "PostToolFailure",
+            Self::TaskCompleted => "TaskCompleted",
+            Self::TeammateIdle => "TeammateIdle",
+        };
+        f.write_str(name)
+    }
+}
+
 /// Get the default database path
 pub fn get_db_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));

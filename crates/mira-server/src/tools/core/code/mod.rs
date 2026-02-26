@@ -169,16 +169,6 @@ pub async fn handle_code<C: ToolContext>(
             find_function_callees(ctx, function_name, req.limit).await
         }
         CodeAction::Dependencies => get_dependencies(ctx).await,
-        CodeAction::Patterns => {
-            Err(MiraError::InvalidInput(
-                "code(action=patterns) has been removed. Pattern detection was heuristic-based and not reliable enough.".to_string(),
-            ))
-        }
-        CodeAction::TechDebt => {
-            Err(MiraError::InvalidInput(
-                "code(action=tech_debt) has been removed. Tech debt scoring was heuristic-based and not reliable enough.".to_string(),
-            ))
-        }
         CodeAction::Diff => {
             // Defensive guard: router intercepts Tasks/Diff actions before reaching this handler
             Err(MiraError::Other(
@@ -187,16 +177,6 @@ pub async fn handle_code<C: ToolContext>(
             ))
         }
         CodeAction::DeadCode => get_dead_code(ctx, req.limit).await,
-        CodeAction::Conventions => {
-            Err(MiraError::InvalidInput(
-                "code(action=conventions) has been removed. Convention extraction was heuristic-based and not reliable enough.".to_string(),
-            ))
-        }
-        CodeAction::DebtDelta => {
-            Err(MiraError::InvalidInput(
-                "code(action=debt_delta) has been removed. Debt scoring was heuristic-based and not reliable enough.".to_string(),
-            ))
-        }
         CodeAction::Bundle => {
             let scope = req.scope.ok_or_else(|| {
                 MiraError::InvalidInput("scope is required for code(action=bundle)".to_string())

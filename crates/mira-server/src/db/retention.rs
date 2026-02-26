@@ -106,6 +106,13 @@ fn build_rules(config: &RetentionConfig) -> Vec<RetentionRule> {
             days: config.behavior_days,
             extra_filter: "AND pattern_type NOT LIKE 'insight_%'",
         },
+        // ── Context injection tracking ──
+        RetentionRule {
+            table: "context_injections",
+            time_column: "created_at",
+            days: config.tool_history_days,
+            extra_filter: "",
+        },
         // ── Observations (hard cutoff beyond per-row TTL) ──
         RetentionRule {
             table: "system_observations",

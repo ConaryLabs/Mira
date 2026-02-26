@@ -120,6 +120,80 @@ fn read_session_or_global_cwd(session_id: Option<&str>) -> Option<String> {
 /// Note: UserPromptSubmit routinely exceeds this due to embedding lookups.
 const HOOK_PERF_THRESHOLD_MS: u128 = 100;
 
+/// Record a hook execution outcome to the database for health monitoring.
+/// Fire-and-forget: errors are silently dropped to avoid blocking hooks.
+///
+/// Stores a JSON counter in `system_observations` with key `hook_health:{name}`.
+/// Each call increments `runs` (and `failures` on error), updates `last_run_at`,
+/// and tracks `last_error` for debugging.
+pub fn record_hook_outcome(hook_name: &str, success: bool, latency_ms: u128, error_msg: Option<&str>) {
+    let db_path = get_db_path();
+    let Ok(conn) = rusqlite::Connection::open(&db_path) else {
+        return;
+    };
+
+    let key = format!("hook_health:{}", hook_name);
+
+    // Read existing stats (or default)
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT content FROM system_observations WHERE key = ?1 AND scope = 'global' AND project_id IS NULL",
+            [&key],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let (mut runs, mut failures, last_error): (u64, u64, Option<String>) =
+        if let Some(json_str) = existing {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                (
+                    v.get("runs").and_then(|v| v.as_u64()).unwrap_or(0),
+                    v.get("failures").and_then(|v| v.as_u64()).unwrap_or(0),
+                    v.get("last_error").and_then(|v| v.as_str()).map(String::from),
+                )
+            } else {
+                (0, 0, None)
+            }
+        } else {
+            (0, 0, None)
+        };
+
+    runs += 1;
+    let new_last_error = if success {
+        last_error
+    } else {
+        failures += 1;
+        error_msg.map(|s| s.chars().take(200).collect())
+    };
+
+    let content = serde_json::json!({
+        "runs": runs,
+        "failures": failures,
+        "last_error": new_last_error,
+        "last_latency_ms": latency_ms,
+    });
+
+    let content_str = content.to_string();
+
+    // Use the store_observation_sync path for proper UPSERT
+    let _ = crate::db::observations::store_observation_sync(
+        &conn,
+        crate::db::observations::StoreObservationParams {
+            project_id: None,
+            key: Some(&key),
+            content: &content_str,
+            observation_type: "hook_health",
+            category: Some("system"),
+            confidence: 1.0,
+            source: "hook_monitor",
+            session_id: None,
+            team_id: None,
+            scope: "global",
+            expires_at: None, // Never expires -- retained until manual cleanup
+        },
+    );
+}
+
 /// Read hook input from stdin (Claude Code passes JSON)
 pub fn read_hook_input() -> Result<serde_json::Value> {
     let mut input = String::new();

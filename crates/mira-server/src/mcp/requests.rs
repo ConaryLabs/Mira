@@ -113,18 +113,10 @@ pub enum CodeAction {
     Callees,
     /// Analyze module dependencies and detect circular dependencies
     Dependencies,
-    /// Detect architectural patterns (repository, builder, factory, etc.)
-    Patterns,
-    /// Compute per-module tech debt scores
-    TechDebt,
     /// Analyze git diff semantically (change types, impact, risks)
     Diff,
     /// Find unreferenced symbols (dead code candidates)
     DeadCode,
-    /// Show detected conventions for a module
-    Conventions,
-    /// Show per-module tech debt changes between health snapshots
-    DebtDelta,
     /// Package module summaries, symbols, deps, and code into a context bundle for agent spawning
     Bundle,
 }
@@ -132,7 +124,7 @@ pub enum CodeAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CodeRequest {
     #[schemars(
-        description = "Action: search, symbols, callers, callees, dependencies, patterns, tech_debt, diff, dead_code, conventions, debt_delta, bundle"
+        description = "Action: search, symbols, callers, callees, dependencies, diff, dead_code, bundle"
     )]
     pub action: CodeAction,
     #[schemars(description = "Search query (required for search)")]
@@ -255,7 +247,7 @@ pub enum SessionAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SessionRequest {
     #[schemars(
-        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, storage_status (show database size and retention policy), cleanup (run data cleanup with dry_run preview), error_patterns (show learned error patterns and fixes), session_lineage (show session history with resume chains), report (injection efficiency report)"
+        description = "Action: current_session, list_sessions, get_history, recap, usage_summary, usage_stats, usage_list, insights, dismiss_insight, storage_status, cleanup, error_patterns, session_lineage, capabilities, report"
     )]
     pub action: SessionAction,
     #[schemars(description = "Session ID (for get_history)")]

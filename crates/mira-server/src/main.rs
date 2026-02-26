@@ -99,6 +99,8 @@ async fn main() -> Result<()> {
             // within a runtime" panic that Handle::block_on causes inside
             // #[tokio::main], and JoinError captures any panics for us.
             use std::io::Write;
+            let hook_name = action.to_string();
+            let start = std::time::Instant::now();
             let result = tokio::task::spawn(async move {
                 match action {
                     HookAction::SessionStart => mira::hooks::session::run().await,
@@ -116,14 +118,21 @@ async fn main() -> Result<()> {
                 }
             })
             .await;
+            let latency_ms = start.elapsed().as_millis();
             match result {
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => {
+                    mira::hooks::record_hook_outcome(&hook_name, true, latency_ms, None);
+                }
                 Ok(Err(e)) => {
-                    eprintln!("[mira] Hook error (non-fatal): {e:#}");
+                    let msg = format!("{e:#}");
+                    mira::hooks::record_hook_outcome(&hook_name, false, latency_ms, Some(&msg));
+                    eprintln!("[mira] Hook error (non-fatal): {msg}");
                     let _ = writeln!(std::io::stdout(), "{{}}");
                 }
                 Err(join_err) => {
-                    eprintln!("[mira] Hook panic (non-fatal): {join_err}");
+                    let msg = format!("{join_err}");
+                    mira::hooks::record_hook_outcome(&hook_name, false, latency_ms, Some(&msg));
+                    eprintln!("[mira] Hook panic (non-fatal): {msg}");
                     let _ = writeln!(std::io::stdout(), "{{}}");
                 }
             }
