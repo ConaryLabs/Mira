@@ -22,7 +22,7 @@ const DEPS_PCT: usize = 10;
 const SNIPPETS_PCT: usize = 40;
 
 #[derive(Debug, Clone, Copy)]
-pub enum BundleDepth {
+pub(crate) enum BundleDepth {
     /// Module summaries + public API signatures only
     Overview,
     /// Above + key function bodies, dependency graph
@@ -42,38 +42,38 @@ impl BundleDepth {
 }
 
 /// Internal module data collected from DB
-struct ModuleInfo {
-    id: String,
-    name: String,
-    path: String,
-    purpose: Option<String>,
-    exports: Vec<String>,
-    symbol_count: u32,
-    line_count: Option<i32>,
+pub(crate) struct ModuleInfo {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) purpose: Option<String>,
+    pub(crate) exports: Vec<String>,
+    pub(crate) symbol_count: u32,
+    pub(crate) line_count: Option<i32>,
 }
 
 /// Internal symbol data
-struct SymbolEntry {
-    name: String,
-    symbol_type: String,
-    file_path: String,
-    start_line: i64,
-    signature: Option<String>,
+pub(crate) struct SymbolEntry {
+    pub(crate) name: String,
+    pub(crate) symbol_type: String,
+    pub(crate) file_path: String,
+    pub(crate) start_line: i64,
+    pub(crate) signature: Option<String>,
 }
 
 /// Internal dependency edge
-struct DepEdge {
-    source: String,
-    target: String,
-    call_count: i64,
-    import_count: i64,
+pub(crate) struct DepEdge {
+    pub(crate) source: String,
+    pub(crate) target: String,
+    pub(crate) call_count: i64,
+    pub(crate) import_count: i64,
 }
 
 /// Internal code chunk
-struct ChunkEntry {
-    file_path: String,
-    content: String,
-    start_line: i64,
+pub(crate) struct ChunkEntry {
+    pub(crate) file_path: String,
+    pub(crate) content: String,
+    pub(crate) start_line: i64,
 }
 
 /// Generate a context bundle for agent spawning.
@@ -165,7 +165,7 @@ pub async fn generate_bundle<C: ToolContext>(
 }
 
 /// Resolve a scope string into a SQL LIKE pattern for file_path/module path matching.
-fn resolve_scope_pattern(scope: &str) -> String {
+pub(crate) fn resolve_scope_pattern(scope: &str) -> String {
     let scope = scope.trim().trim_end_matches('/');
 
     // Escape SQL LIKE special chars
@@ -324,7 +324,7 @@ async fn try_semantic_fallback<C: ToolContext>(
 // DB query helpers (run inside code_pool closure)
 // ============================================================================
 
-fn query_modules(
+pub(crate) fn query_modules(
     conn: &rusqlite::Connection,
     project_id: i64,
     pattern: &str,
@@ -359,7 +359,7 @@ fn query_modules(
     Ok(rows)
 }
 
-fn query_symbols(
+pub(crate) fn query_symbols(
     conn: &rusqlite::Connection,
     project_id: i64,
     pattern: &str,
@@ -388,7 +388,7 @@ fn query_symbols(
     Ok(rows)
 }
 
-fn query_deps(
+pub(crate) fn query_deps(
     conn: &rusqlite::Connection,
     project_id: i64,
     module_ids: &[&str],
@@ -429,7 +429,7 @@ fn query_deps(
     Ok(rows)
 }
 
-fn query_chunks(
+pub(crate) fn query_chunks(
     conn: &rusqlite::Connection,
     project_id: i64,
     pattern: &str,
@@ -460,7 +460,7 @@ fn query_chunks(
 // Formatting
 // ============================================================================
 
-fn format_bundle(
+pub(crate) fn format_bundle(
     scope: &str,
     modules: &[ModuleInfo],
     symbols: &[SymbolEntry],

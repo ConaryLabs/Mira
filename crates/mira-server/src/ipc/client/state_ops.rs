@@ -111,6 +111,37 @@ impl super::HookClient {
         }
     }
 
+    /// Generate a code context bundle for a scope. Returns the bundle content string,
+    /// or None if IPC is unavailable, the index is empty, or the query fails.
+    ///
+    /// IPC-only: code_pool is only available on the server, not in direct DB fallback.
+    pub async fn generate_bundle(
+        &mut self,
+        project_id: i64,
+        scope: &str,
+        budget: i64,
+        depth: &str,
+    ) -> Option<String> {
+        if !self.is_ipc() {
+            return None;
+        }
+        let params = json!({
+            "project_id": project_id,
+            "scope": scope,
+            "budget": budget,
+            "depth": depth,
+        });
+        let result = self.call("generate_bundle", params).await.ok()?;
+        if result.get("empty").and_then(|v| v.as_bool()).unwrap_or(true) {
+            return None;
+        }
+        result
+            .get("content")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    }
+
     /// Save compaction context to session_snapshots. Fire-and-forget.
     pub async fn save_compaction_context(&mut self, session_id: &str, context: serde_json::Value) {
         if self.is_ipc() {

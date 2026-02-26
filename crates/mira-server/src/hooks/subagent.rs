@@ -7,7 +7,10 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 /// Maximum total characters for full-capability subagents (Plan, general-purpose)
-const MAX_CONTEXT_CHARS_FULL: usize = 2000;
+const MAX_CONTEXT_CHARS_FULL: usize = 5000;
+
+/// Budget allocated to the code bundle portion of context
+const BUNDLE_BUDGET: i64 = 3000;
 
 /// Minimum entities to consider subagent output significant
 const MIN_SIGNIFICANT_ENTITIES: usize = 3;
@@ -153,7 +156,31 @@ pub async fn run_start() -> Result<()> {
         }
     }
 
+    // Auto-bundle: inject code context based on the task description.
+    // Extract file path scopes from the prompt, then generate a lightweight bundle.
+    let mut bundle_injected = false;
+    if !narrow {
+        if let Some(ref task_desc) = start_input.task_description {
+            let scopes = extract_scopes_from_prompt(task_desc);
+            for scope in scopes.iter().take(2) {
+                if let Some(bundle) = client
+                    .generate_bundle(project_id, scope, BUNDLE_BUDGET, "overview")
+                    .await
+                {
+                    context_parts.push(bundle);
+                    bundle_injected = true;
+                    break; // One bundle is enough
+                }
+            }
+        }
+    }
+
     // Build output, truncating to stay under token budget
+    let mut sources_kept = vec!["goals".to_string()];
+    if bundle_injected {
+        sources_kept.push("bundle".to_string());
+    }
+
     let output = if context_parts.is_empty() {
         serde_json::json!({})
     } else {
@@ -179,7 +206,7 @@ pub async fn run_start() -> Result<()> {
                 session_id: Some(start_input.session_id.clone()),
                 project_id: Some(project_id),
                 chars_injected: context.len(),
-                sources_kept: vec!["goals".to_string()],
+                sources_kept,
                 sources_dropped: vec![],
                 latency_ms: None,
                 was_deduped: false,
@@ -432,6 +459,45 @@ fn build_entity_summary(subagent_type: &str, entities: &[crate::entities::RawEnt
     parts.join(" | ")
 }
 
+/// Extract directory scopes from a task description prompt.
+///
+/// Looks for file paths (e.g. "src/hooks/subagent.rs") and returns their
+/// parent directory as a scope suitable for bundle generation.
+/// Falls back to extracting module-like identifiers if no paths found.
+fn extract_scopes_from_prompt(prompt: &str) -> Vec<String> {
+    let mut scopes = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Match file paths: word chars, slashes, dots, hyphens ending in a known extension
+    // or containing at least one slash
+    for word in prompt.split_whitespace() {
+        // Strip surrounding punctuation (quotes, parens, backticks, commas)
+        let word = word.trim_matches(|c: char| {
+            c == '"' || c == '\'' || c == '`' || c == '(' || c == ')' || c == ',' || c == ';'
+        });
+
+        // Must contain a slash to look like a path
+        if !word.contains('/') {
+            continue;
+        }
+
+        // Extract the directory portion
+        if let Some(idx) = word.rfind('/') {
+            let dir = &word[..idx + 1];
+            // Sanity: directory must be reasonable (no spaces, not too long)
+            if dir.len() <= 200
+                && !dir.contains(' ')
+                && dir.chars().all(|c| c.is_alphanumeric() || "/_-./".contains(c))
+                && seen.insert(dir.to_string())
+            {
+                scopes.push(dir.to_string());
+            }
+        }
+    }
+
+    scopes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,5 +704,33 @@ mod tests {
         assert!(is_narrow_subagent("EXPLORE"));
         assert!(is_narrow_subagent("Code-Reviewer"));
         assert!(is_narrow_subagent("HAIKU"));
+    }
+
+    #[test]
+    fn extract_scopes_finds_file_paths() {
+        let prompt = "Look at src/hooks/subagent.rs and crates/mira-server/src/ipc/ops.rs";
+        let scopes = extract_scopes_from_prompt(prompt);
+        assert_eq!(scopes, vec!["src/hooks/", "crates/mira-server/src/ipc/"]);
+    }
+
+    #[test]
+    fn extract_scopes_handles_backtick_paths() {
+        let prompt = "Check `src/tools/core/code/bundle.rs` for the implementation";
+        let scopes = extract_scopes_from_prompt(prompt);
+        assert_eq!(scopes, vec!["src/tools/core/code/"]);
+    }
+
+    #[test]
+    fn extract_scopes_deduplicates() {
+        let prompt = "Read src/hooks/subagent.rs and src/hooks/session.rs";
+        let scopes = extract_scopes_from_prompt(prompt);
+        assert_eq!(scopes, vec!["src/hooks/"]);
+    }
+
+    #[test]
+    fn extract_scopes_empty_for_no_paths() {
+        let prompt = "Find where authentication is handled";
+        let scopes = extract_scopes_from_prompt(prompt);
+        assert!(scopes.is_empty());
     }
 }

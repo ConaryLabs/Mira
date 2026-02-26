@@ -293,6 +293,193 @@ async fn test_duplex_snapshot_tasks_too_many() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Bundle generation tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Create a test server with a pre-seeded code index.
+async fn create_test_server_with_code(pool: Arc<DatabasePool>, code_pool: Arc<DatabasePool>) -> MiraServer {
+    MiraServer::from_api_keys(pool, code_pool, None, &ApiKeys::default(), false)
+}
+
+/// Seed the code database with test modules and symbols.
+async fn seed_code_index(code_pool: &DatabasePool, project_id: i64) {
+    code_pool
+        .interact(move |conn| {
+            // Insert a module
+            conn.execute(
+                "INSERT INTO codebase_modules (project_id, module_id, name, path, purpose, exports, symbol_count, line_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    project_id,
+                    "src/hooks/",
+                    "hooks",
+                    "src/hooks/",
+                    "Hook handlers for Claude Code events",
+                    r#"["run_start","run_stop"]"#,
+                    3,
+                    200
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO codebase_modules (project_id, module_id, name, path, purpose, exports, symbol_count, line_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    project_id,
+                    "src/hooks/subagent",
+                    "subagent",
+                    "src/hooks/subagent.rs",
+                    "SubagentStart and SubagentStop hook handlers",
+                    r#"["run_start","run_stop"]"#,
+                    5,
+                    400
+                ],
+            )?;
+            // Insert symbols
+            conn.execute(
+                "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, signature)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    project_id,
+                    "src/hooks/subagent.rs",
+                    "run_start",
+                    "function",
+                    100,
+                    "pub async fn run_start() -> Result<()>"
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, signature)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    project_id,
+                    "src/hooks/subagent.rs",
+                    "extract_scopes_from_prompt",
+                    "function",
+                    460,
+                    "fn extract_scopes_from_prompt(prompt: &str) -> Vec<String>"
+                ],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .expect("failed to seed code index");
+}
+
+/// Spawn a duplex handler with a pre-seeded code index.
+async fn spawn_duplex_handler_with_code(
+    pool: Arc<DatabasePool>,
+    code_pool: Arc<DatabasePool>,
+) -> (
+    BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+    tokio::io::WriteHalf<tokio::io::DuplexStream>,
+    tokio::task::JoinHandle<()>,
+) {
+    let server = create_test_server_with_code(pool, code_pool).await;
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let handle = tokio::spawn(async move {
+        handler::handle_connection(server_stream, server).await;
+    });
+    let (read, write) = tokio::io::split(client_stream);
+    (BufReader::new(read), write, handle)
+}
+
+#[tokio::test]
+async fn test_duplex_generate_bundle_with_data() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let code_pool = Arc::new(
+        DatabasePool::open_code_db_in_memory()
+            .await
+            .expect("failed to open code pool"),
+    );
+    seed_code_index(&code_pool, project_id).await;
+
+    let (mut reader, mut writer, handle) =
+        spawn_duplex_handler_with_code(pool, code_pool).await;
+
+    let req = IpcRequest {
+        op: "generate_bundle".into(),
+        id: "bundle-1".into(),
+        params: json!({
+            "project_id": project_id,
+            "scope": "src/hooks/",
+            "budget": 3000,
+            "depth": "overview",
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(resp.ok, "generate_bundle should succeed: {:?}", resp.error);
+
+    let result = resp.result.as_ref().unwrap();
+    assert!(!result["empty"].as_bool().unwrap_or(true), "should not be empty");
+    assert!(result["modules"].as_u64().unwrap() >= 2, "should find 2 modules");
+    assert!(result["symbols"].as_u64().unwrap() >= 2, "should find 2 symbols");
+
+    let content = result["content"].as_str().unwrap();
+    assert!(content.contains("hooks"), "bundle should mention module name");
+    assert!(content.contains("run_start"), "bundle should include symbol names");
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_duplex_generate_bundle_empty_scope() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let code_pool = Arc::new(
+        DatabasePool::open_code_db_in_memory()
+            .await
+            .expect("failed to open code pool"),
+    );
+
+    let (mut reader, mut writer, handle) =
+        spawn_duplex_handler_with_code(pool, code_pool).await;
+
+    // Query a scope that has no indexed data
+    let req = IpcRequest {
+        op: "generate_bundle".into(),
+        id: "bundle-empty".into(),
+        params: json!({
+            "project_id": project_id,
+            "scope": "nonexistent/path/",
+            "budget": 3000,
+            "depth": "overview",
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(resp.ok, "generate_bundle with empty result should succeed");
+
+    let result = resp.result.as_ref().unwrap();
+    assert!(result["empty"].as_bool().unwrap_or(false), "should be empty for nonexistent scope");
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_duplex_generate_bundle_missing_params() {
+    let (pool, _project_id) = setup_test_pool_with_project().await;
+    let (mut reader, mut writer, handle) = spawn_duplex_handler(pool).await;
+
+    // Missing project_id
+    let req = IpcRequest {
+        op: "generate_bundle".into(),
+        id: "bundle-bad".into(),
+        params: json!({"scope": "src/"}),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(!resp.ok, "should fail without project_id");
+
+    // Missing scope
+    let req2 = IpcRequest {
+        op: "generate_bundle".into(),
+        id: "bundle-bad-2".into(),
+        params: json!({"project_id": 1}),
+    };
+    let resp2 = send_request(&mut reader, &mut writer, &req2).await;
+    assert!(!resp2.ok, "should fail without scope");
+
+    handle.abort();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Unix socket integration tests (Unix only — tests real transport)
 // ═══════════════════════════════════════════════════════════════════════════════
 

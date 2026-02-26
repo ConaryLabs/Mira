@@ -806,6 +806,79 @@ pub async fn snapshot_tasks(server: &MiraServer, params: Value) -> Result<Value>
     Ok(json!({"count": count}))
 }
 
+/// Generate a lightweight code context bundle for a given scope.
+///
+/// Used by SubagentStart hook to inject code context into agent prompts.
+/// Skips semantic fallback (no embeddings needed) for speed — only does
+/// path-based matching against the code index.
+pub async fn generate_bundle(server: &MiraServer, params: Value) -> Result<Value> {
+    let project_id = params
+        .get("project_id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
+    let scope = params
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing required param: scope"))?
+        .to_string();
+    let budget = params
+        .get("budget")
+        .and_then(|v| v.as_i64())
+        .map(|b| (b.max(0) as usize).clamp(500, 50_000))
+        .unwrap_or(3000);
+    let depth_str = params
+        .get("depth")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    use crate::tools::core::code::{
+        BundleDepth, format_bundle, query_chunks, query_deps, query_modules, query_symbols,
+        resolve_scope_pattern,
+    };
+
+    let depth = BundleDepth::from_str_opt(depth_str.as_deref());
+    let pattern = resolve_scope_pattern(&scope);
+    let include_chunks = !matches!(depth, BundleDepth::Overview);
+
+    let pattern_clone = pattern.clone();
+    let result = server
+        .code_pool
+        .run(move |conn| {
+            let modules = query_modules(conn, project_id, &pattern_clone)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if modules.is_empty() {
+                return Ok::<_, anyhow::Error>((vec![], vec![], vec![], vec![]));
+            }
+            let symbols = query_symbols(conn, project_id, &pattern_clone)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let module_ids: Vec<&str> = modules.iter().map(|m| m.id.as_str()).collect();
+            let deps =
+                query_deps(conn, project_id, &module_ids).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let chunks = if include_chunks {
+                query_chunks(conn, project_id, &pattern_clone)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            } else {
+                vec![]
+            };
+            Ok((modules, symbols, deps, chunks))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Bundle query failed: {e}"))?;
+
+    let (modules, symbols, deps, chunks) = result;
+    if modules.is_empty() {
+        return Ok(json!({"content": "", "empty": true}));
+    }
+
+    let content = format_bundle(&scope, &modules, &symbols, &deps, &chunks, budget, &depth);
+    Ok(json!({
+        "content": content,
+        "empty": false,
+        "modules": modules.len(),
+        "symbols": symbols.len(),
+    }))
+}
+
 /// Deactivate a team session (set status='stopped').
 pub async fn deactivate_team_session(server: &MiraServer, params: Value) -> Result<Value> {
     let session_id = params

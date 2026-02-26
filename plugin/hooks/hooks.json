@@ -94,7 +94,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook subagent-start",
-            "timeout": 3,
+            "timeout": 5,
             "statusMessage": "Mira: Injecting agent context..."
           }
         ]
