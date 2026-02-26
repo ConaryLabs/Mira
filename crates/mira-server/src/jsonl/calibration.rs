@@ -16,7 +16,7 @@ const MIN_CALIBRATION_SAMPLES: usize = 5;
 /// Calibration result with the computed ratio and confidence info.
 #[derive(Debug, Clone)]
 pub struct Calibration {
-    /// Estimated characters per token (typically 3.0-4.5 for English/code).
+    /// Estimated characters per token (typically 2.5-6.0 for English/code).
     pub chars_per_token: f64,
     /// Number of data points used.
     pub sample_count: usize,
@@ -37,8 +37,8 @@ impl Default for Calibration {
 impl Calibration {
     /// Convert chars to estimated tokens using this calibration.
     pub fn chars_to_tokens(&self, chars: u64) -> u64 {
-        if self.chars_per_token <= 0.0 {
-            return chars / DEFAULT_CHARS_PER_TOKEN as u64;
+        if self.chars_per_token <= 0.0 || !self.chars_per_token.is_finite() {
+            return (chars as f64 / DEFAULT_CHARS_PER_TOKEN).round() as u64;
         }
         (chars as f64 / self.chars_per_token).round() as u64
     }
@@ -60,54 +60,25 @@ pub fn calibrate_from_summary(summary: &SessionSummary) -> Calibration {
         return Calibration::default();
     }
 
-    // Approach: compute the average ratio of cache_creation growth per turn.
-    // Each turn's cache_creation_input_tokens reflects new content the API
-    // had to tokenize. Across many turns, the ratio of total content chars
-    // to total cache tokens gives us the calibration.
-    //
-    // We don't have per-turn char counts in the summary, but we have the
-    // cumulative cache_creation tokens. Use output tokens as a proxy for
-    // output content chars, since output is both generated and added to context.
-
-    let mut samples: Vec<f64> = Vec::new();
-
+    // Count qualifying turns: those with meaningful output and cache creation.
+    // These indicate turns where the model produced content that was subsequently
+    // tokenized into cache, giving us confidence in the calibration data.
+    let mut qualifying_turns: usize = 0;
     for turn in &summary.turns {
-        let out_tokens = turn.usage.output_tokens;
-        let cache_create = turn.usage.cache_creation_input_tokens;
-
-        // Skip turns with very small output (noise) or no cache creation
-        if out_tokens < 10 || cache_create == 0 {
-            continue;
+        if turn.usage.output_tokens >= 10 && turn.usage.cache_creation_input_tokens > 0 {
+            qualifying_turns += 1;
         }
-
-        // The output of this turn becomes part of the next turn's input context.
-        // cache_creation represents new content tokenized. We can use the ratio
-        // of output_tokens (a known token count for known generated content)
-        // to estimate chars_per_token across the whole session.
-        //
-        // This is an indirect calibration - not perfect, but better than nothing.
-        // The output token count is exact, and output text tends to have a similar
-        // chars/token ratio as injected context (both are English/code mix).
-        samples.push(out_tokens as f64);
     }
 
-    if samples.len() < MIN_CALIBRATION_SAMPLES {
+    if qualifying_turns < MIN_CALIBRATION_SAMPLES {
         return Calibration::default();
     }
 
-    // For output: we know Claude models average ~3.5-4.0 chars per token for code.
-    // Use the session's own output characteristics to refine.
-    // Since we can't directly measure chars in TurnSummary, use the empirical
-    // finding that code/mixed content is ~3.7 chars/token for Claude models.
-    //
-    // Better calibration would require reading the raw JSONL text content,
-    // but that's expensive. For now, use a refined constant based on the fact
-    // that we're analyzing code-heavy sessions.
     let chars_per_token = estimate_from_content_mix(summary);
 
     Calibration {
         chars_per_token,
-        sample_count: samples.len(),
+        sample_count: qualifying_turns,
         is_default: false,
     }
 }
@@ -139,40 +110,40 @@ pub fn calibrate_from_file(path: &std::path::Path) -> std::io::Result<Calibratio
 
         let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-        if entry_type == "assistant" {
-            if let Some(message) = entry.get("message") {
-                // Measure output content chars
-                let mut turn_chars: u64 = 0;
-                if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
-                    for block in content {
-                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                        match block_type {
-                            "text" => {
-                                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                                    turn_chars += text.len() as u64;
-                                }
+        if entry_type == "assistant"
+            && let Some(message) = entry.get("message")
+        {
+            // Measure output content chars
+            let mut turn_chars: u64 = 0;
+            if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
+                for block in content {
+                    let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    match block_type {
+                        "text" => {
+                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                turn_chars += text.len() as u64;
                             }
-                            "thinking" => {
-                                if let Some(text) = block.get("thinking").and_then(|t| t.as_str()) {
-                                    turn_chars += text.len() as u64;
-                                }
-                            }
-                            _ => {}
                         }
+                        "thinking" => {
+                            if let Some(text) = block.get("thinking").and_then(|t| t.as_str()) {
+                                turn_chars += text.len() as u64;
+                            }
+                        }
+                        _ => {}
                     }
                 }
+            }
 
-                // Get output tokens for this turn
-                if let Some(usage) = message.get("usage") {
-                    let out_tokens = usage.get("output_tokens")
-                        .and_then(|t| t.as_u64())
-                        .unwrap_or(0);
+            // Get output tokens for this turn
+            if let Some(usage) = message.get("usage") {
+                let out_tokens = usage.get("output_tokens")
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(0);
 
-                    if turn_chars >= 20 && out_tokens >= 5 {
-                        total_chars += turn_chars;
-                        total_tokens += out_tokens;
-                        samples += 1;
-                    }
+                if turn_chars >= 20 && out_tokens >= 5 {
+                    total_chars += turn_chars;
+                    total_tokens += out_tokens;
+                    samples += 1;
                 }
             }
         }
@@ -309,6 +280,31 @@ mod tests {
         };
         assert_eq!(cal.chars_to_tokens(350), 100);
         assert_eq!(cal.chars_to_tokens(0), 0);
+    }
+
+    #[test]
+    fn test_chars_to_tokens_nan_guard() {
+        let cal = Calibration {
+            chars_per_token: f64::NAN,
+            sample_count: 0,
+            is_default: false,
+        };
+        // Should fall back to DEFAULT_CHARS_PER_TOKEN
+        assert_eq!(cal.chars_to_tokens(400), 100);
+
+        let cal_inf = Calibration {
+            chars_per_token: f64::INFINITY,
+            sample_count: 0,
+            is_default: false,
+        };
+        assert_eq!(cal_inf.chars_to_tokens(400), 100);
+
+        let cal_neg = Calibration {
+            chars_per_token: -1.0,
+            sample_count: 0,
+            is_default: false,
+        };
+        assert_eq!(cal_neg.chars_to_tokens(400), 100);
     }
 
     #[test]

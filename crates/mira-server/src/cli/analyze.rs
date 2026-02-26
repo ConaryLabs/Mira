@@ -7,6 +7,19 @@ use std::path::PathBuf;
 use mira::jsonl::{self, CorrelatedSession};
 use mira::jsonl::calibration;
 
+/// Format a number with comma separators (e.g. 1234567 -> "1,234,567")
+fn fmt_num(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
 /// Run the analyze-session command.
 pub fn run(
     session: Option<String>,
@@ -35,27 +48,30 @@ pub fn run(
 
     // Token summary
     println!("--- Token Usage ---");
-    println!("  API turns:        {}", summary.turn_count());
-    println!("  User prompts:     {}", summary.user_prompt_count);
-    println!("  Tool results:     {}", summary.tool_result_count);
-    println!("  Input tokens:     {}", summary.total_input_tokens());
-    println!("  Output tokens:    {}", summary.total_output_tokens());
-    println!("  Cache read:       {}", summary.total_cache_read_tokens());
-    println!("  Cache creation:   {}", summary.total_cache_creation_tokens());
-    println!("  Billable input:   {}", summary.total_billable_input());
+    println!("  API turns:        {}", fmt_num(summary.turn_count() as u64));
+    println!("  User prompts:     {}", fmt_num(summary.user_prompt_count));
+    println!("  Tool results:     {}", fmt_num(summary.tool_result_count));
+    println!("  Input tokens:     {}", fmt_num(summary.total_input_tokens()));
+    println!("  Output tokens:    {}", fmt_num(summary.total_output_tokens()));
+    println!("  Cache read:       {}", fmt_num(summary.total_cache_read_tokens()));
+    println!("  Cache creation:   {}", fmt_num(summary.total_cache_creation_tokens()));
+    println!("  Billable input:   {}", fmt_num(summary.total_billable_input()));
     if summary.compaction_count > 0 {
-        println!("  Compactions:      {}", summary.compaction_count);
+        println!("  Compactions:      {}", fmt_num(summary.compaction_count));
+    }
+    if summary.parse_errors > 0 {
+        println!("  Parse errors:     {}", fmt_num(summary.parse_errors));
     }
     println!();
 
     // Tool breakdown
-    if show_tools || !summary.tool_calls.is_empty() {
+    if show_tools {
         let mut tools: Vec<_> = summary.tool_calls.iter().collect();
         tools.sort_by(|a, b| b.1.cmp(a.1));
 
-        println!("--- Tool Calls ({} total) ---", summary.total_tool_calls());
+        println!("--- Tool Calls ({} total) ---", fmt_num(summary.total_tool_calls()));
         for (name, count) in &tools {
-            println!("  {:<20} {}", name, count);
+            println!("  {:<20} {}", name, fmt_num(**count));
         }
         println!();
     }
@@ -94,7 +110,10 @@ pub fn run(
             }
             c
         }
-        Err(_) => calibration::Calibration::default(),
+        Err(e) => {
+            eprintln!("Warning: calibration failed: {e}, using default");
+            calibration::Calibration::default()
+        }
     };
 
     // Injection correlation
@@ -123,14 +142,14 @@ pub fn run(
                     );
 
                     println!("--- Mira Injection Correlation ---");
-                    println!("  Injections:           {}", corr.injections);
-                    println!("  Chars injected:       {}", corr.injected_chars);
-                    println!("  Est. injected tokens: {}", corr.estimated_injected_tokens);
+                    println!("  Injections:           {}", fmt_num(corr.injections));
+                    println!("  Chars injected:       {}", fmt_num(corr.injected_chars));
+                    println!("  Est. injected tokens: {}", fmt_num(corr.estimated_injected_tokens));
                     if let Some(ratio) = corr.injection_overhead_ratio {
                         println!("  Overhead ratio:       {:.2}%", ratio * 100.0);
                     }
-                    println!("  Deduped:              {}", corr.injections_deduped);
-                    println!("  Cached:               {}", corr.injections_cached);
+                    println!("  Deduped:              {}", fmt_num(corr.injections_deduped));
+                    println!("  Cached:               {}", fmt_num(corr.injections_cached));
                     if let Some(rate) = corr.dedup_rate {
                         println!("  Dedup rate:           {:.1}%", rate * 100.0);
                     }
@@ -144,7 +163,7 @@ pub fn run(
                 }
             }
         } else {
-            eprintln!("Warning: Mira DB not found at {}, skipping correlation", db_path.display());
+            eprintln!("Warning: Mira DB not found at {}, skipping correlation. Run Mira MCP server first.", db_path.display());
         }
     }
 
@@ -168,6 +187,8 @@ fn resolve_session(session: Option<String>) -> Result<(PathBuf, String)> {
                 .unwrap_or("unknown")
                 .to_string();
             return Ok((path, session_id));
+        } else if path.exists() {
+            bail!("File exists but is not a .jsonl file: {s}");
         }
 
         // Try as session ID
@@ -195,14 +216,12 @@ fn resolve_session(session: Option<String>) -> Result<(PathBuf, String)> {
 
         for file in std::fs::read_dir(&project_dir)?.flatten() {
             let fpath = file.path();
-            if fpath.extension().is_some_and(|e| e == "jsonl") {
-                if let Ok(meta) = fpath.metadata() {
-                    if let Ok(modified) = meta.modified() {
-                        if newest.as_ref().is_none_or(|(_, t)| modified > *t) {
-                            newest = Some((fpath, modified));
-                        }
-                    }
-                }
+            if fpath.extension().is_some_and(|e| e == "jsonl")
+                && let Ok(meta) = fpath.metadata()
+                && let Ok(modified) = meta.modified()
+                && newest.as_ref().is_none_or(|(_, t)| modified > *t)
+            {
+                newest = Some((fpath, modified));
             }
         }
 
@@ -217,4 +236,22 @@ fn resolve_session(session: Option<String>) -> Result<(PathBuf, String)> {
     }
 
     bail!("No session JSONL files found. Provide a session ID or file path.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fmt_num() {
+        assert_eq!(fmt_num(0), "0");
+        assert_eq!(fmt_num(1), "1");
+        assert_eq!(fmt_num(12), "12");
+        assert_eq!(fmt_num(123), "123");
+        assert_eq!(fmt_num(1234), "1,234");
+        assert_eq!(fmt_num(12345), "12,345");
+        assert_eq!(fmt_num(123456), "123,456");
+        assert_eq!(fmt_num(1234567), "1,234,567");
+        assert_eq!(fmt_num(1234567890), "1,234,567,890");
+    }
 }

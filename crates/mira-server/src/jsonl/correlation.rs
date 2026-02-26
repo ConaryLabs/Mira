@@ -159,7 +159,7 @@ impl CorrelatedSession {
         report.push_str(&format!("  Output tokens: {}\n", self.total_output_tokens));
         report.push_str(&format!("  Cache read: {}\n", self.total_cache_read_tokens));
         report.push_str(&format!("  Cache creation: {}\n", self.total_cache_creation_tokens));
-        report.push_str(&format!("  Total billable input: {}\n", self.total_billable_input));
+        report.push_str(&format!("  Billable input: {}\n", self.total_billable_input));
         if self.compactions > 0 {
             report.push_str(&format!("  Compactions: {}\n", self.compactions));
         }

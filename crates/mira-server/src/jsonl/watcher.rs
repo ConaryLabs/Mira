@@ -4,7 +4,7 @@
 
 use super::parser::{self, SessionSummary, TurnSummary};
 use std::collections::HashMap;
-use std::io::{self, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, watch};
@@ -15,6 +15,16 @@ const POLL_INTERVAL_MS: u64 = 200;
 /// How long to wait for inotify events before checking shutdown (ms).
 const SELECT_TIMEOUT_MS: u64 = 2000;
 
+/// Maximum bytes to read in a single cycle. Prevents unbounded memory use
+/// if a huge chunk is appended between polls. The next cycle picks up the rest.
+const MAX_READ_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Maximum retained turns in the watcher's running summary. The snapshot only
+/// uses the last 10, so keeping more than ~100 is wasteful. The batch parser
+/// in parser.rs keeps all turns (correct for CLI analysis); this limit is
+/// watcher-only.
+const MAX_RETAINED_TURNS: usize = 100;
+
 /// Running state for a watched JSONL file.
 struct WatchedFile {
     path: PathBuf,
@@ -22,6 +32,17 @@ struct WatchedFile {
     byte_offset: u64,
     /// Running session summary.
     summary: SessionSummary,
+}
+
+/// Result from the blocking read closure.
+enum ReadResult {
+    /// No new data available.
+    NoChange,
+    /// Incremental new lines parsed from `offset..new_offset`.
+    Incremental(Vec<String>, u64),
+    /// File was truncated -- full re-read from start. Summary must be reset
+    /// before applying these lines.
+    Truncated(Vec<String>, u64),
 }
 
 /// Snapshot of live session stats, safe to share across threads.
@@ -130,9 +151,8 @@ pub fn spawn_watcher(
         snapshot: snapshot.clone(),
     };
 
-    let path_clone = path.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_watcher(path_clone, snapshot, shutdown).await {
+        if let Err(e) = run_watcher(path, snapshot, shutdown).await {
             tracing::warn!("JSONL watcher exited with error: {}", e);
         }
     });
@@ -150,9 +170,8 @@ pub fn spawn_watcher_for_path(
         snapshot: snapshot.clone(),
     };
 
-    let path_clone = path.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_watcher(path_clone, snapshot, shutdown).await {
+        if let Err(e) = run_watcher(path, snapshot, shutdown).await {
             tracing::warn!("JSONL watcher exited with error: {}", e);
         }
     });
@@ -199,15 +218,15 @@ async fn run_watcher(
         let tx = notify_tx.clone();
         let mut watcher: RecommendedWatcher = Watcher::new(
             move |res: Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
-                        let _ = tx.try_send(());
-                    }
+                if let Ok(event) = res
+                    && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+                {
+                    let _ = tx.try_send(());
                 }
             },
             Config::default(),
         )
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
 
         // Watch the parent directory (the file might not exist at the exact path yet
         // if we're racing with Claude Code's first write)
@@ -216,7 +235,7 @@ async fn run_watcher(
             .unwrap_or(&path);
         watcher
             .watch(watch_path, notify::RecursiveMode::NonRecursive)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         watcher
     };
@@ -245,7 +264,7 @@ async fn run_watcher(
                     .map(|m| m.len())
                     .unwrap_or(watched.byte_offset);
 
-                if current_len > watched.byte_offset {
+                if current_len != watched.byte_offset {
                     if let Err(e) = read_new_entries(&mut watched).await {
                         tracing::debug!("JSONL watcher periodic read error: {}", e);
                     } else {
@@ -267,67 +286,107 @@ async fn run_watcher(
     Ok(())
 }
 
+/// Read bytes from the file and split into complete lines.
+///
+/// Uses `read_to_end` / `read_exact` into `Vec<u8>` to handle non-UTF-8 data
+/// (binary tool output in JSONL). Lines that are not valid UTF-8 are silently
+/// skipped. Byte offsets are tracked from the raw buffer to avoid drift from
+/// lossy conversion.
+fn read_lines_from_offset(path: &PathBuf, offset: u64) -> io::Result<ReadResult> {
+    let mut file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+
+    if file_len < offset {
+        // File was truncated -- re-read from the beginning
+        let read_len = std::cmp::min(file_len, MAX_READ_BYTES) as usize;
+        let mut buf = vec![0u8; read_len];
+        file.read_exact(&mut buf)?;
+
+        let (lines, committed) = extract_complete_lines(&buf);
+        return Ok(ReadResult::Truncated(lines, committed));
+    }
+    if file_len == offset {
+        return Ok(ReadResult::NoChange);
+    }
+
+    file.seek(SeekFrom::Start(offset))?;
+
+    // Cap read size to prevent unbounded memory use
+    let read_len = std::cmp::min(file_len - offset, MAX_READ_BYTES) as usize;
+    let mut buf = vec![0u8; read_len];
+    file.read_exact(&mut buf)?;
+
+    let (lines, committed) = extract_complete_lines(&buf);
+    Ok(ReadResult::Incremental(lines, offset + committed))
+}
+
+/// Extract complete newline-terminated lines from a raw byte buffer.
+///
+/// Returns the parsed lines (skipping non-UTF-8) and the number of committed
+/// bytes (only complete lines, excluding any trailing partial line).
+fn extract_complete_lines(buf: &[u8]) -> (Vec<String>, u64) {
+    let mut lines = Vec::new();
+    let mut committed_bytes: u64 = 0;
+
+    for chunk in buf.split(|&b| b == b'\n') {
+        let line_with_newline = chunk.len() as u64 + 1; // +1 for '\n'
+        if committed_bytes + line_with_newline > buf.len() as u64 {
+            // This is the last segment with no trailing '\n' -- partial line
+            break;
+        }
+        committed_bytes += line_with_newline;
+        // Only parse UTF-8 valid lines; skip non-UTF-8 (binary content)
+        if let Ok(s) = std::str::from_utf8(chunk) {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                lines.push(trimmed.to_string());
+            }
+        }
+    }
+
+    (lines, committed_bytes)
+}
+
 /// Read new lines from the JSONL file starting at the last known byte offset.
 async fn read_new_entries(watched: &mut WatchedFile) -> io::Result<()> {
     let path = watched.path.clone();
     let offset = watched.byte_offset;
 
     // File I/O is blocking, move to blocking thread
-    let (new_lines, new_offset) = tokio::task::spawn_blocking(move || -> io::Result<(Vec<String>, u64)> {
-        let mut file = std::fs::File::open(&path)?;
-        let file_len = file.metadata()?.len();
-
-        if file_len < offset {
-            // File was truncated (shouldn't happen normally, but handle gracefully)
-            return Ok((Vec::new(), 0));
-        }
-        if file_len == offset {
-            return Ok((Vec::new(), offset));
-        }
-
-        file.seek(SeekFrom::Start(offset))?;
-        let mut raw = String::new();
-        std::io::Read::read_to_string(&mut file, &mut raw)?;
-
-        // Only advance offset through complete lines (terminated by '\n').
-        // A partial last line (no trailing newline) means the writer hasn't
-        // finished flushing -- leave it for the next read cycle.
-        let mut lines = Vec::new();
-        let mut committed_bytes: u64 = 0;
-
-        for line in raw.split('\n') {
-            // The last element after split is either "" (if raw ends with \n)
-            // or a partial unterminated line. Either way, don't count it.
-            let line_with_newline = line.len() as u64 + 1; // +1 for '\n'
-            if committed_bytes + line_with_newline > raw.len() as u64 {
-                // This is the last segment and there's no trailing '\n' for it
-                break;
-            }
-            committed_bytes += line_with_newline;
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                lines.push(trimmed.to_string());
-            }
-        }
-
-        Ok((lines, offset + committed_bytes))
+    let result = tokio::task::spawn_blocking(move || -> io::Result<ReadResult> {
+        read_lines_from_offset(&path, offset)
     })
     .await
-    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+    .map_err(io::Error::other)??;
 
-    // Parse new lines incrementally
-    for line in &new_lines {
-        parse_line_into_summary(line, &mut watched.summary);
-    }
+    match result {
+        ReadResult::NoChange => {}
+        ReadResult::Incremental(new_lines, new_offset) => {
+            for line in &new_lines {
+                parse_line_into_summary(line, &mut watched.summary);
+            }
+            watched.byte_offset = new_offset;
 
-    watched.byte_offset = new_offset;
-
-    if !new_lines.is_empty() {
-        tracing::debug!(
-            "JSONL watcher: parsed {} new lines, now at {} turns",
-            new_lines.len(),
-            watched.summary.turn_count()
-        );
+            if !new_lines.is_empty() {
+                tracing::debug!(
+                    "JSONL watcher: parsed {} new lines, now at {} turns",
+                    new_lines.len(),
+                    watched.summary.turn_count()
+                );
+            }
+        }
+        ReadResult::Truncated(new_lines, new_offset) => {
+            // File was truncated -- reset summary and re-parse from scratch
+            tracing::debug!(
+                "JSONL watcher: file truncated (was at {} bytes), resetting summary",
+                watched.byte_offset
+            );
+            watched.summary = SessionSummary::default();
+            for line in &new_lines {
+                parse_line_into_summary(line, &mut watched.summary);
+            }
+            watched.byte_offset = new_offset;
+        }
     }
 
     Ok(())
@@ -358,8 +417,12 @@ fn parse_line_into_summary(line: &str, summary: &mut SessionSummary) {
         summary.first_timestamp = one_line_summary.first_timestamp;
     }
 
-    // Merge turns
+    // Merge turns (watcher-only cap to bound memory; batch parser keeps all)
     summary.turns.extend(one_line_summary.turns);
+    if summary.turns.len() > MAX_RETAINED_TURNS {
+        let drain_count = summary.turns.len() - MAX_RETAINED_TURNS;
+        summary.turns.drain(..drain_count);
+    }
 
     // Merge tool calls
     for (name, count) in one_line_summary.tool_calls {
@@ -530,6 +593,128 @@ mod tests {
         // NOW the line should be consumed
         assert_eq!(watched.summary.turn_count(), 2 + 1,
             "completed line should now be parsed (initial 2 from full parse + 1 new)");
+    }
+
+    #[tokio::test]
+    async fn test_truncation_resets_summary() {
+        // Create a temp file with initial content: 1 user + 2 assistant turns
+        let mut tmpfile = NamedTempFile::new().expect("create temp file");
+        writeln!(tmpfile, "{}", make_user_line()).expect("write");
+        writeln!(tmpfile, "{}", make_assistant_line(10, 50, None)).expect("write");
+        writeln!(tmpfile, "{}", make_assistant_line(5, 30, Some("Grep"))).expect("write");
+        tmpfile.flush().expect("flush");
+
+        let initial_len = tmpfile.as_file().metadata().expect("meta").len();
+
+        let mut watched = WatchedFile {
+            path: tmpfile.path().to_path_buf(),
+            byte_offset: initial_len,
+            summary: parser::parse_session_file(tmpfile.path()).expect("parse"),
+        };
+
+        assert_eq!(watched.summary.turn_count(), 2);
+        assert_eq!(watched.summary.user_prompt_count, 1);
+        assert_eq!(watched.summary.total_output_tokens(), 80);
+
+        // Truncate the file and write smaller content (1 user + 1 assistant)
+        {
+            let file = tmpfile.as_file_mut();
+            file.set_len(0).expect("truncate");
+            file.seek(SeekFrom::Start(0)).expect("seek");
+        }
+        writeln!(tmpfile, "{}", make_user_line()).expect("write");
+        writeln!(tmpfile, "{}", make_assistant_line(20, 100, Some("Edit"))).expect("write");
+        tmpfile.flush().expect("flush");
+
+        // The file is now shorter than watched.byte_offset -- triggers truncation path
+        read_new_entries(&mut watched).await.expect("read");
+
+        // Summary should reflect ONLY the new file content, not old + new (no double-count)
+        assert_eq!(watched.summary.turn_count(), 1,
+            "after truncation, should have 1 turn (not 2+1=3)");
+        assert_eq!(watched.summary.user_prompt_count, 1,
+            "after truncation, should have 1 user prompt (not 1+1=2)");
+        assert_eq!(watched.summary.total_output_tokens(), 100,
+            "after truncation, should have 100 output tokens (not 80+100=180)");
+        assert_eq!(*watched.summary.tool_calls.get("Edit").unwrap_or(&0), 1);
+        // Old tool call should be gone after reset
+        assert_eq!(*watched.summary.tool_calls.get("Grep").unwrap_or(&0), 0,
+            "old tool calls should be cleared after truncation");
+    }
+
+    #[tokio::test]
+    async fn test_binary_data_in_lines() {
+        // Simulate a JSONL file with a line containing non-UTF-8 bytes
+        let mut tmpfile = NamedTempFile::new().expect("create temp file");
+
+        // Write a valid user line
+        let user_line = make_user_line();
+        tmpfile.write_all(user_line.as_bytes()).expect("write");
+        tmpfile.write_all(b"\n").expect("write newline");
+
+        // Write a line with invalid UTF-8 bytes (simulating binary tool output)
+        tmpfile.write_all(b"{\"type\":\"result\",\"data\":\"\xff\xfe\xfd\"}\n").expect("write binary");
+
+        // Write another valid assistant line
+        let asst_line = make_assistant_line(10, 50, None);
+        tmpfile.write_all(asst_line.as_bytes()).expect("write");
+        tmpfile.write_all(b"\n").expect("write newline");
+
+        tmpfile.flush().expect("flush");
+
+        let mut watched = WatchedFile {
+            path: tmpfile.path().to_path_buf(),
+            byte_offset: 0,
+            summary: SessionSummary::default(),
+        };
+
+        // Should not error -- non-UTF-8 lines are skipped
+        read_new_entries(&mut watched).await.expect("read should not fail on binary data");
+
+        // Should have parsed the valid user and assistant lines
+        assert_eq!(watched.summary.user_prompt_count, 1);
+        assert_eq!(watched.summary.turn_count(), 1);
+
+        // Byte offset should have advanced past all three lines
+        let expected_len = tmpfile.as_file().metadata().expect("meta").len();
+        assert_eq!(watched.byte_offset, expected_len,
+            "byte offset should advance past all complete lines including non-UTF-8 ones");
+    }
+
+    #[test]
+    fn test_extract_complete_lines_partial() {
+        // Buffer with two complete lines and one partial
+        let buf = b"line1\nline2\npartial";
+        let (lines, committed) = extract_complete_lines(buf);
+        assert_eq!(lines, vec!["line1", "line2"]);
+        assert_eq!(committed, 12); // "line1\n" (6) + "line2\n" (6)
+    }
+
+    #[test]
+    fn test_extract_complete_lines_all_terminated() {
+        let buf = b"line1\nline2\n";
+        let (lines, committed) = extract_complete_lines(buf);
+        assert_eq!(lines, vec!["line1", "line2"]);
+        assert_eq!(committed, 12);
+    }
+
+    #[test]
+    fn test_extract_complete_lines_empty_lines_skipped() {
+        let buf = b"line1\n\n\nline2\n";
+        let (lines, committed) = extract_complete_lines(buf);
+        assert_eq!(lines, vec!["line1", "line2"]);
+        assert_eq!(committed, 14);
+    }
+
+    #[test]
+    fn test_extract_complete_lines_non_utf8_skipped() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"valid\n");
+        buf.extend_from_slice(b"\xff\xfe\xfd\n");
+        buf.extend_from_slice(b"also_valid\n");
+        let (lines, committed) = extract_complete_lines(&buf);
+        assert_eq!(lines, vec!["valid", "also_valid"]);
+        assert_eq!(committed, buf.len() as u64);
     }
 
     #[tokio::test]

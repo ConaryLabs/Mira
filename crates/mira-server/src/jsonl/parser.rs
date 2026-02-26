@@ -131,7 +131,7 @@ pub enum EntryType {
 }
 
 impl EntryType {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "user" => Self::User,
             "assistant" => Self::Assistant,
@@ -233,20 +233,20 @@ fn parse_from_reader<R: BufRead>(reader: R) -> SessionSummary {
         };
 
         // Capture session metadata from first entry that has it
-        if summary.session_id.is_none() {
-            if let Some(ref sid) = entry.session_id {
-                summary.session_id = Some(sid.clone());
-            }
+        if summary.session_id.is_none()
+            && let Some(ref sid) = entry.session_id
+        {
+            summary.session_id = Some(sid.clone());
         }
-        if summary.version.is_none() {
-            if let Some(ref v) = entry.version {
-                summary.version = Some(v.clone());
-            }
+        if summary.version.is_none()
+            && let Some(ref v) = entry.version
+        {
+            summary.version = Some(v.clone());
         }
-        if summary.git_branch.is_none() {
-            if let Some(ref b) = entry.git_branch {
-                summary.git_branch = Some(b.clone());
-            }
+        if summary.git_branch.is_none()
+            && let Some(ref b) = entry.git_branch
+        {
+            summary.git_branch = Some(b.clone());
         }
 
         // Track timestamps
@@ -259,7 +259,7 @@ fn parse_from_reader<R: BufRead>(reader: R) -> SessionSummary {
 
         let entry_type = entry.entry_type.as_deref().unwrap_or("unknown");
 
-        match EntryType::from_str(entry_type) {
+        match EntryType::parse(entry_type) {
             EntryType::Assistant => {
                 process_assistant_entry(&entry, &mut summary);
             }
@@ -288,17 +288,17 @@ fn process_assistant_entry(entry: &RawEntry, summary: &mut SessionSummary) {
 
     if let Some(blocks) = message.content.as_array() {
         for block in blocks {
-            if let Ok(cb) = serde_json::from_value::<ContentBlock>(block.clone()) {
-                if let Some(ref bt) = cb.block_type {
-                    if !content_types.contains(bt) {
-                        content_types.push(bt.clone());
-                    }
-                    if bt == "tool_use" {
-                        if let Some(ref name) = cb.name {
-                            tool_calls.push(name.clone());
-                            *summary.tool_calls.entry(name.clone()).or_insert(0) += 1;
-                        }
-                    }
+            if let Ok(cb) = serde_json::from_value::<ContentBlock>(block.clone())
+                && let Some(ref bt) = cb.block_type
+            {
+                if !content_types.contains(bt) {
+                    content_types.push(bt.clone());
+                }
+                if bt == "tool_use"
+                    && let Some(ref name) = cb.name
+                {
+                    tool_calls.push(name.clone());
+                    *summary.tool_calls.entry(name.clone()).or_insert(0) += 1;
                 }
             }
         }

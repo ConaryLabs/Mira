@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.2] - 2026-02-25
 
 ### Added
+- **JSONL session analysis** -- New `mira analyze-session` CLI command parses Claude Code session JSONL files and reports token usage, tool call frequency, cache efficiency, and session metadata.
+- **JSONL parser** -- Structured parser (`jsonl::parser`) extracts per-turn token usage, tool calls, timestamps, content types, sidechain flags, and compaction events from JSONL session logs.
+- **JSONL live watcher** -- Background watcher (`jsonl::watcher`) monitors active session JSONL files via inotify for real-time session tracking.
+- **Injection correlation** -- `jsonl::correlation` combines JSONL token data with Mira's `context_injections` DB table to measure injection impact on token usage.
+- **Chars-to-token calibration** -- `jsonl::calibration` derives empirical chars-per-token ratios from real session data, improving injection size estimates.
+- **Context injection instrumentation** -- Hooks now record injection stats (char count, token estimate, latency) to the database for post-session analysis.
 - **Parser: return types** -- All 4 parsers (Rust, Python, TypeScript, Go) now extract return type annotations from function signatures.
 - **Parser: imported symbol names** -- `use foo::{Bar, Baz}`, `from x import y, z`, `import { Foo }` now populate `imported_symbols` across all languages.
 - **Parser: decorators** -- Python decorators (`@property`, `@dataclass`, etc.) and Symbol struct support for decorator metadata.
