@@ -1,6 +1,8 @@
 // crates/mira-server/src/indexer/types.rs
 // Public types for the indexer module
 
+use std::collections::HashMap;
+
 /// Index statistics
 pub struct IndexStats {
     pub files: usize,
@@ -8,6 +10,8 @@ pub struct IndexStats {
     pub chunks: usize,
     pub errors: usize,
     pub skipped: usize,
+    /// Files skipped due to unsupported extension, grouped by extension (e.g. ".java" -> 45)
+    pub skipped_by_extension: HashMap<String, usize>,
 }
 
 /// A code chunk with content and location info

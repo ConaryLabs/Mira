@@ -15,6 +15,8 @@ pub struct CrossRefResult {
     pub ref_type: CrossRefType,
     /// Number of calls (for callers)
     pub call_count: i32,
+    /// Line where the symbol starts (from code_symbols.start_line)
+    pub line: Option<i64>,
 }
 
 /// Type of cross-reference relationship
@@ -105,6 +107,7 @@ pub fn find_callers(
             file_path: r.file_path,
             ref_type: CrossRefType::Caller,
             call_count: r.call_count,
+            line: r.line,
         })
         .collect())
 }
@@ -318,6 +321,7 @@ pub fn find_callees(
             file_path: r.file_path,
             ref_type: CrossRefType::Callee,
             call_count: r.call_count,
+            line: r.line,
         })
         // Filter out stdlib/utility calls
         .filter(|r| !is_stdlib_call(&r.symbol_name))
@@ -370,11 +374,16 @@ pub fn format_crossref_results(
     let mut response = header;
 
     for (i, result) in results.iter().enumerate() {
+        let location = if let Some(line) = result.line {
+            format!("{}:{}", result.file_path, line)
+        } else {
+            result.file_path.clone()
+        };
         response.push_str(&format!(
             "{}. `{}` in {} ({}x)\n",
             i + 1,
             result.symbol_name,
-            result.file_path,
+            location,
             result.call_count
         ));
     }
@@ -572,12 +581,14 @@ mod tests {
                 file_path: "src/main.rs".to_string(),
                 ref_type: CrossRefType::Caller,
                 call_count: 3,
+                line: Some(10),
             },
             CrossRefResult {
                 symbol_name: "process".to_string(),
                 file_path: "src/lib.rs".to_string(),
                 ref_type: CrossRefType::Caller,
                 call_count: 1,
+                line: None,
             },
         ];
         let output = format_crossref_results("target_fn", CrossRefType::Caller, &results);
@@ -597,6 +608,7 @@ mod tests {
             file_path: "src/utils.rs".to_string(),
             ref_type: CrossRefType::Callee,
             call_count: 2,
+            line: Some(5),
         }];
         let output = format_crossref_results("main", CrossRefType::Callee, &results);
 
@@ -918,6 +930,7 @@ mod tests {
             file_path: "src/single.rs".to_string(),
             ref_type: CrossRefType::Caller,
             call_count: 1,
+            line: None,
         }];
         let output = format_crossref_results("target", CrossRefType::Caller, &results);
         assert!(output.contains("1. `only_caller`"));

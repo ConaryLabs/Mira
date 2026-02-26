@@ -52,7 +52,7 @@ pub async fn search_code<C: ToolContext>(
             .map(|r| CallGraphEntry {
                 function_name: r.symbol_name.clone(),
                 file_path: r.file_path.clone(),
-                line: None,
+                line: r.line.map(|l| l as usize),
             })
             .collect();
         let total = functions.len();
@@ -353,7 +353,7 @@ pub async fn find_function_callers<C: ToolContext>(
                 .map(|r| CallGraphEntry {
                     function_name: r.symbol_name.clone(),
                     file_path: r.file_path.clone(),
-                    line: None,
+                    line: r.line.map(|l| l as usize),
                 })
                 .collect(),
             total,
@@ -410,7 +410,7 @@ pub async fn find_function_callees<C: ToolContext>(
                 .map(|r| CallGraphEntry {
                     function_name: r.symbol_name.clone(),
                     file_path: r.file_path.clone(),
-                    line: None,
+                    line: r.line.map(|l| l as usize),
                 })
                 .collect(),
             total,
@@ -487,12 +487,10 @@ pub fn get_symbols(
 
         let mut response = format!("{} symbols:\n", total);
         for sym in &display {
-            let lines = if sym.start_line == sym.end_line {
-                format!("line {}", sym.start_line)
-            } else {
-                format!("lines {}-{}", sym.start_line, sym.end_line)
-            };
-            response.push_str(&format!("  {} ({}) {}\n", sym.name, sym.symbol_type, lines));
+            response.push_str(&format!(
+                "  {}:{}({})\n",
+                sym.name, sym.symbol_type, sym.start_line
+            ));
         }
 
         if total > 10 {

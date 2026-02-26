@@ -99,6 +99,11 @@ pub fn walk(
                 ctx.symbols.push(sym);
             }
         }
+        "type_item" => {
+            if let Some(sym) = extract_type_alias(node, ctx.source) {
+                ctx.symbols.push(sym);
+            }
+        }
         "use_declaration" => {
             if let Some(import) = extract_use(node, ctx.source) {
                 ctx.imports.push(import);
@@ -127,6 +132,7 @@ pub fn walk(
 }
 
 fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
+    let return_type = node.field_text("return_type", source);
     SymbolBuilder::new(node, source, "rust")
         .name_from_field("name")
         .qualified_with_parent(parent_name, "::")
@@ -136,6 +142,7 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         .documentation(get_doc_comment(node, source))
         .is_test(has_test_attribute(node, source))
         .is_async(node.has_child_kind("async"))
+        .return_type(return_type)
         .build()
 }
 
@@ -189,19 +196,100 @@ fn extract_mod(node: Node, source: &[u8]) -> Option<Symbol> {
         .build()
 }
 
+fn extract_type_alias(node: Node, source: &[u8]) -> Option<Symbol> {
+    let signature = node.field_text("type", source);
+    SymbolBuilder::new(node, source, "rust")
+        .name_from_field("name")
+        .qualified_with_parent(None, "::")
+        .symbol_type("type_alias")
+        .signature(signature)
+        .visibility_from_child("visibility_modifier")
+        .documentation(get_doc_comment(node, source))
+        .build()
+}
+
 fn extract_use(node: Node, source: &[u8]) -> Option<Import> {
-    let path = node
-        .child_by_field_name("argument")
-        .map(|n| node_text(n, source))?;
+    let arg = node.child_by_field_name("argument")?;
+    let path = node_text(arg, source);
 
     let is_external =
         !path.starts_with("crate::") && !path.starts_with("self::") && !path.starts_with("super::");
 
+    let imported_symbols = extract_use_symbols(arg, source);
+
     Some(Import {
         import_path: path,
-        imported_symbols: None,
+        imported_symbols,
         is_external,
     })
+}
+
+/// Extract the specific imported names from a use argument node.
+/// Returns None for glob imports (`*`), Some(names) for explicit imports.
+fn extract_use_symbols(node: Node, source: &[u8]) -> Option<Vec<String>> {
+    match node.kind() {
+        "use_list" => {
+            // use foo::{Bar, Baz}
+            extract_names_from_use_list(node, source)
+        }
+        "scoped_use_list" => {
+            // use foo::{Bar, Baz} — the argument is a scoped_use_list wrapping a use_list
+            // Find the use_list child
+            for child in node.children(&mut node.walk()) {
+                if child.kind() == "use_list" {
+                    return extract_names_from_use_list(child, source);
+                }
+            }
+            None
+        }
+        "scoped_identifier" => {
+            // use foo::Bar — last segment is the name
+            if let Some(name) = node.child_by_field_name("name") {
+                Some(vec![node_text(name, source)])
+            } else {
+                None
+            }
+        }
+        "use_as_clause" => {
+            // use foo::Bar as B — use alias
+            if let Some(alias) = node.child_by_field_name("alias") {
+                Some(vec![node_text(alias, source)])
+            } else {
+                None
+            }
+        }
+        "use_wildcard" => None,
+        "identifier" => Some(vec![node_text(node, source)]),
+        _ => None,
+    }
+}
+
+fn extract_names_from_use_list(node: Node, source: &[u8]) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    for child in node.children(&mut node.walk()) {
+        match child.kind() {
+            "identifier" | "self" => {
+                names.push(node_text(child, source));
+            }
+            "use_as_clause" => {
+                // use foo::{Bar as B} — use the alias
+                if let Some(alias) = child.child_by_field_name("alias") {
+                    names.push(node_text(alias, source));
+                } else if let Some(orig) = child.child_by_field_name("path") {
+                    names.push(node_text(orig, source));
+                }
+            }
+            "scoped_use_list" | "use_wildcard" => {
+                // glob or nested list — skip individual extraction
+            }
+            _ => {}
+        }
+    }
+    if names.is_empty() {
+        None
+    } else {
+        Some(names)
+    }
 }
 
 fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
@@ -515,5 +603,85 @@ fn other_func() {}
                 .iter()
                 .any(|c| c.caller_name == "caller" && c.callee_name == "other_func")
         );
+    }
+
+    #[test]
+    fn test_parse_type_alias() {
+        let code = r#"
+/// A result alias
+pub type MyResult<T> = Result<T, String>;
+
+type PrivateAlias = Vec<u8>;
+"#;
+        let (symbols, _, _) = parse_rust(code);
+
+        let alias = symbols.iter().find(|s| s.name == "MyResult").unwrap();
+        assert_eq!(alias.symbol_type, "type_alias");
+        assert_eq!(alias.visibility, Some("pub".to_string()));
+        assert!(alias.signature.is_some());
+
+        let private_alias = symbols.iter().find(|s| s.name == "PrivateAlias").unwrap();
+        assert_eq!(private_alias.symbol_type, "type_alias");
+    }
+
+    #[test]
+    fn test_parse_function_return_type() {
+        let code = r#"
+fn get_name() -> String {
+    "hello".to_string()
+}
+
+fn no_return() {
+    // nothing
+}
+"#;
+        let (symbols, _, _) = parse_rust(code);
+
+        let with_return = symbols.iter().find(|s| s.name == "get_name").unwrap();
+        assert!(
+            with_return.return_type.is_some(),
+            "expected return_type to be set"
+        );
+        assert!(with_return.return_type.as_deref().unwrap().contains("String"));
+
+        let no_return = symbols.iter().find(|s| s.name == "no_return").unwrap();
+        assert!(no_return.return_type.is_none());
+    }
+
+    #[test]
+    fn test_parse_imported_symbol_names() {
+        let code = r#"
+use std::collections::HashMap;
+use anyhow::{Result, Context};
+use crate::tools::*;
+use std::io::{self, Write};
+"#;
+        let (_, imports, _) = parse_rust(code);
+
+        // use std::collections::HashMap -> ["HashMap"]
+        let hash_map_import = imports
+            .iter()
+            .find(|i| i.import_path.contains("HashMap"))
+            .unwrap();
+        assert_eq!(
+            hash_map_import.imported_symbols,
+            Some(vec!["HashMap".to_string()])
+        );
+
+        // use anyhow::{Result, Context} -> ["Result", "Context"]
+        let anyhow_import = imports
+            .iter()
+            .find(|i| i.import_path.contains("anyhow"))
+            .unwrap();
+        let mut syms = anyhow_import.imported_symbols.clone().unwrap();
+        syms.sort();
+        assert_eq!(syms, vec!["Context".to_string(), "Result".to_string()]);
+
+        // glob import -> None
+        let glob_import = imports
+            .iter()
+            .find(|i| i.import_path.contains("tools"))
+            .unwrap();
+        assert!(glob_import.imported_symbols.is_none());
     }
 }

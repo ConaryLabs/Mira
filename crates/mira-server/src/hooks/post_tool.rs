@@ -203,6 +203,63 @@ pub async fn run() -> Result<()> {
             count = changes.len(),
             "AST diff detected structural changes"
         );
+
+        // Surface impact: for renamed/removed/signature-changed symbols, look up callers
+        let impact_changes: Vec<_> = changes
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.change_kind,
+                    ast_diff::ChangeKind::SymbolRemoved | ast_diff::ChangeKind::SignatureChanged
+                )
+            })
+            .take(3)
+            .collect();
+
+        if !impact_changes.is_empty() {
+            let code_db_path = crate::hooks::get_code_db_path();
+            if code_db_path.exists() {
+                if let Ok(code_pool) =
+                    crate::db::pool::DatabasePool::open_code_db(&code_db_path).await
+                {
+                    let mut impact_lines: Vec<String> = Vec::new();
+                    for change in &impact_changes {
+                        let sym_name = change.symbol_name.clone();
+                        let change_kind = change.change_kind.to_string();
+                        let callers = code_pool
+                            .run(move |conn| {
+                                crate::db::find_callers_sync(conn, &sym_name, None, 5)
+                                    .map_err(|e| crate::error::MiraError::Other(e.to_string()))
+                            })
+                            .await
+                            .unwrap_or_default();
+
+                        if !callers.is_empty() {
+                            let caller_list: Vec<String> = callers
+                                .iter()
+                                .map(|c| {
+                                    if let Some(line) = c.line {
+                                        format!("{} ({}:{})", c.symbol_name, c.file_path, line)
+                                    } else {
+                                        format!("{} ({})", c.symbol_name, c.file_path)
+                                    }
+                                })
+                                .collect();
+                            impact_lines.push(format!(
+                                "[impact] {} `{}` -> {} caller(s): {}",
+                                change_kind,
+                                change.symbol_name,
+                                callers.len(),
+                                caller_list.join(", ")
+                            ));
+                        }
+                    }
+                    if !impact_lines.is_empty() {
+                        context_parts.push(impact_lines.join("\n"));
+                    }
+                }
+            }
+        }
     }
 
     // Build output

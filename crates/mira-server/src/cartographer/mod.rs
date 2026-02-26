@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 // Re-export public API
 pub use detection::{
-    detect_modules, detect_rust_modules, find_entry_points as detect_entry_points, is_workspace,
-    parse_crate_name,
+    detect_modules, detect_modules_for_types, detect_rust_modules,
+    find_entry_points as detect_entry_points, is_workspace, parse_crate_name,
 };
 pub use map::{get_modules_with_purposes_pool, get_or_generate_map_pool};
 pub use summaries::{

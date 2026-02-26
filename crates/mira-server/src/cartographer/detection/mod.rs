@@ -44,19 +44,37 @@ pub(crate) fn count_lines_with_walker(
 /// This is the main entry point for module detection. It dispatches to the
 /// appropriate language-specific detector based on the project_type.
 pub fn detect_modules(project_path: &Path, project_type: &str) -> Vec<Module> {
-    match project_type {
-        "rust" => rust::detect(project_path),
-        "python" => python::detect(project_path),
-        "node" => node::detect(project_path),
-        "go" => go::detect(project_path),
-        _ => {
-            tracing::warn!(
-                "Unknown project type '{}', no modules detected",
-                project_type
-            );
-            Vec::new()
+    detect_modules_for_types(project_path, &[project_type])
+}
+
+/// Detect modules for multiple project types (polyglot support).
+///
+/// Merges module detection results from all supported languages present in
+/// the project. Unsupported types (e.g., "java", "unknown") are skipped.
+pub fn detect_modules_for_types(project_path: &Path, project_types: &[&str]) -> Vec<Module> {
+    let mut modules = Vec::new();
+    for &project_type in project_types {
+        match project_type {
+            "rust" => modules.extend(rust::detect(project_path)),
+            "python" => modules.extend(python::detect(project_path)),
+            "node" => modules.extend(node::detect(project_path)),
+            "go" => modules.extend(go::detect(project_path)),
+            "java" => {
+                tracing::info!(
+                    "Java project detected at '{}' but not yet supported for module detection",
+                    project_path.display()
+                );
+            }
+            "unknown" => {}
+            _ => {
+                tracing::warn!(
+                    "Unknown project type '{}', no modules detected",
+                    project_type
+                );
+            }
         }
     }
+    modules
 }
 
 /// Find entry points based on project type

@@ -14,6 +14,7 @@ use crate::project_files::FileWalker;
 use anyhow::Result;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -22,45 +23,58 @@ use std::sync::Arc;
 /// provide poor symbol/semantic value and risk OOM.
 const MAX_INDEX_FILE_BYTES: u64 = 1_024 * 1_024;
 
-/// Collect files to index, filtering by extension and ignoring patterns
+/// File extensions supported for indexing
+const SUPPORTED_EXTENSIONS: &[&str] = &["rs", "py", "ts", "tsx", "js", "jsx", "go"];
+
+/// Collect files to index, filtering by supported extensions and ignoring patterns.
+///
+/// Also tracks files with unsupported extensions in `stats.skipped_by_extension`
+/// so the user gets visibility into what was not indexed.
 fn collect_files_to_index(path: &Path, stats: &mut IndexStats) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
 
-    // Create a FileWalker for all supported language extensions
+    // Walk all files (no extension filter) so we can count skipped extensions
     let walker = FileWalker::new(path)
         .follow_links(true)
         .use_gitignore(true)
-        .skip_hidden(true)
-        .with_extension("rs")
-        .with_extension("py")
-        .with_extension("ts")
-        .with_extension("tsx")
-        .with_extension("js")
-        .with_extension("jsx")
-        .with_extension("go");
+        .skip_hidden(true);
 
     for result in walker.walk_paths() {
         match result {
-            Ok(path) => {
+            Ok(file_path) => {
+                let ext = file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+
+                if !SUPPORTED_EXTENSIONS.contains(&ext) {
+                    // Count unsupported files by extension (skip extensionless files)
+                    if !ext.is_empty() {
+                        let key = format!(".{}", ext);
+                        *stats.skipped_by_extension.entry(key).or_insert(0) += 1;
+                    }
+                    continue;
+                }
+
                 // Skip files that are too large (generated code, minified bundles, etc.)
-                match path.metadata() {
+                match file_path.metadata() {
                     Ok(meta) if meta.len() > MAX_INDEX_FILE_BYTES => {
                         tracing::debug!(
                             "Skipping large file ({} bytes): {}",
                             meta.len(),
-                            path.display()
+                            file_path.display()
                         );
                         stats.skipped += 1;
                         continue;
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to stat {}: {}", path.display(), e);
+                        tracing::warn!("Failed to stat {}: {}", file_path.display(), e);
                         stats.errors += 1;
                         continue;
                     }
                     _ => {}
                 }
-                files.push(path);
+                files.push(file_path);
             }
             Err(e) => {
                 tracing::warn!("Failed to access path during indexing: {}", e);
@@ -291,6 +305,7 @@ pub async fn index_project(
         chunks: 0,
         errors: 0,
         skipped: 0,
+        skipped_by_extension: HashMap::new(),
     };
 
     tracing::info!("Collecting files...");
@@ -345,22 +360,34 @@ pub async fn index_project(
     // Rebuild FTS5 full-text search index for this project
     rebuild_fts_index_if_needed(pool.clone(), project_id).await;
 
+    // Build skipped-by-extension summary for logging
+    let skipped_ext_summary = if stats.skipped_by_extension.is_empty() {
+        String::new()
+    } else {
+        let mut pairs: Vec<_> = stats.skipped_by_extension.iter().collect();
+        pairs.sort_by(|a, b| b.1.cmp(a.1));
+        let parts: Vec<String> = pairs.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+        format!(", skipped by extension: {}", parts.join(", "))
+    };
+
     if stats.errors > 0 {
         tracing::warn!(
-            "Indexing complete with errors: {} files, {} symbols, {} chunks, {} errors, {} skipped",
+            "Indexing complete with errors: {} files, {} symbols, {} chunks, {} errors, {} skipped{}",
             stats.files,
             stats.symbols,
             stats.chunks,
             stats.errors,
-            stats.skipped
+            stats.skipped,
+            skipped_ext_summary
         );
     } else {
         tracing::info!(
-            "Indexing complete: {} files, {} symbols, {} chunks, {} skipped",
+            "Indexing complete: {} files, {} symbols, {} chunks, {} skipped{}",
             stats.files,
             stats.symbols,
             stats.chunks,
-            stats.skipped
+            stats.skipped,
+            skipped_ext_summary
         );
     }
     Ok(stats)
@@ -389,6 +416,7 @@ mod tests {
             chunks: 0,
             errors: 0,
             skipped: 0,
+            skipped_by_extension: HashMap::new(),
         };
 
         let files = collect_files_to_index(dir.path(), &mut stats);

@@ -41,7 +41,7 @@ pub fn walk(
     current_function: Option<&str>,
 ) {
     match node.kind() {
-        "function_declaration" | "method_definition" | "arrow_function" => {
+        "function_declaration" | "method_definition" => {
             if let Some(sym) = extract_function(node, ctx.source, parent_name, ctx.language) {
                 let func_name = sym
                     .qualified_name
@@ -54,6 +54,28 @@ pub fn walk(
                     }
                 }
                 return;
+            }
+        }
+        "arrow_function" => {
+            // Only extract arrow functions inside a variable_declarator (they get their
+            // name from the declarator). Bare arrow functions produce "<anonymous>"
+            // and pollute the symbol table.
+            if let Some(parent) = node.parent()
+                && parent.kind() == "variable_declarator"
+            {
+                if let Some(sym) = extract_function(node, ctx.source, parent_name, ctx.language) {
+                    let func_name = sym
+                        .qualified_name
+                        .clone()
+                        .unwrap_or_else(|| sym.name.clone());
+                    ctx.symbols.push(sym);
+                    if let Some(body) = node.child_by_field_name("body") {
+                        for child in body.children(&mut body.walk()) {
+                            walk(child, ctx, parent_name, Some(&func_name));
+                        }
+                    }
+                    return;
+                }
             }
         }
         "class_declaration" => {
@@ -75,6 +97,11 @@ pub fn walk(
         }
         "type_alias_declaration" => {
             if let Some(sym) = extract_type_alias(node, ctx.source) {
+                ctx.symbols.push(sym);
+            }
+        }
+        "enum_declaration" => {
+            if let Some(sym) = extract_enum(node, ctx.source, ctx.language) {
                 ctx.symbols.push(sym);
             }
         }
@@ -124,6 +151,36 @@ pub fn walk(
     }
 }
 
+/// Extract JSDoc comment preceding a node.
+/// Walks backwards through preceding siblings looking for `/** ... */` comments.
+fn get_jsdoc(node: Node, source: &[u8]) -> Option<String> {
+    let parent = node.parent()?;
+    let mut cursor = parent.walk();
+    let siblings: Vec<Node> = parent.children(&mut cursor).collect();
+    let pos = siblings.iter().position(|n| n.id() == node.id())?;
+    for i in (0..pos).rev() {
+        let sib = siblings[i];
+        if sib.kind() == "comment" {
+            let text = node_text(sib, source);
+            if text.starts_with("/**") {
+                let inner = text
+                    .trim_start_matches("/**")
+                    .trim_end_matches("*/")
+                    .lines()
+                    .map(|l| l.trim().trim_start_matches('*').trim())
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                return if inner.is_empty() { None } else { Some(inner) };
+            }
+            break;
+        } else if sib.is_named() {
+            break;
+        }
+    }
+    None
+}
+
 fn extract_function(
     node: Node,
     source: &[u8],
@@ -146,10 +203,26 @@ fn extract_function(
 
     let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
 
+    // Fixed: removed dead code `it(` / `describe(` — names are identifiers, never "it("
     let is_test = name.starts_with("test")
         || name.contains("Test")
-        || name.starts_with("it(")
-        || name.starts_with("describe(");
+        || name == "it"
+        || name == "describe"
+        || name == "beforeEach"
+        || name == "afterEach"
+        || name == "beforeAll"
+        || name == "afterAll";
+
+    let visibility = node
+        .children(&mut node.walk())
+        .find(|n| n.kind() == "accessibility_modifier")
+        .map(|n| node_text(n, source));
+
+    let return_type = node
+        .child_by_field_name("return_type")
+        .map(|n| node_text(n, source));
+
+    let documentation = get_jsdoc(node, source);
 
     Some(Symbol {
         name,
@@ -159,16 +232,19 @@ fn extract_function(
         start_line: node.start_line(),
         end_line: node.end_line(),
         signature,
-        visibility: None,
-        documentation: None,
+        visibility,
+        documentation,
         is_test,
         is_async,
+        return_type,
+        decorators: None,
     })
 }
 
 fn extract_class(node: Node, source: &[u8], language: &str) -> Option<Symbol> {
     let name_node = node.child_by_field_name("name")?;
     let name = node_text(name_node, source);
+    let documentation = get_jsdoc(node, source);
 
     Some(Symbol {
         name: name.clone(),
@@ -179,15 +255,18 @@ fn extract_class(node: Node, source: &[u8], language: &str) -> Option<Symbol> {
         end_line: node.end_line(),
         signature: None,
         visibility: None,
-        documentation: None,
+        documentation,
         is_test: false,
         is_async: false,
+        return_type: None,
+        decorators: None,
     })
 }
 
 fn extract_interface(node: Node, source: &[u8]) -> Option<Symbol> {
     let name_node = node.child_by_field_name("name")?;
     let name = node_text(name_node, source);
+    let documentation = get_jsdoc(node, source);
 
     Some(Symbol {
         name: name.clone(),
@@ -198,15 +277,18 @@ fn extract_interface(node: Node, source: &[u8]) -> Option<Symbol> {
         end_line: node.end_line(),
         signature: None,
         visibility: None,
-        documentation: None,
+        documentation,
         is_test: false,
         is_async: false,
+        return_type: None,
+        decorators: None,
     })
 }
 
 fn extract_type_alias(node: Node, source: &[u8]) -> Option<Symbol> {
     let name_node = node.child_by_field_name("name")?;
     let name = node_text(name_node, source);
+    let documentation = get_jsdoc(node, source);
 
     Some(Symbol {
         name: name.clone(),
@@ -217,9 +299,33 @@ fn extract_type_alias(node: Node, source: &[u8]) -> Option<Symbol> {
         end_line: node.end_line(),
         signature: None,
         visibility: None,
-        documentation: None,
+        documentation,
         is_test: false,
         is_async: false,
+        return_type: None,
+        decorators: None,
+    })
+}
+
+fn extract_enum(node: Node, source: &[u8], language: &str) -> Option<Symbol> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = node_text(name_node, source);
+    let documentation = get_jsdoc(node, source);
+
+    Some(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: "enum".to_string(),
+        language: language.to_string(),
+        start_line: node.start_line(),
+        end_line: node.end_line(),
+        signature: None,
+        visibility: None,
+        documentation,
+        is_test: false,
+        is_async: false,
+        return_type: None,
+        decorators: None,
     })
 }
 
@@ -229,12 +335,41 @@ fn extract_import(node: Node, source: &[u8]) -> Option<Import> {
     let path = path.trim_matches(|c| c == '"' || c == '\'').to_string();
 
     let is_external = !path.starts_with('.') && !path.starts_with('/');
+    let imported_symbols = extract_named_imports(node, source);
 
     Some(Import {
         import_path: path,
-        imported_symbols: None,
+        imported_symbols,
         is_external,
     })
+}
+
+/// Extract named imports from an import_statement node.
+/// For `import { Foo, Bar } from '...'`, returns Some(["Foo", "Bar"]).
+/// For wildcard, default, or namespace imports, returns None.
+fn extract_named_imports(node: Node, source: &[u8]) -> Option<Vec<String>> {
+    let import_clause = node
+        .children(&mut node.walk())
+        .find(|n| n.kind() == "import_clause")?;
+
+    let named_imports = import_clause
+        .children(&mut import_clause.walk())
+        .find(|n| n.kind() == "named_imports")?;
+
+    let names: Vec<String> = named_imports
+        .children(&mut named_imports.walk())
+        .filter(|n| n.kind() == "import_specifier")
+        .filter_map(|spec| {
+            spec.child_by_field_name("name")
+                .map(|n| node_text(n, source))
+        })
+        .collect();
+
+    if names.is_empty() {
+        None
+    } else {
+        Some(names)
+    }
 }
 
 fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
@@ -473,5 +608,211 @@ class MyClass {
         let func_sym = symbols.iter().find(|s| s.name == "helloWorld").unwrap();
         // All JS/TS files use "typescript" as the language since TS grammar handles both
         assert_eq!(func_sym.language, "typescript");
+    }
+
+    // New tests for added functionality
+
+    #[test]
+    fn test_is_test_fixed_no_dead_code() {
+        let code = r#"
+function testSomething() {}
+function itDoesWork() {}
+function describeFeature() {}
+"#;
+        let (symbols, _, _) = parse_ts(code);
+
+        let test_fn = symbols.iter().find(|s| s.name == "testSomething").unwrap();
+        assert!(test_fn.is_test);
+
+        // "it(" and "describe(" dead code removed — identifiers like "itDoesWork"
+        // should not match "it" (exact match only)
+        let it_fn = symbols.iter().find(|s| s.name == "itDoesWork").unwrap();
+        assert!(!it_fn.is_test, "itDoesWork should not be a test");
+
+        let desc_fn = symbols.iter().find(|s| s.name == "describeFeature").unwrap();
+        assert!(!desc_fn.is_test, "describeFeature should not be a test");
+    }
+
+    #[test]
+    fn test_no_anonymous_symbol_pollution() {
+        // Bare arrow functions (callbacks) should NOT produce <anonymous> symbols
+        let code = r#"
+const arr = [1, 2, 3];
+arr.forEach((x) => {
+    console.log(x);
+});
+setTimeout(() => {
+    doSomething();
+}, 100);
+"#;
+        let (symbols, _, _) = parse_ts(code);
+        assert!(!symbols.iter().any(|s| s.name == "<anonymous>"));
+    }
+
+    #[test]
+    fn test_enum_declaration() {
+        let code = r#"
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right
+}
+
+export enum Status {
+    Active = "active",
+    Inactive = "inactive"
+}
+"#;
+        let (symbols, _, _) = parse_ts(code);
+
+        let dir = symbols.iter().find(|s| s.name == "Direction");
+        assert!(dir.is_some(), "Direction enum not found");
+        assert_eq!(dir.unwrap().symbol_type, "enum");
+
+        let status = symbols.iter().find(|s| s.name == "Status");
+        assert!(status.is_some(), "Status enum not found");
+        assert_eq!(status.unwrap().symbol_type, "enum");
+    }
+
+    #[test]
+    fn test_jsdoc_extraction() {
+        let code = r#"
+/** Adds two numbers together. */
+function add(a: number, b: number): number {
+    return a + b;
+}
+
+/**
+ * Fetches user data from the API.
+ * @param id User identifier
+ */
+async function fetchUser(id: string) {
+    return null;
+}
+"#;
+        let (symbols, _, _) = parse_ts(code);
+
+        let add = symbols.iter().find(|s| s.name == "add").unwrap();
+        assert!(
+            add.documentation.is_some(),
+            "add should have JSDoc documentation"
+        );
+        assert!(add.documentation.as_ref().unwrap().contains("Adds two"));
+
+        let fetch_user = symbols.iter().find(|s| s.name == "fetchUser").unwrap();
+        assert!(
+            fetch_user.documentation.is_some(),
+            "fetchUser should have JSDoc documentation"
+        );
+        assert!(
+            fetch_user
+                .documentation
+                .as_ref()
+                .unwrap()
+                .contains("Fetches user")
+        );
+    }
+
+    #[test]
+    fn test_no_jsdoc_for_plain_comment() {
+        let code = r#"
+// This is a plain comment
+function noDoc() {}
+"#;
+        let (symbols, _, _) = parse_ts(code);
+        let sym = symbols.iter().find(|s| s.name == "noDoc").unwrap();
+        assert!(sym.documentation.is_none());
+    }
+
+    #[test]
+    fn test_visibility_extraction() {
+        let code = r#"
+class MyClass {
+    public getValue(): number {
+        return 0;
+    }
+
+    private doInternal(): void {}
+
+    protected helper(): void {}
+}
+"#;
+        let (symbols, _, _) = parse_ts(code);
+
+        let get_value = symbols.iter().find(|s| s.name == "getValue").unwrap();
+        assert_eq!(get_value.visibility, Some("public".to_string()));
+
+        let do_internal = symbols.iter().find(|s| s.name == "doInternal").unwrap();
+        assert_eq!(do_internal.visibility, Some("private".to_string()));
+
+        let helper = symbols.iter().find(|s| s.name == "helper").unwrap();
+        assert_eq!(helper.visibility, Some("protected".to_string()));
+    }
+
+    #[test]
+    fn test_return_type_annotation() {
+        let code = r#"
+function add(a: number, b: number): number {
+    return a + b;
+}
+
+function greet(): string {
+    return "hello";
+}
+"#;
+        let (symbols, _, _) = parse_ts(code);
+
+        let add = symbols.iter().find(|s| s.name == "add").unwrap();
+        assert!(add.return_type.is_some());
+        assert!(add.return_type.as_ref().unwrap().contains("number"));
+
+        let greet = symbols.iter().find(|s| s.name == "greet").unwrap();
+        assert!(greet.return_type.is_some());
+        assert!(greet.return_type.as_ref().unwrap().contains("string"));
+    }
+
+    #[test]
+    fn test_no_return_type_when_absent() {
+        let code = r#"
+function noAnnotation() {
+    return 42;
+}
+"#;
+        let (symbols, _, _) = parse_ts(code);
+        let sym = symbols.iter().find(|s| s.name == "noAnnotation").unwrap();
+        assert!(sym.return_type.is_none());
+    }
+
+    #[test]
+    fn test_imported_symbols_named_imports() {
+        let code = r#"
+import { Component, useState, useEffect } from 'react';
+import { Foo, Bar } from './module';
+"#;
+        let (_, imports, _) = parse_ts(code);
+
+        let react_import = imports.iter().find(|i| i.import_path == "react").unwrap();
+        let syms = react_import.imported_symbols.as_ref().unwrap();
+        assert!(syms.contains(&"Component".to_string()));
+        assert!(syms.contains(&"useState".to_string()));
+        assert!(syms.contains(&"useEffect".to_string()));
+
+        let module_import = imports.iter().find(|i| i.import_path == "./module").unwrap();
+        let syms = module_import.imported_symbols.as_ref().unwrap();
+        assert!(syms.contains(&"Foo".to_string()));
+        assert!(syms.contains(&"Bar".to_string()));
+    }
+
+    #[test]
+    fn test_no_imported_symbols_for_wildcard() {
+        let code = r#"
+import * as path from 'path';
+import defaultExport from './local';
+"#;
+        let (_, imports, _) = parse_ts(code);
+
+        let path_import = imports.iter().find(|i| i.import_path == "path").unwrap();
+        assert!(path_import.imported_symbols.is_none());
     }
 }

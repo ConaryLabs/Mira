@@ -97,6 +97,8 @@ pub struct Symbol {
     pub documentation: Option<String>,
     pub is_test: bool,
     pub is_async: bool,
+    pub return_type: Option<String>,
+    pub decorators: Option<Vec<String>>,
 }
 
 /// Extracted import statement
@@ -195,6 +197,8 @@ pub struct SymbolBuilder<'a> {
     documentation: Option<String>,
     is_test: bool,
     is_async: bool,
+    return_type: Option<String>,
+    decorators: Option<Vec<String>>,
 }
 
 impl<'a> SymbolBuilder<'a> {
@@ -212,6 +216,8 @@ impl<'a> SymbolBuilder<'a> {
             documentation: None,
             is_test: false,
             is_async: false,
+            return_type: None,
+            decorators: None,
         }
     }
 
@@ -286,6 +292,18 @@ impl<'a> SymbolBuilder<'a> {
         self
     }
 
+    /// Set return type
+    pub fn return_type(mut self, rt: Option<String>) -> Self {
+        self.return_type = rt;
+        self
+    }
+
+    /// Set decorators
+    pub fn decorators(mut self, d: Option<Vec<String>>) -> Self {
+        self.decorators = d;
+        self
+    }
+
     /// Build the Symbol, returning None if name is missing
     pub fn build(self) -> Option<Symbol> {
         let name = self.name?;
@@ -301,6 +319,8 @@ impl<'a> SymbolBuilder<'a> {
             documentation: self.documentation,
             is_test: self.is_test,
             is_async: self.is_async,
+            return_type: self.return_type,
+            decorators: self.decorators,
         })
     }
 }

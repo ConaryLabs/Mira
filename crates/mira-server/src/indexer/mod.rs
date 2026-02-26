@@ -10,9 +10,11 @@ pub mod parsers;
 mod parsing;
 #[cfg(feature = "parsers")]
 mod project;
+pub mod resolver;
 mod types;
 
 // Re-export public types
+pub use resolver::{ImportResolver, ResolvedImport, RustImportResolver};
 pub use types::{CodeChunk, FileParseResult, IndexStats, ParsedImport, ParsedSymbol};
 
 // Re-export parser types
@@ -43,6 +45,7 @@ mod tests {
             chunks: 0,
             errors: 0,
             skipped: 0,
+            skipped_by_extension: std::collections::HashMap::new(),
         };
         assert_eq!(stats.files, 0);
         assert_eq!(stats.errors, 0);

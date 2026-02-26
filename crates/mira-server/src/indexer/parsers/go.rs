@@ -56,11 +56,14 @@ pub fn walk(
             }
         }
         "type_declaration" => {
-            if let Some(sym) = extract_type(node, ctx.source) {
-                let name = sym.name.clone();
-                ctx.symbols.push(sym);
+            let syms = extract_type(node, ctx.source);
+            if !syms.is_empty() {
+                let first_name = syms[0].name.clone();
+                for sym in syms {
+                    ctx.symbols.push(sym);
+                }
                 for child in node.children(&mut node.walk()) {
-                    walk(child, ctx, Some(&name), current_function);
+                    walk(child, ctx, Some(&first_name), current_function);
                 }
                 return;
             }
@@ -78,8 +81,10 @@ pub fn walk(
             }
         }
         "const_declaration" | "var_declaration" => {
-            // Could extract top-level constants/vars as symbols
-            // For now, skip
+            let is_const = node.kind() == "const_declaration";
+            for sym in extract_const_or_var(node, ctx.source, is_const) {
+                ctx.symbols.push(sym);
+            }
         }
         _ => {}
     }
@@ -118,6 +123,10 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         .child_by_field_name("parameters")
         .map(|n| node_text(n, source));
 
+    let return_type = node
+        .child_by_field_name("result")
+        .map(|n| node_text(n, source));
+
     // Check for test functions
     let is_test =
         name.starts_with("Test") || name.starts_with("Benchmark") || name.starts_with("Example");
@@ -134,6 +143,8 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         Some("private".to_string())
     };
 
+    let documentation = get_doc_comment(node, source);
+
     Some(Symbol {
         name,
         qualified_name: Some(qualified_name),
@@ -143,55 +154,88 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         end_line: node.end_line(),
         signature,
         visibility,
-        documentation: None,
+        documentation,
         is_test,
         is_async: false, // Go doesn't have async keyword
+        return_type,
+        decorators: None,
     })
 }
 
-fn extract_type(node: Node, source: &[u8]) -> Option<Symbol> {
-    // Go type declarations can contain multiple type specs
+fn extract_type(node: Node, source: &[u8]) -> Vec<Symbol> {
+    let mut symbols = Vec::new();
+
     for child in node.children(&mut node.walk()) {
-        if child.kind() == "type_spec" {
-            let name_node = child.child_by_field_name("name")?;
-            let name = node_text(name_node, source);
-
-            let symbol_type = child
-                .child_by_field_name("type")
-                .map(|t| match t.kind() {
-                    "struct_type" => "struct",
-                    "interface_type" => "interface",
-                    _ => "type",
-                })
-                .unwrap_or("type");
-
-            let visibility = if name
-                .chars()
-                .next()
-                .map(|c| c.is_uppercase())
-                .unwrap_or(false)
-            {
-                Some("public".to_string())
-            } else {
-                Some("private".to_string())
-            };
-
-            return Some(Symbol {
-                name: name.clone(),
-                qualified_name: Some(name),
-                symbol_type: symbol_type.to_string(),
-                language: "go".to_string(),
-                start_line: node.start_line(),
-                end_line: node.end_line(),
-                signature: None,
-                visibility,
-                documentation: None,
-                is_test: false,
-                is_async: false,
-            });
+        if child.kind() != "type_spec" {
+            continue;
         }
+
+        let name_node = match child.child_by_field_name("name") {
+            Some(n) => n,
+            None => continue,
+        };
+        let name = node_text(name_node, source);
+
+        let symbol_type = child
+            .child_by_field_name("type")
+            .map(|t| match t.kind() {
+                "struct_type" => "struct",
+                "interface_type" => "interface",
+                _ => "type",
+            })
+            .unwrap_or("type");
+
+        let visibility = if name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+        {
+            Some("public".to_string())
+        } else {
+            Some("private".to_string())
+        };
+
+        let documentation = get_doc_comment(child, source);
+
+        symbols.push(Symbol {
+            name: name.clone(),
+            qualified_name: Some(name),
+            symbol_type: symbol_type.to_string(),
+            language: "go".to_string(),
+            start_line: child.start_line(),
+            end_line: child.end_line(),
+            signature: None,
+            visibility,
+            documentation,
+            is_test: false,
+            is_async: false,
+            return_type: None,
+            decorators: None,
+        });
     }
-    None
+
+    symbols
+}
+
+fn extract_import_spec(spec: Node, source: &[u8]) -> Option<Import> {
+    let path_node = spec.child_by_field_name("path")?;
+    let path = node_text(path_node, source)
+        .trim_matches('"')
+        .to_string();
+
+    let is_external = !path.starts_with('.');
+
+    // Check for alias: `import db "database/sql"` has a `name` field child (package_identifier)
+    let imported_symbols = spec
+        .child_by_field_name("name")
+        .map(|alias| vec![node_text(alias, source)]);
+
+    Some(Import {
+        import_path: path,
+        imported_symbols,
+        is_external,
+    })
 }
 
 fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
@@ -200,42 +244,22 @@ fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
     // Go imports can be single or grouped
     for child in node.children(&mut node.walk()) {
         if child.kind() == "import_spec" {
-            if let Some(path_node) = child.child_by_field_name("path") {
-                let path = node_text(path_node, source);
-                let path = path.trim_matches('"').to_string();
-
-                let is_external = !path.starts_with('.');
-
-                imports.push(Import {
-                    import_path: path,
-                    imported_symbols: None,
-                    is_external,
-                });
+            if let Some(import) = extract_import_spec(child, source) {
+                imports.push(import);
             }
         } else if child.kind() == "import_spec_list" {
             for spec in child.children(&mut child.walk()) {
-                if spec.kind() == "import_spec"
-                    && let Some(path_node) = spec.child_by_field_name("path")
-                {
-                    let path = node_text(path_node, source);
-                    let path = path.trim_matches('"').to_string();
-
-                    let is_external = !path.starts_with('.');
-
-                    imports.push(Import {
-                        import_path: path,
-                        imported_symbols: None,
-                        is_external,
-                    });
+                if spec.kind() == "import_spec" {
+                    if let Some(import) = extract_import_spec(spec, source) {
+                        imports.push(import);
+                    }
                 }
             }
         } else if child.kind() == "interpreted_string_literal" {
             // Single import without spec
             let path = node_text(child, source);
             let path = path.trim_matches('"').to_string();
-
             let is_external = !path.starts_with('.');
-
             imports.push(Import {
                 import_path: path,
                 imported_symbols: None,
@@ -245,6 +269,105 @@ fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
     }
 
     imports
+}
+
+fn extract_spec(
+    spec: Node,
+    source: &[u8],
+    symbol_type: &str,
+    symbols: &mut Vec<Symbol>,
+) {
+    let name_node = match spec.child_by_field_name("name") {
+        Some(n) => n,
+        None => return,
+    };
+    let name = node_text(name_node, source);
+    let return_type = spec.child_by_field_name("type").map(|t| node_text(t, source));
+    let visibility = if name
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+    {
+        Some("public".to_string())
+    } else {
+        Some("private".to_string())
+    };
+    let documentation = get_doc_comment(spec, source);
+    symbols.push(Symbol {
+        name: name.clone(),
+        qualified_name: Some(name),
+        symbol_type: symbol_type.to_string(),
+        language: "go".to_string(),
+        start_line: spec.start_line(),
+        end_line: spec.end_line(),
+        signature: None,
+        visibility,
+        documentation,
+        is_test: false,
+        is_async: false,
+        return_type,
+        decorators: None,
+    });
+}
+
+fn extract_const_or_var(node: Node, source: &[u8], is_const: bool) -> Vec<Symbol> {
+    let symbol_type = if is_const { "constant" } else { "variable" };
+    let mut symbols = Vec::new();
+
+    let spec_kind = if is_const { "const_spec" } else { "var_spec" };
+    let list_kind = if is_const {
+        "const_spec_list"
+    } else {
+        "var_spec_list"
+    };
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == spec_kind {
+            extract_spec(child, source, symbol_type, &mut symbols);
+        } else if child.kind() == list_kind {
+            // grouped: const ( ... ) or var ( ... )
+            for spec in child.children(&mut child.walk()) {
+                if spec.kind() == spec_kind {
+                    extract_spec(spec, source, symbol_type, &mut symbols);
+                }
+            }
+        }
+    }
+    symbols
+}
+
+
+/// Extract doc comment lines immediately preceding a node (Go `// ...` style).
+fn get_doc_comment(node: Node, source: &[u8]) -> Option<String> {
+    let mut docs = Vec::new();
+
+    if let Some(parent) = node.parent() {
+        let siblings: Vec<_> = parent.children(&mut parent.walk()).collect();
+        let node_idx = siblings.iter().position(|n| n.id() == node.id())?;
+
+        // Walk backwards through preceding siblings
+        for sib in siblings[..node_idx].iter().rev() {
+            if sib.kind() == "comment" {
+                let text = node_text(*sib, source);
+                if let Some(stripped) = text.strip_prefix("// ") {
+                    docs.push(stripped.to_string());
+                } else if let Some(stripped) = text.strip_prefix("//") {
+                    docs.push(stripped.to_string());
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    if docs.is_empty() {
+        None
+    } else {
+        docs.reverse();
+        Some(docs.join("\n"))
+    }
 }
 
 fn extract_call(node: Node, source: &[u8], caller: &str) -> Option<FunctionCall> {
@@ -450,5 +573,153 @@ import "fmt"
 
         assert!(!imports.is_empty());
         assert!(imports.iter().any(|i| i.import_path == "fmt"));
+    }
+
+    #[test]
+    fn test_grouped_type_declarations() {
+        let code = r#"
+package main
+
+type (
+    Foo struct {
+        X int
+    }
+    Bar interface {
+        Method() string
+    }
+    Baz int
+)
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let foo = symbols.iter().find(|s| s.name == "Foo").unwrap();
+        assert_eq!(foo.symbol_type, "struct");
+
+        let bar = symbols.iter().find(|s| s.name == "Bar").unwrap();
+        assert_eq!(bar.symbol_type, "interface");
+
+        let baz = symbols.iter().find(|s| s.name == "Baz").unwrap();
+        assert_eq!(baz.symbol_type, "type");
+    }
+
+    #[test]
+    fn test_parse_constants() {
+        let code = r#"
+package main
+
+const (
+    MaxRetries = 3
+    DefaultTimeout = 30
+)
+
+const SingleConst = "hello"
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let max_retries = symbols.iter().find(|s| s.name == "MaxRetries").unwrap();
+        assert_eq!(max_retries.symbol_type, "constant");
+        assert_eq!(max_retries.visibility, Some("public".to_string()));
+
+        let default_timeout = symbols
+            .iter()
+            .find(|s| s.name == "DefaultTimeout")
+            .unwrap();
+        assert_eq!(default_timeout.symbol_type, "constant");
+
+        let single = symbols.iter().find(|s| s.name == "SingleConst").unwrap();
+        assert_eq!(single.symbol_type, "constant");
+    }
+
+    #[test]
+    fn test_parse_variables() {
+        let code = r#"
+package main
+
+var (
+    globalCount int
+    GlobalName  string
+)
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let count = symbols.iter().find(|s| s.name == "globalCount").unwrap();
+        assert_eq!(count.symbol_type, "variable");
+        assert_eq!(count.visibility, Some("private".to_string()));
+
+        let name = symbols.iter().find(|s| s.name == "GlobalName").unwrap();
+        assert_eq!(name.symbol_type, "variable");
+        assert_eq!(name.visibility, Some("public".to_string()));
+    }
+
+    #[test]
+    fn test_parse_go_doc_comments() {
+        let code = r#"
+package main
+
+// MyFunc does something useful.
+// It takes no arguments.
+func MyFunc() {}
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let func_sym = symbols.iter().find(|s| s.name == "MyFunc").unwrap();
+        assert!(func_sym.documentation.is_some());
+        let doc = func_sym.documentation.as_deref().unwrap();
+        assert!(doc.contains("does something useful"), "doc: {}", doc);
+    }
+
+    #[test]
+    fn test_parse_go_return_types() {
+        let code = r#"
+package main
+
+func GetName() string {
+    return "hello"
+}
+
+func GetPair() (int, error) {
+    return 0, nil
+}
+
+func NoReturn() {
+}
+"#;
+        let (symbols, _, _) = parse_go(code);
+
+        let get_name = symbols.iter().find(|s| s.name == "GetName").unwrap();
+        assert!(get_name.return_type.is_some());
+        assert!(
+            get_name.return_type.as_deref().unwrap().contains("string"),
+            "got: {:?}",
+            get_name.return_type
+        );
+
+        let get_pair = symbols.iter().find(|s| s.name == "GetPair").unwrap();
+        assert!(get_pair.return_type.is_some());
+
+        let no_return = symbols.iter().find(|s| s.name == "NoReturn").unwrap();
+        assert!(no_return.return_type.is_none());
+    }
+
+    #[test]
+    fn test_parse_go_import_alias() {
+        let code = r#"
+package main
+
+import (
+    db "database/sql"
+    "fmt"
+)
+"#;
+        let (_, imports, _) = parse_go(code);
+
+        let db_import = imports
+            .iter()
+            .find(|i| i.import_path == "database/sql")
+            .unwrap();
+        assert_eq!(db_import.imported_symbols, Some(vec!["db".to_string()]));
+
+        let fmt_import = imports.iter().find(|i| i.import_path == "fmt").unwrap();
+        assert!(fmt_import.imported_symbols.is_none());
     }
 }

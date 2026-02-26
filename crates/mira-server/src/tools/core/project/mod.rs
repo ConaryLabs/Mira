@@ -14,7 +14,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectGetData, ProjectOutput, ProjectSetData};
 use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
 
-pub use detection::detect_project_type;
+pub use detection::{detect_project_type, detect_project_types};
 pub use session_start::session_start;
 
 /// Session info tuple: (session_id, last_activity, summary, tool_count, tool_names)

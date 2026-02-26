@@ -14,7 +14,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectOutput, ProjectStartData};
 use crate::tools::core::ToolContext;
 
-use super::detection::{detect_project_type, gather_system_context_content};
+use super::detection::{detect_project_type, detect_project_types, gather_system_context_content};
 use super::formatting::{format_recent_sessions, format_session_insights};
 use super::init_project;
 use super::{RecapData, SessionInfo};
@@ -124,9 +124,22 @@ pub async fn session_start<C: ToolContext>(
     ctx.set_branch(branch.clone()).await;
 
     // Phase 2: Build response
+    let project_types = detect_project_types(&project_path);
     let project_type = detect_project_type(&project_path);
     let display_name = project_name.as_deref().unwrap_or("unnamed");
-    let mut response = format!("Project: {} ({})\n", display_name, project_type);
+    let type_label = if project_types.len() > 1 {
+        project_types.join(", ")
+    } else {
+        project_type.to_string()
+    };
+    let mut response = format!("Project: {} ({})\n", display_name, type_label);
+    // Warn for unsupported languages present in the project
+    for lang in project_types.iter().filter(|t| matches!(**t, "java")) {
+        response.push_str(&format!(
+            "Note: {} project detected but not yet supported for code intelligence. Indexing will use file-level analysis only.\n",
+            lang
+        ));
+    }
     if let Some(text) = briefing_text {
         response.push_str(&format!("\nWhat's new: {}\n", text));
     }
@@ -151,8 +164,11 @@ pub async fn session_start<C: ToolContext>(
 
     response.push_str(&format_session_insights(&doc_task_counts));
 
-    // Phase 5: Codebase map
-    if project_type == "rust" {
+    // Phase 5: Codebase map (supported languages: rust, python, node, go)
+    let supported_for_map = project_types
+        .iter()
+        .any(|t| matches!(*t, "rust" | "python" | "node" | "go"));
+    if supported_for_map {
         match cartographer::get_or_generate_map_pool(
             ctx.code_pool().clone(),
             project_id,

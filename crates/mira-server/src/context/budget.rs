@@ -9,11 +9,11 @@
 /// Priority for team context (highest -- collaboration is critical)
 pub const PRIORITY_TEAM: f32 = 0.95;
 /// Priority for coding conventions
-pub const PRIORITY_CONVENTION: f32 = 0.9;
+pub const PRIORITY_CONVENTION: f32 = 0.6;
 /// Priority for reactive/recalled context
 pub const PRIORITY_REACTIVE: f32 = 0.75;
 /// Priority for semantic search results
-pub const PRIORITY_SEMANTIC: f32 = 0.7;
+pub const PRIORITY_SEMANTIC: f32 = 0.85;
 /// Priority for pending tasks
 pub const PRIORITY_TASKS: f32 = 0.65;
 /// Priority for active goals

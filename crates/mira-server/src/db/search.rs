@@ -16,6 +16,8 @@ pub struct CrossRefResult {
     pub symbol_name: String,
     pub file_path: String,
     pub call_count: i32,
+    /// Line where the symbol starts (from code_symbols.start_line)
+    pub line: Option<i64>,
 }
 
 /// Find functions that call the given function (by callee_name in call_graph)
@@ -26,7 +28,7 @@ pub fn find_callers_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<CrossRefResult>> {
     let mut stmt = conn.prepare(
-        "SELECT cs.name, cs.file_path, cg.call_count
+        "SELECT cs.name, cs.file_path, cg.call_count, cs.start_line
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
          WHERE cg.callee_name = ?1 AND (?2 IS NULL OR cs.project_id = ?2)
@@ -38,6 +40,7 @@ pub fn find_callers_sync(
             symbol_name: row.get(0)?,
             file_path: row.get(1)?,
             call_count: row.get::<_, i32>(2).unwrap_or(1),
+            line: row.get::<_, Option<i64>>(3)?,
         })
     })?;
     Ok(rows.filter_map(log_and_discard).collect())
@@ -51,9 +54,12 @@ pub fn find_callees_sync(
     limit: usize,
 ) -> rusqlite::Result<Vec<CrossRefResult>> {
     let mut stmt = conn.prepare(
-        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt
+        "SELECT cg.callee_name, cs.file_path, COUNT(*) as cnt,
+                MIN(cs2.start_line) as callee_line
          FROM call_graph cg
          JOIN code_symbols cs ON cg.caller_id = cs.id
+         LEFT JOIN code_symbols cs2 ON cs2.name = cg.callee_name
+             AND (?2 IS NULL OR cs2.project_id = ?2)
          WHERE cs.name = ?1 AND (?2 IS NULL OR cs.project_id = ?2)
          GROUP BY cg.callee_name
          ORDER BY cnt DESC
@@ -64,6 +70,7 @@ pub fn find_callees_sync(
             symbol_name: row.get(0)?,
             file_path: row.get(1)?,
             call_count: row.get::<_, i32>(2).unwrap_or(1),
+            line: row.get::<_, Option<i64>>(3)?,
         })
     })?;
     Ok(rows.filter_map(log_and_discard).collect())

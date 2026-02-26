@@ -54,23 +54,48 @@ pub(super) fn detect_project_name(path: &str) -> Option<String> {
     dir_name()
 }
 
-/// Detect project type from path
-pub fn detect_project_type(path: &str) -> &'static str {
+/// Detect all project types from path (polyglot support).
+///
+/// Returns all detected languages based on manifest files present. A monorepo
+/// with both `Cargo.toml` and `package.json` will return `["rust", "node"]`.
+/// Returns `["unknown"]` if no known manifests are found.
+pub fn detect_project_types(path: &str) -> Vec<&'static str> {
     let p = Path::new(path);
+    let mut types = Vec::new();
 
     if p.join("Cargo.toml").exists() {
-        "rust"
-    } else if p.join("package.json").exists() {
-        "node"
-    } else if p.join("pyproject.toml").exists() || p.join("setup.py").exists() {
-        "python"
-    } else if p.join("go.mod").exists() {
-        "go"
-    } else if p.join("pom.xml").exists() || p.join("build.gradle").exists() {
-        "java"
-    } else {
-        "unknown"
+        types.push("rust");
     }
+    if p.join("package.json").exists() {
+        types.push("node");
+    }
+    if p.join("pyproject.toml").exists() || p.join("setup.py").exists() {
+        types.push("python");
+    }
+    if p.join("go.mod").exists() {
+        types.push("go");
+    }
+    // Java: detected but not yet supported for code intelligence.
+    // pom.xml / build.gradle are recognized so we can warn rather than silently ignore.
+    if p.join("pom.xml").exists() || p.join("build.gradle").exists() {
+        types.push("java");
+    }
+
+    if types.is_empty() {
+        types.push("unknown");
+    }
+    types
+}
+
+/// Detect primary project type from path.
+///
+/// For polyglot projects, returns the first (highest priority) language.
+/// Use `detect_project_types` to get all detected languages.
+pub fn detect_project_type(path: &str) -> &'static str {
+    detect_project_types(path)
+        .into_iter()
+        .next()
+        .unwrap_or("unknown")
 }
 
 /// Gather system context content for bash tool usage (returns content string, does not store)
