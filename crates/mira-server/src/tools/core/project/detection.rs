@@ -236,4 +236,15 @@ mod tests {
         let all = detect_project_types(dir.path().to_str().unwrap());
         assert_eq!(primary, all[0]);
     }
+
+    /// Verify that gather_system_context_content does NOT leak PII fields.
+    /// Commit d99d5a50 intentionally removed User: and Home: from the output.
+    #[test]
+    fn system_context_does_not_contain_user_or_home() {
+        let ctx = gather_system_context_content();
+        if let Some(content) = ctx {
+            assert!(!content.contains("\nUser:"), "must not include User");
+            assert!(!content.contains("\nHome:"), "must not include Home");
+        }
+    }
 }

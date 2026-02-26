@@ -135,12 +135,12 @@ pub(crate) fn merge_compaction_contexts(
 /// Combine two Vec<String> fields: append new after old, deduplicate by exact
 /// match (keeping the later occurrence), then keep only the last `max` items.
 fn merge_vec_field(old: &[String], new: &[String], max: usize) -> Vec<String> {
-    let mut seen = HashSet::new();
+    let mut seen: HashSet<&str> = HashSet::new();
     let mut combined: Vec<String> = Vec::with_capacity(old.len() + new.len());
 
     // Walk in reverse so when we reverse back, the *last* occurrence wins
     for item in old.iter().chain(new.iter()).rev() {
-        if seen.insert(item.as_str().to_owned()) {
+        if seen.insert(item.as_str()) {
             combined.push(item.clone());
         }
     }

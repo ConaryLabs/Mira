@@ -1484,3 +1484,223 @@ fn findings_field_defaults_empty_on_old_data() {
     let ctx: CompactionContext = serde_json::from_value(json).unwrap();
     assert!(ctx.findings.is_empty());
 }
+
+// ── merge_compaction_contexts comprehensive tests ───────────────────
+
+#[test]
+fn merge_preserves_user_intent_from_first() {
+    let old = serde_json::to_value(CompactionContext {
+        user_intent: Some("Fix the auth bug".into()),
+        decisions: vec!["old decision".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let new = serde_json::to_value(CompactionContext {
+        user_intent: Some("Refactor the database".into()),
+        decisions: vec!["new decision".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let merged: CompactionContext =
+        serde_json::from_value(merge_compaction_contexts(&old, &new)).unwrap();
+    // Old (first) user_intent wins
+    assert_eq!(merged.user_intent.as_deref(), Some("Fix the auth bug"));
+}
+
+#[test]
+fn merge_deduplicates_decisions() {
+    let old = serde_json::to_value(CompactionContext {
+        decisions: vec![
+            "use builder pattern".into(),
+            "use SQLite".into(),
+        ],
+        ..Default::default()
+    })
+    .unwrap();
+    let new = serde_json::to_value(CompactionContext {
+        decisions: vec![
+            "use SQLite".into(),
+            "use async runtime".into(),
+        ],
+        ..Default::default()
+    })
+    .unwrap();
+    let merged: CompactionContext =
+        serde_json::from_value(merge_compaction_contexts(&old, &new)).unwrap();
+    // "use SQLite" appears in both but should only appear once
+    let sqlite_count = merged
+        .decisions
+        .iter()
+        .filter(|d| *d == "use SQLite")
+        .count();
+    assert_eq!(sqlite_count, 1, "duplicate should be deduplicated");
+    assert_eq!(merged.decisions.len(), 3);
+}
+
+#[test]
+fn merge_caps_at_max_items() {
+    let old = serde_json::to_value(CompactionContext {
+        decisions: (0..4).map(|i| format!("old-{i}")).collect(),
+        ..Default::default()
+    })
+    .unwrap();
+    let new = serde_json::to_value(CompactionContext {
+        decisions: (0..4).map(|i| format!("new-{i}")).collect(),
+        ..Default::default()
+    })
+    .unwrap();
+    let merged: CompactionContext =
+        serde_json::from_value(merge_compaction_contexts(&old, &new)).unwrap();
+    // 8 unique items, MAX_ITEMS_PER_CATEGORY = 5
+    assert_eq!(merged.decisions.len(), MAX_ITEMS_PER_CATEGORY);
+}
+
+#[test]
+fn merge_prefers_recent_items() {
+    // When capped, the most recent (new) items should survive
+    let old = serde_json::to_value(CompactionContext {
+        decisions: (0..4).map(|i| format!("old-{i}")).collect(),
+        ..Default::default()
+    })
+    .unwrap();
+    let new = serde_json::to_value(CompactionContext {
+        decisions: (0..4).map(|i| format!("new-{i}")).collect(),
+        ..Default::default()
+    })
+    .unwrap();
+    let merged: CompactionContext =
+        serde_json::from_value(merge_compaction_contexts(&old, &new)).unwrap();
+    // Last item should be from new (most recent)
+    assert_eq!(merged.decisions.last().unwrap(), "new-3");
+    // First item should be old-3 (oldest survivor after drain)
+    assert_eq!(merged.decisions.first().unwrap(), "old-3");
+}
+
+#[test]
+fn merge_includes_findings_field() {
+    let old = serde_json::to_value(CompactionContext {
+        findings: vec!["## Summary\nAuth gap found".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let new = serde_json::to_value(CompactionContext {
+        findings: vec!["## Review\nPerformance issue".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let merged: CompactionContext =
+        serde_json::from_value(merge_compaction_contexts(&old, &new)).unwrap();
+    assert_eq!(merged.findings.len(), 2);
+    assert!(merged.findings[0].contains("Auth gap"));
+    assert!(merged.findings[1].contains("Performance issue"));
+}
+
+#[test]
+fn merge_handles_empty_old_context() {
+    let old = serde_json::json!({});
+    let new = serde_json::to_value(CompactionContext {
+        decisions: vec!["new decision".into()],
+        issues: vec!["new issue".into()],
+        user_intent: Some("do the thing".into()),
+        findings: vec!["finding A".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let merged: CompactionContext =
+        serde_json::from_value(merge_compaction_contexts(&old, &new)).unwrap();
+    assert_eq!(merged.decisions, vec!["new decision"]);
+    assert_eq!(merged.issues, vec!["new issue"]);
+    assert_eq!(merged.user_intent.as_deref(), Some("do the thing"));
+    assert_eq!(merged.findings, vec!["finding A"]);
+}
+
+#[test]
+fn merge_handles_empty_new_context() {
+    let old = serde_json::to_value(CompactionContext {
+        decisions: vec!["old decision".into()],
+        issues: vec!["old issue".into()],
+        user_intent: Some("original intent".into()),
+        findings: vec!["old finding".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let new = serde_json::json!({});
+    let merged: CompactionContext =
+        serde_json::from_value(merge_compaction_contexts(&old, &new)).unwrap();
+    // Old context should be fully preserved
+    assert_eq!(merged.decisions, vec!["old decision"]);
+    assert_eq!(merged.issues, vec!["old issue"]);
+    assert_eq!(merged.user_intent.as_deref(), Some("original intent"));
+    assert_eq!(merged.findings, vec!["old finding"]);
+}
+
+// ── check vs consume post-compaction flag ───────────────────────────
+
+#[test]
+fn check_flag_is_nondestructive() {
+    let sid = format!("test-check-nondest-{}", std::process::id());
+    let path = post_compaction_flag_path(&sid);
+    let _ = std::fs::remove_file(&path);
+
+    set_post_compaction_flag(&sid);
+
+    // Call check multiple times -- flag should remain
+    assert!(check_post_compaction_flag(&sid));
+    assert!(check_post_compaction_flag(&sid));
+    assert!(check_post_compaction_flag(&sid));
+    // Flag file should still exist on disk
+    assert!(path.is_file(), "flag file should still exist after check");
+
+    // Cleanup
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn consume_flag_removes_file() {
+    let sid = format!("test-consume-rm-{}", std::process::id());
+    let path = post_compaction_flag_path(&sid);
+    let _ = std::fs::remove_file(&path);
+
+    set_post_compaction_flag(&sid);
+    assert!(path.is_file(), "flag file should exist after set");
+
+    // Consume should return true and remove the file
+    let result = consume_post_compaction_flag(&sid);
+    assert!(result, "consume should return true for fresh flag");
+    assert!(!path.is_file(), "flag file should be removed after consume");
+
+    // Second consume should return false
+    assert!(!consume_post_compaction_flag(&sid));
+}
+
+#[test]
+fn flag_expires_after_ten_minutes() {
+    let sid = format!("test-flag-expire-{}", std::process::id());
+    let path = post_compaction_flag_path(&sid);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // Write a timestamp that is 601 seconds in the past (past the 600s threshold)
+    let expired_ts = crate::hooks::pre_tool::unix_now().saturating_sub(601);
+    std::fs::write(&path, format!("{expired_ts}")).unwrap();
+
+    // Both check and consume should return false for expired flag
+    assert!(
+        !check_post_compaction_flag(&sid),
+        "check should return false for expired flag"
+    );
+
+    // Re-write the expired timestamp (check doesn't remove, but let's be explicit)
+    std::fs::write(&path, format!("{expired_ts}")).unwrap();
+    assert!(
+        !consume_post_compaction_flag(&sid),
+        "consume should return false for expired flag"
+    );
+
+    // Consume should still remove the file even though it was expired
+    assert!(
+        !path.is_file(),
+        "consume should remove the file even when expired"
+    );
+}

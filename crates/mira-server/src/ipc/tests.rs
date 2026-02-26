@@ -499,6 +499,275 @@ async fn test_duplex_generate_bundle_missing_params() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// save_compaction_context tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_save_compaction_context_basic() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let pool_verify = pool.clone();
+
+    // Create a session so the FK constraint is satisfied
+    pool.interact(move |conn| {
+        crate::db::create_session_sync(conn, "ctx-basic", Some(project_id)).map_err(Into::into)
+    })
+    .await
+    .unwrap();
+
+    let (mut reader, mut writer, handle) = spawn_duplex_handler(pool).await;
+
+    let req = IpcRequest {
+        op: "save_compaction_context".into(),
+        id: "ctx-1".into(),
+        params: json!({
+            "session_id": "ctx-basic",
+            "context": {
+                "decisions": ["use SQLite for storage"],
+                "active_work": ["implementing compaction"],
+                "issues": [],
+                "pending_tasks": [],
+                "user_intent": "add compaction support"
+            }
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(resp.ok, "save_compaction_context should succeed: {:?}", resp.error);
+
+    // Verify the snapshot was stored correctly
+    let snapshot_str: String = pool_verify
+        .interact(|conn| {
+            conn.query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = 'ctx-basic'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+
+    let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+    let cc = &snapshot["compaction_context"];
+    assert_eq!(
+        cc["decisions"].as_array().unwrap(),
+        &vec![json!("use SQLite for storage")],
+    );
+    assert_eq!(
+        cc["active_work"].as_array().unwrap(),
+        &vec![json!("implementing compaction")],
+    );
+    assert_eq!(
+        cc["user_intent"].as_str().unwrap(),
+        "add compaction support",
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_save_compaction_context_merges_on_second_call() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let pool_verify = pool.clone();
+
+    pool.interact(move |conn| {
+        crate::db::create_session_sync(conn, "ctx-merge", Some(project_id)).map_err(Into::into)
+    })
+    .await
+    .unwrap();
+
+    let (mut reader, mut writer, handle) = spawn_duplex_handler(pool).await;
+
+    // First call -- seed with initial context
+    let req1 = IpcRequest {
+        op: "save_compaction_context".into(),
+        id: "merge-1".into(),
+        params: json!({
+            "session_id": "ctx-merge",
+            "context": {
+                "decisions": ["decision A"],
+                "active_work": ["work A"],
+                "issues": ["issue A"],
+                "pending_tasks": [],
+                "user_intent": "original intent"
+            }
+        }),
+    };
+    let resp1 = send_request(&mut reader, &mut writer, &req1).await;
+    assert!(resp1.ok, "first save should succeed: {:?}", resp1.error);
+
+    // Second call -- should merge, not overwrite
+    let req2 = IpcRequest {
+        op: "save_compaction_context".into(),
+        id: "merge-2".into(),
+        params: json!({
+            "session_id": "ctx-merge",
+            "context": {
+                "decisions": ["decision B"],
+                "active_work": ["work B"],
+                "issues": [],
+                "pending_tasks": ["task B"],
+                "user_intent": "new intent"
+            }
+        }),
+    };
+    let resp2 = send_request(&mut reader, &mut writer, &req2).await;
+    assert!(resp2.ok, "second save should succeed: {:?}", resp2.error);
+
+    // Verify merge behavior
+    let snapshot_str: String = pool_verify
+        .interact(|conn| {
+            conn.query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = 'ctx-merge'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+
+    let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+    let cc = &snapshot["compaction_context"];
+
+    // Decisions should contain both A and B (merged, not overwritten)
+    let decisions: Vec<&str> = cc["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(decisions.contains(&"decision A"), "should keep decision A");
+    assert!(decisions.contains(&"decision B"), "should add decision B");
+
+    // active_work should contain both
+    let active_work: Vec<&str> = cc["active_work"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(active_work.contains(&"work A"), "should keep work A");
+    assert!(active_work.contains(&"work B"), "should add work B");
+
+    // issues: first had "issue A", second had none -- merged result keeps "issue A"
+    let issues: Vec<&str> = cc["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(issues.contains(&"issue A"), "should keep issue A from first call");
+
+    // pending_tasks: first had none, second had "task B"
+    let tasks: Vec<&str> = cc["pending_tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(tasks.contains(&"task B"), "should add task B from second call");
+
+    // user_intent: merge keeps the FIRST one (original intent)
+    assert_eq!(
+        cc["user_intent"].as_str().unwrap(),
+        "original intent",
+        "user_intent should preserve the first/original value, not overwrite"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_save_compaction_context_preserves_other_snapshot_fields() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let pool_verify = pool.clone();
+
+    pool.interact(move |conn| {
+        crate::db::create_session_sync(conn, "ctx-preserve", Some(project_id))
+            .map_err(Into::into)
+    })
+    .await
+    .unwrap();
+
+    // Pre-seed a snapshot with other fields (tool_count, custom_field)
+    pool_verify
+        .interact(|conn| {
+            let snapshot = json!({
+                "tool_count": 42,
+                "custom_field": "should survive",
+                "nested": {"key": "value"}
+            });
+            conn.execute(
+                "INSERT INTO session_snapshots (session_id, snapshot, created_at)
+                 VALUES ('ctx-preserve', ?1, datetime('now'))",
+                rusqlite::params![serde_json::to_string(&snapshot).unwrap()],
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
+        .unwrap();
+
+    let (mut reader, mut writer, handle) = spawn_duplex_handler(pool_verify.clone()).await;
+
+    let req = IpcRequest {
+        op: "save_compaction_context".into(),
+        id: "preserve-1".into(),
+        params: json!({
+            "session_id": "ctx-preserve",
+            "context": {
+                "decisions": ["keep other fields"],
+                "active_work": [],
+                "issues": [],
+                "pending_tasks": []
+            }
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(resp.ok, "save_compaction_context should succeed: {:?}", resp.error);
+
+    // Verify the pre-existing fields survived
+    let snapshot_str: String = pool_verify
+        .interact(|conn| {
+            conn.query_row(
+                "SELECT snapshot FROM session_snapshots WHERE session_id = 'ctx-preserve'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .unwrap();
+
+    let snapshot: serde_json::Value = serde_json::from_str(&snapshot_str).unwrap();
+
+    // Original fields must still be present
+    assert_eq!(
+        snapshot["tool_count"].as_i64().unwrap(),
+        42,
+        "tool_count should survive compaction context save"
+    );
+    assert_eq!(
+        snapshot["custom_field"].as_str().unwrap(),
+        "should survive",
+        "custom_field should survive compaction context save"
+    );
+    assert_eq!(
+        snapshot["nested"]["key"].as_str().unwrap(),
+        "value",
+        "nested fields should survive compaction context save"
+    );
+
+    // And the compaction_context should be present too
+    let cc = &snapshot["compaction_context"];
+    assert_eq!(
+        cc["decisions"].as_array().unwrap(),
+        &vec![json!("keep other fields")],
+    );
+
+    handle.abort();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Unix socket integration tests (Unix only — tests real transport)
 // ═══════════════════════════════════════════════════════════════════════════════
 

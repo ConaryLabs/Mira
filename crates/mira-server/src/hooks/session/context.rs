@@ -572,6 +572,74 @@ pub(super) fn infer_activity_from_tools(tools: &[&str]) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn build_compaction_summary_includes_findings() {
+        let snapshot = json!({
+            "compaction_context": {
+                "findings": ["Bug in auth handler", "Missing index on users table"]
+            }
+        });
+        let result = build_compaction_summary(&snapshot).unwrap();
+        assert!(
+            result.contains("Key findings:"),
+            "should contain Key findings header"
+        );
+        assert!(
+            result.contains("Bug in auth handler"),
+            "should contain first finding"
+        );
+        assert!(
+            result.contains("Missing index on users table"),
+            "should contain second finding"
+        );
+    }
+
+    #[test]
+    fn build_compaction_summary_returns_none_for_empty() {
+        // No compaction_context at all
+        let snapshot = json!({});
+        assert!(
+            build_compaction_summary(&snapshot).is_none(),
+            "missing compaction_context should return None"
+        );
+
+        // compaction_context present but all fields empty
+        let snapshot = json!({
+            "compaction_context": {
+                "decisions": [],
+                "active_work": [],
+                "issues": [],
+                "pending_tasks": [],
+                "files_referenced": [],
+                "findings": []
+            }
+        });
+        assert!(
+            build_compaction_summary(&snapshot).is_none(),
+            "empty compaction_context fields should return None"
+        );
+    }
+
+    #[test]
+    fn build_compaction_summary_includes_user_intent() {
+        let snapshot = json!({
+            "compaction_context": {
+                "user_intent": "Refactor the auth module to use middleware"
+            }
+        });
+        let result = build_compaction_summary(&snapshot).unwrap();
+        assert!(
+            result.contains("Original request: Refactor the auth module to use middleware"),
+            "should render user_intent as Original request"
+        );
+    }
+}
+
 /// Enforce hard output budget on session context.
 /// Truncates at a UTF-8 safe boundary and appends `\n...` if over the limit.
 /// The final output is guaranteed to be <= MAX_SESSION_CONTEXT_CHARS.

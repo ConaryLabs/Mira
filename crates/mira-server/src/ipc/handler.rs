@@ -18,7 +18,8 @@ fn op_timeout(op: &str) -> Duration {
         | "close_session"
         | "get_startup_context"
         | "get_resume_context" => Duration::from_secs(30),
-        "get_active_goals" | "snapshot_tasks" | "generate_bundle" => Duration::from_secs(10),
+        "get_active_goals" | "snapshot_tasks" => Duration::from_secs(10),
+        "generate_bundle" => Duration::from_secs(4),
         _ => Duration::from_secs(5),
     }
 }
@@ -63,7 +64,7 @@ where
             let end = newline_pos.map(|p| p + 1).unwrap_or(available.len());
             if buf.len() + end > MAX_LINE_SIZE {
                 too_large = true;
-                // Drain the rest of this line so the connection stays usable
+                // Consume buffered data before closing connection
                 let consume_len = end;
                 reader.consume(consume_len);
                 break;

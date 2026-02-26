@@ -397,25 +397,34 @@ pub(crate) fn query_deps(
         return Ok(vec![]);
     }
 
-    // Build IN clause — safe since module_ids come from our own DB query
-    let placeholders: Vec<String> = module_ids
-        .iter()
-        .map(|id| format!("'{}'", id.replace('\'', "''")))
-        .collect();
-    let in_clause = placeholders.join(",");
+    // Build parameterized IN clause with ? placeholders
+    let single_in: String = std::iter::repeat("?")
+        .take(module_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
 
     let sql = format!(
         "SELECT source_module_id, target_module_id, call_count, import_count
          FROM module_dependencies
          WHERE project_id = ?
-           AND (source_module_id IN ({in_clause}) OR target_module_id IN ({in_clause}))
+           AND (source_module_id IN ({single_in}) OR target_module_id IN ({single_in}))
          ORDER BY call_count + import_count DESC
          LIMIT 50"
     );
 
+    // Params: project_id, then module_ids twice (once per IN clause)
+    let mut sql_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    sql_params.push(Box::new(project_id));
+    for id in module_ids {
+        sql_params.push(Box::new(id.to_string()));
+    }
+    for id in module_ids {
+        sql_params.push(Box::new(id.to_string()));
+    }
+
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(params![project_id], |row| {
+        .query_map(rusqlite::params_from_iter(sql_params), |row| {
             Ok(DepEdge {
                 source: row.get(0)?,
                 target: row.get(1)?,

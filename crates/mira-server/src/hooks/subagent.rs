@@ -181,8 +181,20 @@ pub async fn run_start() -> Result<()> {
         }
     }
 
+    // Track whether goals were actually injected into context_parts.
+    // Narrow subagents skip goals entirely, and even full subagents may have
+    // no active goals -- only log "goals" when content was actually added.
+    let goals_injected = !narrow
+        && context_parts
+            .first()
+            .map(|p| p.contains("[Mira/goals"))
+            .unwrap_or(false);
+
     // Build output, truncating to stay under token budget
-    let mut sources_kept = vec!["goals".to_string()];
+    let mut sources_kept = Vec::new();
+    if goals_injected {
+        sources_kept.push("goals".to_string());
+    }
     if bundle_injected {
         sources_kept.push("bundle".to_string());
     }
@@ -554,10 +566,11 @@ fn extract_findings_from_output(output: &str) -> Vec<String> {
         }
 
         // Detect individual findings: "### Finding N" or "**Finding N:**"
-        let is_individual_finding = (lower.starts_with("### finding")
+        // The starts_with check is sufficient -- requiring ':' or '--' was too
+        // restrictive and silently dropped headers like "### Finding 1".
+        let is_individual_finding = lower.starts_with("### finding")
             || lower.starts_with("## finding")
-            || lower.starts_with("**finding"))
-            && (lower.contains(':') || lower.contains("--") || lower.contains("---"));
+            || lower.starts_with("**finding");
 
         if is_individual_finding {
             let mut block = String::from(line);
@@ -1078,5 +1091,39 @@ mod tests {
         let findings = extract_findings_from_output(output);
         assert!(!findings.is_empty());
         assert!(findings[0].contains("Consensus"));
+    }
+
+    #[test]
+    fn findings_extracts_key_tensions_section() {
+        let output = "## Introduction\n\nSome preamble.\n\n## Key Tensions\n\n- Expert A favors approach X\n- Expert B prefers approach Y\n- Trade-off between speed and safety\n\n## Recommendations\n\nFinal notes.";
+        let findings = extract_findings_from_output(output);
+        assert!(!findings.is_empty());
+        let tensions = findings
+            .iter()
+            .find(|f| f.contains("Key Tensions"))
+            .expect("should extract Key Tensions section");
+        assert!(tensions.contains("Expert A"));
+        assert!(tensions.contains("Expert B"));
+    }
+
+    #[test]
+    fn findings_extracts_actionable_section() {
+        let output = "## Summary\n\nOverview here.\n\n## Actionable Items\n\n1. Fix the auth bypass\n2. Add rate limiting\n3. Update dependencies\n\n## Appendix\n\nExtra details.";
+        let findings = extract_findings_from_output(output);
+        assert!(findings.len() >= 2, "should extract both Summary and Actionable");
+        let actionable = findings
+            .iter()
+            .find(|f| f.contains("Actionable"))
+            .expect("should extract Actionable section");
+        assert!(actionable.contains("Fix the auth bypass"));
+        assert!(actionable.contains("rate limiting"));
+    }
+
+    #[test]
+    fn findings_extracts_individual_finding_without_colon_or_dashes() {
+        let output = "## Overview\n\nSome text\n\n### Finding 1\n\nThis finding has no colon or dashes in its header.\nIt should still be extracted.\n\n### Finding 2\n\nAnother finding without punctuation.";
+        let findings = extract_findings_from_output(output);
+        assert!(!findings.is_empty(), "findings with plain headers should be extracted");
+        assert!(findings[0].contains("Finding 1"));
     }
 }
