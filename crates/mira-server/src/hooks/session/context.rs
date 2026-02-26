@@ -537,6 +537,14 @@ pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<S
         }
     }
 
+    // Structured findings from expert analysis or code review
+    if let Some(findings) = cc.get("findings").and_then(|v| v.as_array()) {
+        let items: Vec<&str> = findings.iter().filter_map(|f| f.as_str()).take(3).collect();
+        if !items.is_empty() {
+            parts.push(format!("Key findings:\n{}", items.join("\n")));
+        }
+    }
+
     if parts.is_empty() {
         return None;
     }

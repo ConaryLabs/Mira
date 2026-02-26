@@ -62,6 +62,33 @@ pub(super) const TASK_KEYWORDS: &[&str] = &[
     "- [ ]",
 ];
 
+/// Structured findings keyword patterns (lowercased).
+///
+/// Matches headers and markers from expert analysis, code review output,
+/// and other structured assistant content that should survive compaction.
+pub(super) const FINDINGS_KEYWORDS: &[&str] = &[
+    "## finding",
+    "### finding",
+    "## recommendation",
+    "### recommendation",
+    "**severity:",
+    "**priority:",
+    "**impact:",
+    "| finding",
+    "| priority",
+    "| severity",
+    "## summary table",
+    "### summary table",
+    "## consensus",
+    "## key tensions",
+    "## top ",
+    "### top ",
+    "## high impact",
+    "## medium impact",
+    "## immediate wins",
+    "## high-priority",
+];
+
 /// Issue keyword patterns (lowercased).
 ///
 /// All patterns are either colon-suffixed or multi-word phrases to avoid
@@ -222,7 +249,8 @@ pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> Comp
         if msg.role != "assistant" {
             continue;
         }
-        for paragraph in msg.text_content.split("\n\n") {
+        let paragraphs: Vec<&str> = msg.text_content.split("\n\n").collect();
+        for (i, paragraph) in paragraphs.iter().enumerate() {
             let trimmed = paragraph.trim();
             if trimmed.len() < MIN_CONTENT_LEN {
                 continue;
@@ -250,6 +278,28 @@ pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> Comp
             if ctx.issues.len() < MAX_ITEMS_PER_CATEGORY && matches_issue_keyword(&lower) {
                 ctx.issues.push(content.to_string());
             }
+
+            // Structured findings: capture headers/tables from expert analysis.
+            // When a findings header is found, include the next paragraph too
+            // (often contains the table or detail) as a single combined entry.
+            if ctx.findings.len() < MAX_ITEMS_PER_CATEGORY && matches_any(&lower, FINDINGS_KEYWORDS)
+            {
+                let mut finding = content.to_string();
+                // Attach the following paragraph if it exists and looks like
+                // continuation content (table rows, bullets, or short detail).
+                if let Some(next) = paragraphs.get(i + 1) {
+                    let next_trimmed = next.trim();
+                    if !next_trimmed.is_empty() && next_trimmed.len() < MAX_CONTENT_LEN {
+                        finding.push_str("\n\n");
+                        finding.push_str(next_trimmed);
+                    }
+                }
+                // Cap each combined finding entry
+                if finding.len() > MAX_CONTENT_LEN {
+                    finding = truncate_at_boundary(&finding, MAX_CONTENT_LEN).to_string();
+                }
+                ctx.findings.push(finding);
+            }
         }
     }
 
@@ -257,6 +307,7 @@ pub(crate) fn extract_compaction_context(messages: &[TranscriptMessage]) -> Comp
     ctx.decisions.reverse();
     ctx.pending_tasks.reverse();
     ctx.issues.reverse();
+    ctx.findings.reverse();
 
     // Capture active work: walk backward to find the last assistant message
     // with substantial text, take up to 2 paragraphs.

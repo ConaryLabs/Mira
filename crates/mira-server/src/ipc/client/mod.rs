@@ -175,6 +175,12 @@ impl HookClient {
         matches!(self.inner, Backend::Ipc(_))
     }
 
+    /// Returns true when both IPC and direct DB are unavailable.
+    /// Hooks can use this to inject a status advisory.
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self.inner, Backend::Unavailable)
+    }
+
     /// Get the direct DB pool (only available in Direct mode).
     /// Used by hooks that need pool access for operations not yet in IPC.
     pub fn pool(&self) -> Option<&Arc<DatabasePool>> {

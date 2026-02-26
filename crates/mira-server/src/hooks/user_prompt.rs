@@ -255,6 +255,9 @@ async fn get_post_compaction_recovery(session_id: &str) -> Option<String> {
                     .collect();
                 lines.push(format!("  Files: {}", files.join(", ")));
             }
+            for f in ctx.findings.iter().take(3) {
+                lines.push(format!("  Finding: {}", f));
+            }
 
             Ok(Some(lines.join("\n")))
         })
@@ -315,6 +318,20 @@ pub async fn run() -> Result<()> {
 
     // Try IPC first -- single composite call runs everything server-side
     let mut client = crate::ipc::client::HookClient::connect().await;
+
+    // If both IPC and direct DB are unavailable, inject a status advisory
+    // so the user knows Mira is offline rather than silently doing nothing.
+    if client.is_unavailable() {
+        tracing::warn!("[mira] Both IPC and direct DB unavailable, injecting status advisory");
+        let output = serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": "[Mira/status] Context tracking offline (database unavailable). Run `/mira:status` to diagnose."
+            }
+        });
+        write_hook_output(&output);
+        return Ok(());
+    }
 
     if let Some(ctx) = client
         .get_user_prompt_context(user_message, session_id)

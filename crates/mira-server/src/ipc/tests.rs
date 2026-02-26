@@ -297,7 +297,10 @@ async fn test_duplex_snapshot_tasks_too_many() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Create a test server with a pre-seeded code index.
-async fn create_test_server_with_code(pool: Arc<DatabasePool>, code_pool: Arc<DatabasePool>) -> MiraServer {
+async fn create_test_server_with_code(
+    pool: Arc<DatabasePool>,
+    code_pool: Arc<DatabasePool>,
+) -> MiraServer {
     MiraServer::from_api_keys(pool, code_pool, None, &ApiKeys::default(), false)
 }
 
@@ -393,8 +396,7 @@ async fn test_duplex_generate_bundle_with_data() {
     );
     seed_code_index(&code_pool, project_id).await;
 
-    let (mut reader, mut writer, handle) =
-        spawn_duplex_handler_with_code(pool, code_pool).await;
+    let (mut reader, mut writer, handle) = spawn_duplex_handler_with_code(pool, code_pool).await;
 
     let req = IpcRequest {
         op: "generate_bundle".into(),
@@ -410,13 +412,28 @@ async fn test_duplex_generate_bundle_with_data() {
     assert!(resp.ok, "generate_bundle should succeed: {:?}", resp.error);
 
     let result = resp.result.as_ref().unwrap();
-    assert!(!result["empty"].as_bool().unwrap_or(true), "should not be empty");
-    assert!(result["modules"].as_u64().unwrap() >= 2, "should find 2 modules");
-    assert!(result["symbols"].as_u64().unwrap() >= 2, "should find 2 symbols");
+    assert!(
+        !result["empty"].as_bool().unwrap_or(true),
+        "should not be empty"
+    );
+    assert!(
+        result["modules"].as_u64().unwrap() >= 2,
+        "should find 2 modules"
+    );
+    assert!(
+        result["symbols"].as_u64().unwrap() >= 2,
+        "should find 2 symbols"
+    );
 
     let content = result["content"].as_str().unwrap();
-    assert!(content.contains("hooks"), "bundle should mention module name");
-    assert!(content.contains("run_start"), "bundle should include symbol names");
+    assert!(
+        content.contains("hooks"),
+        "bundle should mention module name"
+    );
+    assert!(
+        content.contains("run_start"),
+        "bundle should include symbol names"
+    );
 
     handle.abort();
 }
@@ -430,8 +447,7 @@ async fn test_duplex_generate_bundle_empty_scope() {
             .expect("failed to open code pool"),
     );
 
-    let (mut reader, mut writer, handle) =
-        spawn_duplex_handler_with_code(pool, code_pool).await;
+    let (mut reader, mut writer, handle) = spawn_duplex_handler_with_code(pool, code_pool).await;
 
     // Query a scope that has no indexed data
     let req = IpcRequest {
@@ -448,7 +464,10 @@ async fn test_duplex_generate_bundle_empty_scope() {
     assert!(resp.ok, "generate_bundle with empty result should succeed");
 
     let result = resp.result.as_ref().unwrap();
-    assert!(result["empty"].as_bool().unwrap_or(false), "should be empty for nonexistent scope");
+    assert!(
+        result["empty"].as_bool().unwrap_or(false),
+        "should be empty for nonexistent scope"
+    );
 
     handle.abort();
 }

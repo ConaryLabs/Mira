@@ -358,9 +358,10 @@ fn total_items_counts_all_categories() {
         pending_tasks: vec!["p1".into(), "p2".into(), "p3".into()],
         user_intent: Some("intent".into()),
         files_referenced: vec!["src/main.rs".into()],
+        findings: vec!["f1".into()],
     };
-    // 2 + 1 + 1 + 3 + 1 (intent) + 1 (file) = 9
-    assert_eq!(ctx.total_items(), 9);
+    // 2 + 1 + 1 + 3 + 1 (intent) + 1 (file) + 1 (finding) = 10
+    assert_eq!(ctx.total_items(), 10);
 }
 
 // ── Serialization round-trip ──────────────────────────────────────────
@@ -374,6 +375,7 @@ fn compaction_context_serializes_and_deserializes() {
         pending_tasks: vec!["add validation".into()],
         user_intent: Some("Fix the auth bug".into()),
         files_referenced: vec!["src/main.rs".into(), "src/lib.rs".into()],
+        findings: vec![],
     };
     let json = serde_json::to_value(&ctx).unwrap();
     let roundtrip: CompactionContext = serde_json::from_value(json).unwrap();
@@ -396,6 +398,7 @@ fn merge_combines_vec_fields() {
         pending_tasks: vec![],
         user_intent: None,
         files_referenced: vec!["src/a.rs".into()],
+        findings: vec![],
     })
     .unwrap();
     let new = serde_json::to_value(CompactionContext {
@@ -405,6 +408,7 @@ fn merge_combines_vec_fields() {
         pending_tasks: vec!["task B".into()],
         user_intent: None,
         files_referenced: vec!["src/b.rs".into()],
+        findings: vec!["finding B".into()],
     })
     .unwrap();
     let merged: CompactionContext =
@@ -414,6 +418,7 @@ fn merge_combines_vec_fields() {
     assert_eq!(merged.issues, vec!["issue B"]);
     assert_eq!(merged.pending_tasks, vec!["task B"]);
     assert_eq!(merged.files_referenced, vec!["src/a.rs", "src/b.rs"]);
+    assert_eq!(merged.findings, vec!["finding B"]);
 }
 
 #[test]
@@ -1386,4 +1391,96 @@ fn test_post_compaction_flag_empty_session() {
     set_post_compaction_flag("");
     assert!(!check_post_compaction_flag(""));
     assert!(!consume_post_compaction_flag(""));
+}
+
+// ── Findings extraction ────────────────────────────────────────────────
+
+#[test]
+fn extracts_findings_from_summary_table() {
+    let messages = vec![TranscriptMessage {
+        role: "assistant".to_string(),
+        text_content: "Here are the results.\n\n## Summary Table\n\n| Finding | Priority |\n|---------|----------|\n| Auth gap | High |\n\nDone.".to_string(),
+    }];
+    let ctx = extract_compaction_context(&messages);
+    assert!(
+        !ctx.findings.is_empty(),
+        "Should extract findings from summary table"
+    );
+    // At least one finding should contain the table header or table content
+    let has_table = ctx
+        .findings
+        .iter()
+        .any(|f| f.contains("Summary Table") || f.contains("Auth gap"));
+    assert!(
+        has_table,
+        "Should capture summary table content: {:?}",
+        ctx.findings
+    );
+}
+
+#[test]
+fn extracts_findings_from_priority_header() {
+    let messages = vec![TranscriptMessage {
+        role: "assistant".to_string(),
+        text_content: "Analysis complete.\n\n## Top 5 Actionable Items\n\n1. Fix the auth bug\n2. Update the cache\n\nLet me know if you want details.".to_string(),
+    }];
+    let ctx = extract_compaction_context(&messages);
+    assert!(
+        !ctx.findings.is_empty(),
+        "Should extract findings from priority header"
+    );
+    assert!(ctx.findings[0].contains("Top 5"));
+}
+
+#[test]
+fn findings_not_extracted_from_normal_prose() {
+    let messages = vec![TranscriptMessage {
+        role: "assistant".to_string(),
+        text_content: "The code processes input and returns results. It handles errors gracefully."
+            .to_string(),
+    }];
+    let ctx = extract_compaction_context(&messages);
+    assert!(
+        ctx.findings.is_empty(),
+        "Normal prose should not produce findings"
+    );
+}
+
+#[test]
+fn findings_includes_following_paragraph() {
+    let messages = vec![TranscriptMessage {
+        role: "assistant".to_string(),
+        text_content:
+            "## Consensus Items\n\nExperts agree on these points.\n\nUnrelated text later."
+                .to_string(),
+    }];
+    let ctx = extract_compaction_context(&messages);
+    assert!(!ctx.findings.is_empty());
+    // The finding should include the header AND the next paragraph
+    assert!(ctx.findings[0].contains("Consensus"));
+    assert!(ctx.findings[0].contains("Experts agree"));
+}
+
+#[test]
+fn findings_field_survives_serialization() {
+    let ctx = CompactionContext {
+        findings: vec!["## Summary\n| A | B |".into()],
+        ..Default::default()
+    };
+    let json = serde_json::to_value(&ctx).unwrap();
+    let roundtrip: CompactionContext = serde_json::from_value(json).unwrap();
+    assert_eq!(roundtrip.findings, ctx.findings);
+}
+
+#[test]
+fn findings_field_defaults_empty_on_old_data() {
+    // Old snapshots without the findings field should deserialize with empty vec
+    let json = serde_json::json!({
+        "decisions": ["d1"],
+        "active_work": [],
+        "issues": [],
+        "pending_tasks": []
+    });
+    let ctx: CompactionContext = serde_json::from_value(json).unwrap();
+    assert!(ctx.findings.is_empty());
 }

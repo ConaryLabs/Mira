@@ -158,19 +158,25 @@ pub async fn run_start() -> Result<()> {
 
     // Auto-bundle: inject code context based on the task description.
     // Extract file path scopes from the prompt, then generate a lightweight bundle.
+    // Falls back to keyword-based scopes when no file paths are found.
     let mut bundle_injected = false;
-    if !narrow {
-        if let Some(ref task_desc) = start_input.task_description {
-            let scopes = extract_scopes_from_prompt(task_desc);
-            for scope in scopes.iter().take(2) {
-                if let Some(bundle) = client
-                    .generate_bundle(project_id, scope, BUNDLE_BUDGET, "overview")
-                    .await
-                {
-                    context_parts.push(bundle);
-                    bundle_injected = true;
-                    break; // One bundle is enough
-                }
+    if !narrow && let Some(ref task_desc) = start_input.task_description {
+        let mut scopes = extract_scopes_from_prompt(task_desc);
+
+        // Semantic fallback: if no file paths found, extract keywords and use
+        // them as scope patterns (matched via LIKE against module paths in the index)
+        if scopes.is_empty() {
+            scopes = extract_keyword_scopes(task_desc);
+        }
+
+        for scope in scopes.iter().take(2) {
+            if let Some(bundle) = client
+                .generate_bundle(project_id, scope, BUNDLE_BUDGET, "overview")
+                .await
+            {
+                context_parts.push(bundle);
+                bundle_injected = true;
+                break; // One bundle is enough
             }
         }
     }
@@ -257,6 +263,44 @@ pub async fn run_stop() -> Result<()> {
         }
     };
 
+    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
+    let mut client = crate::ipc::client::HookClient::connect().await;
+
+    // Get current project
+    let sid = Some(stop_input.session_id.as_str()).filter(|s| !s.is_empty());
+    let Some((project_id, _)) = client.resolve_project(None, sid).await else {
+        write_hook_output(&serde_json::json!({}));
+        return Ok(());
+    };
+
+    // Extract structured findings (tables, headers, severity markers) from output.
+    // These survive compaction via the observations table with a longer TTL.
+    let findings = extract_findings_from_output(&subagent_output);
+    if !findings.is_empty() {
+        tracing::debug!(
+            count = findings.len(),
+            "SubagentStop: storing structured findings"
+        );
+        let findings_content = format!(
+            "[Mira/findings] Subagent:{} results:\n{}",
+            stop_input.subagent_type,
+            findings.join("\n---\n")
+        );
+        // Longer TTL for findings (30 days vs 7 for entity discoveries)
+        client
+            .store_observation(
+                Some(project_id),
+                &findings_content,
+                "subagent_findings",
+                Some("subagent_findings"),
+                0.8,
+                "subagent",
+                "project",
+                Some("+30 days"),
+            )
+            .await;
+    }
+
     // Extract entities from summary output
     let mut entities = crate::entities::extract_entities_heuristic(&subagent_output);
 
@@ -274,46 +318,34 @@ pub async fn run_stop() -> Result<()> {
         }
     }
 
-    if entities.len() < MIN_SIGNIFICANT_ENTITIES {
+    if entities.len() >= MIN_SIGNIFICANT_ENTITIES {
         tracing::debug!(
             count = entities.len(),
-            "SubagentStop: below threshold, skipping memory storage"
+            "SubagentStop: significant entities found, storing discovery"
         );
-        write_hook_output(&serde_json::json!({}));
-        return Ok(());
+
+        // Build condensed summary from entities
+        let entity_summary = build_entity_summary(&stop_input.subagent_type, &entities);
+
+        // Store as a subagent discovery observation
+        client
+            .store_observation(
+                Some(project_id),
+                &entity_summary,
+                "subagent_discovery",
+                Some("subagent_discovery"),
+                0.6,
+                "subagent",
+                "project",
+                Some("+7 days"),
+            )
+            .await;
+    } else {
+        tracing::debug!(
+            count = entities.len(),
+            "SubagentStop: below entity threshold, skipping entity storage"
+        );
     }
-
-    tracing::debug!(
-        count = entities.len(),
-        "SubagentStop: significant entities found, storing discovery"
-    );
-
-    // Connect to MCP server via IPC (falls back to direct DB if server unavailable)
-    let mut client = crate::ipc::client::HookClient::connect().await;
-
-    // Get current project
-    let sid = Some(stop_input.session_id.as_str()).filter(|s| !s.is_empty());
-    let Some((project_id, _)) = client.resolve_project(None, sid).await else {
-        write_hook_output(&serde_json::json!({}));
-        return Ok(());
-    };
-
-    // Build condensed summary from entities
-    let entity_summary = build_entity_summary(&stop_input.subagent_type, &entities);
-
-    // Store as a subagent discovery observation
-    client
-        .store_observation(
-            Some(project_id),
-            &entity_summary,
-            "subagent_discovery",
-            Some("subagent_discovery"),
-            0.6,
-            "subagent",
-            "project",
-            Some("+7 days"),
-        )
-        .await;
 
     write_hook_output(&serde_json::json!({}));
     Ok(())
@@ -459,6 +491,236 @@ fn build_entity_summary(subagent_type: &str, entities: &[crate::entities::RawEnt
     parts.join(" | ")
 }
 
+/// Maximum characters per extracted finding
+const MAX_FINDING_LEN: usize = 600;
+
+/// Maximum findings to extract from a single subagent output
+const MAX_FINDINGS: usize = 5;
+
+/// Extract structured findings from subagent output.
+///
+/// Detects markdown-structured content: summary tables, priority/severity headers,
+/// recommendation sections, and finding entries. Returns condensed findings that
+/// can be stored as observations and survive compaction.
+fn extract_findings_from_output(output: &str) -> Vec<String> {
+    let mut findings: Vec<String> = Vec::new();
+    let lines: Vec<&str> = output.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() && findings.len() < MAX_FINDINGS {
+        let line = lines[i].trim();
+        let lower = line.to_lowercase();
+
+        // Detect summary/priority tables: a header line followed by table rows
+        let is_findings_header = lower.starts_with("## summary")
+            || lower.starts_with("### summary")
+            || lower.starts_with("## priority summary")
+            || lower.starts_with("## top ")
+            || lower.starts_with("### top ")
+            || lower.starts_with("## immediate wins")
+            || lower.starts_with("## high-priority")
+            || lower.starts_with("## consensus")
+            || lower.starts_with("## key tensions")
+            || lower.starts_with("## high impact")
+            || lower.starts_with("## actionable");
+
+        if is_findings_header {
+            // Capture this header + following content until next ## header or blank gap
+            let mut block = String::from(line);
+            i += 1;
+            while i < lines.len() {
+                let next = lines[i];
+                let next_trimmed = next.trim();
+                // Stop at the next section header
+                if next_trimmed.starts_with("## ") {
+                    break;
+                }
+                block.push('\n');
+                block.push_str(next);
+                if block.len() > MAX_FINDING_LEN {
+                    break;
+                }
+                i += 1;
+            }
+            let truncated = if block.len() > MAX_FINDING_LEN {
+                crate::utils::truncate_at_boundary(&block, MAX_FINDING_LEN).to_string()
+            } else {
+                block
+            };
+            if truncated.len() > 20 {
+                findings.push(truncated);
+            }
+            continue;
+        }
+
+        // Detect individual findings: "### Finding N" or "**Finding N:**"
+        let is_individual_finding = (lower.starts_with("### finding")
+            || lower.starts_with("## finding")
+            || lower.starts_with("**finding"))
+            && (lower.contains(':') || lower.contains("--") || lower.contains("---"));
+
+        if is_individual_finding {
+            let mut block = String::from(line);
+            i += 1;
+            // Capture until next heading or empty line gap (2+ blank lines)
+            let mut blanks = 0;
+            while i < lines.len() {
+                let next = lines[i].trim();
+                if next.is_empty() {
+                    blanks += 1;
+                    if blanks >= 2 {
+                        break;
+                    }
+                } else {
+                    blanks = 0;
+                    if next.starts_with("### ") || next.starts_with("## ") {
+                        break;
+                    }
+                }
+                block.push('\n');
+                block.push_str(lines[i]);
+                if block.len() > MAX_FINDING_LEN {
+                    break;
+                }
+                i += 1;
+            }
+            let truncated = if block.len() > MAX_FINDING_LEN {
+                crate::utils::truncate_at_boundary(&block, MAX_FINDING_LEN).to_string()
+            } else {
+                block
+            };
+            if truncated.len() > 20 {
+                findings.push(truncated);
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+
+    findings
+}
+
+/// Common words to exclude from keyword scope extraction.
+const SCOPE_STOP_WORDS: &[&str] = &[
+    "the",
+    "this",
+    "that",
+    "with",
+    "from",
+    "into",
+    "about",
+    "after",
+    "before",
+    "should",
+    "could",
+    "would",
+    "does",
+    "have",
+    "been",
+    "being",
+    "will",
+    "when",
+    "where",
+    "what",
+    "which",
+    "their",
+    "there",
+    "here",
+    "then",
+    "than",
+    "them",
+    "they",
+    "some",
+    "more",
+    "most",
+    "also",
+    "just",
+    "like",
+    "make",
+    "find",
+    "look",
+    "check",
+    "review",
+    "analyze",
+    "implement",
+    "create",
+    "update",
+    "delete",
+    "remove",
+    "code",
+    "file",
+    "function",
+    "class",
+    "module",
+    "system",
+    "using",
+    "used",
+    "need",
+    "want",
+    "help",
+    "please",
+    "each",
+    "every",
+    "other",
+    "only",
+    "both",
+    "same",
+];
+
+/// Extract keyword-based scopes from a task description when no file paths are present.
+///
+/// Looks for domain-specific identifiers: CamelCase words, snake_case words, and
+/// longer lowercase words that might match module or directory names in the code index.
+/// Returns scopes suitable for `generate_bundle`'s LIKE-based pattern matching.
+fn extract_keyword_scopes(prompt: &str) -> Vec<String> {
+    let mut scopes = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for word in prompt.split_whitespace() {
+        let word = word.trim_matches(|c: char| {
+            c == '"'
+                || c == '\''
+                || c == '`'
+                || c == '('
+                || c == ')'
+                || c == ','
+                || c == ';'
+                || c == '.'
+                || c == ':'
+                || c == '?'
+                || c == '!'
+        });
+
+        if word.len() < 4 {
+            continue;
+        }
+
+        let lower = word.to_lowercase();
+        if SCOPE_STOP_WORDS.contains(&lower.as_str()) {
+            continue;
+        }
+
+        // CamelCase identifiers (e.g., DatabasePool, HookClient)
+        let has_mixed_case = word.chars().any(|c| c.is_uppercase())
+            && word.chars().any(|c| c.is_lowercase())
+            && word.chars().all(|c| c.is_alphanumeric() || c == '_');
+
+        // snake_case identifiers (e.g., extract_scopes, hook_client)
+        let is_snake_case = word.contains('_')
+            && word.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && word.len() >= 5;
+
+        if (has_mixed_case || is_snake_case) && seen.insert(lower.clone()) {
+            scopes.push(lower);
+        }
+    }
+
+    // Take at most 3 keyword scopes
+    scopes.truncate(3);
+    scopes
+}
+
 /// Extract directory scopes from a task description prompt.
 ///
 /// Looks for file paths (e.g. "src/hooks/subagent.rs") and returns their
@@ -487,7 +749,9 @@ fn extract_scopes_from_prompt(prompt: &str) -> Vec<String> {
             // Sanity: directory must be reasonable (no spaces, not too long)
             if dir.len() <= 200
                 && !dir.contains(' ')
-                && dir.chars().all(|c| c.is_alphanumeric() || "/_-./".contains(c))
+                && dir
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || "/_-./".contains(c))
                 && seen.insert(dir.to_string())
             {
                 scopes.push(dir.to_string());
@@ -732,5 +996,87 @@ mod tests {
         let prompt = "Find where authentication is handled";
         let scopes = extract_scopes_from_prompt(prompt);
         assert!(scopes.is_empty());
+    }
+
+    // ── extract_keyword_scopes ─────────────────────────────────────────
+
+    #[test]
+    fn keyword_scopes_finds_camel_case() {
+        let prompt = "Refactor the DatabasePool to use connection pooling";
+        let scopes = extract_keyword_scopes(prompt);
+        assert!(scopes.contains(&"databasepool".to_string()));
+    }
+
+    #[test]
+    fn keyword_scopes_finds_snake_case() {
+        let prompt = "Look at how hook_client handles IPC connections";
+        let scopes = extract_keyword_scopes(prompt);
+        assert!(scopes.contains(&"hook_client".to_string()));
+    }
+
+    #[test]
+    fn keyword_scopes_skips_stop_words() {
+        let prompt = "Please review this code and check for issues";
+        let scopes = extract_keyword_scopes(prompt);
+        assert!(scopes.is_empty());
+    }
+
+    #[test]
+    fn keyword_scopes_limits_to_three() {
+        let prompt = "Check DatabasePool HookClient EmbeddingClient FuzzyCache SessionManager";
+        let scopes = extract_keyword_scopes(prompt);
+        assert!(scopes.len() <= 3);
+    }
+
+    #[test]
+    fn keyword_scopes_skips_short_words() {
+        let prompt = "The API key was missing";
+        let scopes = extract_keyword_scopes(prompt);
+        // "API" is only 3 chars, "key" is 3 chars, "was" is stop word
+        assert!(scopes.is_empty());
+    }
+
+    // ── extract_findings_from_output ───────────────────────────────────
+
+    #[test]
+    fn findings_extracts_summary_table() {
+        let output = "Some intro text\n\n## Summary Table\n\n| Finding | Priority |\n|---------|----------|\n| Missing auth | High |\n| Slow query | Low |\n\n## Next Section\n\nMore text";
+        let findings = extract_findings_from_output(output);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].contains("Summary Table"));
+        assert!(findings[0].contains("Missing auth"));
+    }
+
+    #[test]
+    fn findings_extracts_individual_finding() {
+        let output = "## Overview\n\nSome text\n\n### Finding 1 -- Missing Authentication\n\nThe auth module lacks input validation.\nThis could allow unauthorized access.\n\n### Finding 2 -- Slow Query\n\nThe query takes too long.";
+        let findings = extract_findings_from_output(output);
+        assert!(!findings.is_empty());
+        assert!(findings[0].contains("Missing Authentication"));
+    }
+
+    #[test]
+    fn findings_respects_max_limit() {
+        let mut output = String::new();
+        for i in 0..10 {
+            output.push_str(&format!("## Top {} items\n\nContent for item {}\n\n", i, i));
+        }
+        let findings = extract_findings_from_output(&output);
+        assert!(findings.len() <= MAX_FINDINGS);
+    }
+
+    #[test]
+    fn findings_empty_for_normal_prose() {
+        let output = "I looked at the code and it seems fine. The function handles errors correctly and the tests pass.";
+        let findings = extract_findings_from_output(output);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn findings_extracts_consensus_section() {
+        let output = "## Consensus Items\n\n- All experts agree on X\n- Y is also important\n\n## Tensions\n\nSome disagreement on Z";
+        let findings = extract_findings_from_output(output);
+        assert!(!findings.is_empty());
+        assert!(findings[0].contains("Consensus"));
     }
 }

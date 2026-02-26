@@ -132,7 +132,11 @@ impl super::HookClient {
             "depth": depth,
         });
         let result = self.call("generate_bundle", params).await.ok()?;
-        if result.get("empty").and_then(|v| v.as_bool()).unwrap_or(true) {
+        if result
+            .get("empty")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+        {
             return None;
         }
         result

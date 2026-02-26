@@ -52,6 +52,10 @@ pub(crate) struct CompactionContext {
     pub user_intent: Option<String>,
     #[serde(default)]
     pub files_referenced: Vec<String>,
+    /// Structured findings from expert analysis, code review, or other structured output.
+    /// Extracted by detecting markdown headers, tables, and severity/priority markers.
+    #[serde(default)]
+    pub findings: Vec<String>,
 }
 
 impl CompactionContext {
@@ -62,6 +66,7 @@ impl CompactionContext {
             && self.pending_tasks.is_empty()
             && self.user_intent.is_none()
             && self.files_referenced.is_empty()
+            && self.findings.is_empty()
     }
 
     pub(super) fn total_items(&self) -> usize {
@@ -71,6 +76,7 @@ impl CompactionContext {
             + self.pending_tasks.len()
             + self.user_intent.as_ref().map_or(0, |_| 1)
             + self.files_referenced.len()
+            + self.findings.len()
     }
 }
 
@@ -120,6 +126,7 @@ pub(crate) fn merge_compaction_contexts(
             &incoming.files_referenced,
             MAX_FILE_REFS,
         ),
+        findings: merge_vec_field(&old.findings, &incoming.findings, MAX_ITEMS_PER_CATEGORY),
     };
 
     serde_json::to_value(&merged).unwrap_or_else(|_| new.clone())

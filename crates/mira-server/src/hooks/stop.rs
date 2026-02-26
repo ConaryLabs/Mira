@@ -81,31 +81,30 @@ pub async fn run() -> Result<()> {
     }
 
     // Log brief injection stats for this session (via DatabasePool, not direct Connection)
-    if !stop_input.session_id.is_empty() {
-        if let Some(pool) = client.pool() {
-            let sid = stop_input.session_id.clone();
-            if let Ok(stats) = pool
-                .interact(move |conn| {
-                    crate::db::injection::get_injection_stats_for_session(conn, &sid)
-                        .map_err(|e| anyhow::anyhow!(e))
-                })
-                .await
-            {
-                if stats.total_injections > 0 {
-                    let avg_latency = stats
-                        .avg_latency_ms
-                        .map(|ms| format!(", avg {:.0}ms", ms))
-                        .unwrap_or_default();
-                    tracing::warn!(
-                        "[mira] Session injection stats: {} injections, {} chars total ({} deduped, {} cached{})",
-                        stats.total_injections,
-                        stats.total_chars,
-                        stats.total_deduped,
-                        stats.total_cached,
-                        avg_latency,
-                    );
-                }
-            }
+    if !stop_input.session_id.is_empty()
+        && let Some(pool) = client.pool()
+    {
+        let sid = stop_input.session_id.clone();
+        if let Ok(stats) = pool
+            .interact(move |conn| {
+                crate::db::injection::get_injection_stats_for_session(conn, &sid)
+                    .map_err(|e| anyhow::anyhow!(e))
+            })
+            .await
+            && stats.total_injections > 0
+        {
+            let avg_latency = stats
+                .avg_latency_ms
+                .map(|ms| format!(", avg {:.0}ms", ms))
+                .unwrap_or_default();
+            tracing::warn!(
+                "[mira] Session injection stats: {} injections, {} chars total ({} deduped, {} cached{})",
+                stats.total_injections,
+                stats.total_chars,
+                stats.total_deduped,
+                stats.total_cached,
+                avg_latency,
+            );
         }
     }
 
