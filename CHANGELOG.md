@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.2] - 2026-02-25
+
+### Added
+- **Parser: return types** -- All 4 parsers (Rust, Python, TypeScript, Go) now extract return type annotations from function signatures.
+- **Parser: imported symbol names** -- `use foo::{Bar, Baz}`, `from x import y, z`, `import { Foo }` now populate `imported_symbols` across all languages.
+- **Parser: decorators** -- Python decorators (`@property`, `@dataclass`, etc.) and Symbol struct support for decorator metadata.
+- **Parser: docstrings/JSDoc/Go doc** -- Python docstrings, TypeScript JSDoc (`/** */`), and Go doc comments (`//`) now extracted as documentation.
+- **Parser: TypeScript enums** -- `enum_declaration` nodes now handled.
+- **Parser: TypeScript visibility** -- `public`/`private`/`protected` modifiers extracted.
+- **Parser: Rust type aliases** -- `type Foo = Bar` now extracted as symbols.
+- **Parser: Go constants and variables** -- `const` and `var` declarations now indexed (previously skipped).
+- **Polyglot project detection** -- `detect_project_types()` returns all detected languages; cartographer merges modules from all languages.
+- **Skipped file tracking** -- Indexer reports files skipped by unsupported extension in stats.
+- **Cross-file import resolver** -- Foundation for Rust import path resolution (`crate::` paths to file paths).
+- **PostToolUse impact injection** -- When structural changes are detected (rename, remove, signature change), callers are looked up and surfaced immediately.
+- **Call graph line numbers** -- Callers/callees results now include the line number where the call occurs.
+- **Relationship summaries** -- Semantic injection uses compact `name:type(line)` pointers instead of raw 200-char code chunks.
+
+### Fixed
+- **Go grouped type declarations** -- `type ( Foo struct{}; Bar interface{} )` no longer drops all but the first type.
+- **Go multi-name const specs** -- `const a, b = 1, 2` now indexes both names.
+- **Python test detection** -- `starts_with("test")` no longer flags `testimony()` as test code.
+- **Python docstring stripping** -- `trim_start_matches` replaced with `strip_prefix` to avoid eating content characters.
+- **TypeScript is_test** -- Removed dead `starts_with("it(")` conditions; added exact matches for `it`, `describe`, `beforeEach`, etc.
+- **TypeScript arrow function double extraction** -- Named arrow functions no longer produce duplicate symbols.
+- **TypeScript is_test overly broad** -- `contains("Test")` replaced with `starts_with("test")` to avoid flagging `getTestData()`.
+- **Rust test attribute false positives** -- `contains("test")` replaced with exact `#[test]` / `::test]` matching.
+- **find_callees_sync wrong file_path** -- SQL now returns callee's file path instead of caller's.
+- **Silent DB failure on hot path** -- Semantic injector now logs warning on pool.run() failure instead of silently returning empty.
+- **Import resolver path traversal** -- Added `starts_with(src_root)` guard against `..` segment traversal.
+- **Go/TS doc comment performance** -- Replaced Vec allocation per-symbol with `prev_sibling()` walk.
+
+### Changed
+- **Context injection priority** -- Semantic context priority raised (0.7 -> 0.85), convention lowered (0.9 -> 0.6). Relevant code now beats directory hints when budget is tight.
+- **Symbol output format** -- Standardized compact `name:type(line)` notation across symbol listings.
+- **Java detection** -- Detected via pom.xml/build.gradle with user-facing "not yet supported" message instead of silent failure.
+
+### Documentation
+- Removed non-existent `/mira:remember` from README Quick Start.
+- Updated project.md: codebase map works for all supported languages, not just Rust.
+- Documented Java detection status in CONCEPTS.md, indexer.md, detection.md.
+- Documented compact `name:type(line)` symbol notation in CONCEPTS.md.
+- Added tests for polyglot detection, skipped file tracking, call graph line numbers.
+
+---
+
 ## [0.9.1] - 2026-02-25
 
 ### Removed
