@@ -121,17 +121,17 @@ async fn main() -> Result<()> {
             let latency_ms = start.elapsed().as_millis();
             match result {
                 Ok(Ok(())) => {
-                    mira::hooks::record_hook_outcome(&hook_name, true, latency_ms, None);
+                    mira::hooks::record_hook_outcome(&hook_name, true, latency_ms, None).await;
                 }
                 Ok(Err(e)) => {
                     let msg = format!("{e:#}");
-                    mira::hooks::record_hook_outcome(&hook_name, false, latency_ms, Some(&msg));
+                    mira::hooks::record_hook_outcome(&hook_name, false, latency_ms, Some(&msg)).await;
                     eprintln!("[mira] Hook error (non-fatal): {msg}");
                     let _ = writeln!(std::io::stdout(), "{{}}");
                 }
                 Err(join_err) => {
                     let msg = format!("{join_err}");
-                    mira::hooks::record_hook_outcome(&hook_name, false, latency_ms, Some(&msg));
+                    mira::hooks::record_hook_outcome(&hook_name, false, latency_ms, Some(&msg)).await;
                     eprintln!("[mira] Hook panic (non-fatal): {msg}");
                     let _ = writeln!(std::io::stdout(), "{{}}");
                 }

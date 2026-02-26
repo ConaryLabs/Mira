@@ -25,7 +25,7 @@ Provides the `FileWalker` builder for walking project files with consistent filt
 
 | Method | Default | Purpose |
 |--------|---------|---------|
-| `follow_links()` | true | Follow symbolic links |
+| `follow_links()` | false | Follow symbolic links |
 | `use_gitignore()` | true | Respect .gitignore files |
 | `with_extension()` | none | Filter by file extension |
 | `for_language()` | none | Set language with default extensions |

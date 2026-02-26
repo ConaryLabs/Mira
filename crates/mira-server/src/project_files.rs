@@ -58,7 +58,7 @@ impl FileWalker {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            follow_links: true,
+            follow_links: false,
             use_gitignore: true,
             extensions: Vec::new(),
             language: None,
@@ -67,7 +67,7 @@ impl FileWalker {
         }
     }
 
-    /// Set whether to follow symbolic links (default: true).
+    /// Set whether to follow symbolic links (default: false).
     pub fn follow_links(mut self, follow: bool) -> Self {
         self.follow_links = follow;
         self
@@ -272,7 +272,7 @@ mod tests {
     fn test_file_walker_new_defaults() {
         let walker = FileWalker::new("/test/path");
         assert_eq!(walker.path, PathBuf::from("/test/path"));
-        assert!(walker.follow_links);
+        assert!(!walker.follow_links);
         assert!(walker.use_gitignore);
         assert!(walker.extensions.is_empty());
         assert!(walker.language.is_none());
