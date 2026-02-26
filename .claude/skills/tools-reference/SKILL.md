@@ -7,22 +7,13 @@ description: Reference for all Mira MCP tool signatures, parameters, and workflo
 
 # Mira Consolidated Tools Reference
 
-Mira exposes 6 MCP tools to Claude Code. Additional actions are available via the `mira tool` CLI.
+Mira exposes 8 MCP tools to Claude Code. Additional actions are available via the `mira tool` CLI.
 
 ## `project` — Project/Session Management
 
 ```
 project(action="start", project_path="...", name="...")  # Initialize session
 project(action="get")                                     # Show current project
-```
-
-## `memory` — Persistent Memory
-
-```
-memory(action="remember", content="...", fact_type="decision", category="...")
-memory(action="recall", query="...", limit=10, category="...", fact_type="...")
-memory(action="forget", id=42)
-memory(action="archive", id=42)                            # Exclude from auto-export
 ```
 
 ## `code` — Code Intelligence
@@ -32,18 +23,28 @@ code(action="search", query="authentication middleware", limit=10)
 code(action="symbols", file_path="src/main.rs", symbol_type="function")
 code(action="callers", function_name="handle_login", limit=20)
 code(action="callees", function_name="process_request", limit=20)
-code(action="diff")                         # Auto-detects staged/working/last commit
-code(action="diff", from_ref="main", to_ref="feature/x")
-code(action="diff", from_ref="v1.0", to_ref="v1.1", include_impact=true)
 ```
 
-## `session` — Session Management & Insights
+## `diff` — Semantic Diff Analysis
+
+```
+diff()                                      # Auto-detects staged/working/last commit
+diff(from_ref="main", to_ref="feature/x")
+diff(from_ref="v1.0", to_ref="v1.1", include_impact=true)
+```
+
+## `session` — Session Management
 
 ```
 session(action="current_session")                          # Show current session
 session(action="recap")                                    # Quick overview: goals, sessions, insights
-session(action="insights", insight_source="pondering", min_confidence=0.5)
-session(action="dismiss_insight", insight_id=42)           # Remove resolved insight
+```
+
+## `insights` — Background Analysis & Insights
+
+```
+insights(action="insights", insight_source="pondering", min_confidence=0.5)
+insights(action="dismiss_insight", insight_id=42)          # Remove resolved insight
 ```
 
 ## `goal` — Cross-Session Goal Tracking
@@ -68,6 +69,13 @@ index(action="project")                     # Full project index (auto-enqueues 
 index(action="project", skip_embed=true)    # Fast re-index without embeddings
 index(action="file", path="src/main.rs")
 index(action="status")                      # Show index statistics
+```
+
+## `recipe` — Team Blueprints
+
+```
+recipe(action="list")                       # Show available recipes
+recipe(action="get", name="qa-hardening")   # Full recipe details with team members and tasks
 ```
 
 ## CLI-Only Actions
@@ -96,4 +104,3 @@ The following actions are available via `mira tool <name> '<json>'` but not expo
 | `session` | `cleanup` | Run data cleanup |
 | `documentation` | *(all actions)* | Documentation gap management |
 | `team` | *(all actions)* | Agent Teams intelligence |
-| `recipe` | *(all actions)* | Reusable team blueprints |

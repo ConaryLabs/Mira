@@ -1,3 +1,4 @@
+<!-- CLAUDE.md -->
 # CLAUDE.md
 
 Mira is a Rust MCP server providing code intelligence and session management for Claude Code.

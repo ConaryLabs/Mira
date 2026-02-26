@@ -1,3 +1,5 @@
+<!-- .claude/rules/tool-selection.md -->
+
 # Tool Selection: Mira vs Grep/Glob
 
 ## Use Mira Tools When

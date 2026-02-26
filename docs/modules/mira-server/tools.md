@@ -15,7 +15,6 @@ The MCP layer calls into these functions after deserializing request parameters.
 
 | Module | Tool | Actions |
 |--------|------|---------|
-| `memory.rs` | `memory` | `remember`, `recall`, `forget`, `archive`, `export_claude_local` |
 | `code/` | `code` | `search`, `symbols`, `callers`, `callees`, `dependencies`, `patterns`, `tech_debt` |
 | `code/` | `index` | `project`, `file`, `status`, `compact`, `summarize`, `health` |
 | `diff.rs` | `diff` | Standalone MCP tool — semantic diff analysis |

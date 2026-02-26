@@ -38,6 +38,7 @@ The crate follows a layered design: protocol handling (`mcp/`), tool implementat
 | `http` | HTTP client utilities |
 | `tasks` | Async task management |
 | `ipc` | Unix domain socket IPC for inter-process communication |
+| `jsonl` | JSONL session log parser for Claude Code transcript files |
 | `project_files` | Project file discovery and filtering |
 
 ## Key Exports

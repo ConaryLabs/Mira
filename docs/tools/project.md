@@ -10,7 +10,7 @@ Manage project context and workspace initialization.
 
 ### start
 
-Initialize a session with full project context. Detects project type, imports CLAUDE.local.md memories, loads preferences, recent sessions, health alerts, and generates a codebase map (supported languages: Rust, Python, TypeScript/JavaScript, Go).
+Initialize a session with full project context. Detects project type, loads preferences, recent sessions, pending documentation counts, and generates a codebase map (supported languages: Rust, Python, TypeScript/JavaScript, Go).
 
 **Parameters:**
 - `action` (string, required) - `"start"`
@@ -18,7 +18,18 @@ Initialize a session with full project context. Detects project type, imports CL
 - `name` (string, optional) - Project name override (auto-detected from Cargo.toml/package.json if omitted)
 - `session_id` (string, optional) - Session ID (falls back to Claude's hook-generated ID, then UUID)
 
-**Returns:** Project ID, name, type, codebase map, recent sessions, preferences, health alerts, pending documentation count, and database path.
+**Returns:** Project ID, name, type, codebase map, recent sessions, pending documentation counts, symbol/goal counts, capability mode, and database path.
+
+### set (CLI-only)
+
+Change the active project.
+
+**Parameters:**
+- `action` (string, required) - `"set"`
+- `project_path` (string, required) - Absolute path to the project root
+- `name` (string, optional) - Project name override
+
+**Returns:** Project ID and name.
 
 ### get
 
@@ -52,13 +63,13 @@ Show the currently active project.
 
 ## Errors
 
-- **"project_path is required"** - The `start` action needs a `project_path`.
+- **"project_path is required"** - The `start` and `set` actions need a `project_path`.
 - **"No active project"** - The `get` action returns this when no project is initialized.
 
 ## Notes
 
 - The `start` action is typically called automatically by Mira's session hooks. Manual use is rarely needed.
-- Side effects: creates/updates project and session records, imports CLAUDE.local.md, stores system context, registers file watcher, generates codebase map.
+- Side effects: creates/updates project and session records, stores system context (OS/shell info), registers file watcher, generates codebase map.
 - Project context is required by most other tools (memory, code, documentation, etc.).
 
 ## See Also

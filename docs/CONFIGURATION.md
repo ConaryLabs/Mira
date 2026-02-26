@@ -1,3 +1,4 @@
+<!-- docs/CONFIGURATION.md -->
 # Mira Configuration Guide
 
 This guide details all configuration options for Mira, including environment variables, file locations, and hook setup.
@@ -12,12 +13,12 @@ Mira uses environment variables for API keys and configuration. These are set in
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | Optional | Powers summaries, pondering, background intelligence |
-| `OLLAMA_HOST` | Optional | Ollama base URL for local LLM (default: `http://localhost:11434`) |
-| `OLLAMA_MODEL` | Optional | Ollama model to use (default: `llama3.3`) |
+| `DEEPSEEK_API_KEY` | Deprecated | No longer used. Background tasks use heuristic fallbacks only since v0.8.13. This key has no effect. |
+| `OLLAMA_HOST` | Deprecated | No longer used for background tasks. This setting has no effect. |
+| `OLLAMA_MODEL` | Deprecated | No longer used for background tasks. This setting has no effect. |
 | `OPENAI_API_KEY` | Recommended | For embeddings (semantic search) via OpenAI text-embedding-3-small |
 | `BRAVE_API_KEY` | Optional | Enables web search |
-| `DEFAULT_LLM_PROVIDER` | Optional | Override default provider: `deepseek` or `ollama` |
+| `DEFAULT_LLM_PROVIDER` | Deprecated | No longer used. Background tasks use heuristic fallbacks only. This setting has no effect. |
 | `MIRA_HOOK_LOG_LEVEL` | Optional | Log level for hook execution (default: warn) |
 | `MIRA_FUZZY_SEARCH` | Optional | Enable fuzzy search in hybrid search pipeline (default: true) |
 | `MIRA_DISABLE_LLM` | Optional | Set to `1` to disable all LLM calls (forces heuristic fallbacks) |

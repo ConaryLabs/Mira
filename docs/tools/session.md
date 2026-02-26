@@ -4,7 +4,7 @@
 Session management, analytics, and background task tracking.
 
 > **MCP actions:** `current_session`, `recap`
-> All other actions below are **CLI-only** — use `mira tool session '<json>'`.
+> All other actions below are **CLI-only** -- use `mira tool session '<json>'`.
 
 ## Actions
 
@@ -16,6 +16,15 @@ Show the current session ID.
 - `action` (string, required) - `"current_session"`
 
 **Returns:** Current session ID or "No active session".
+
+### recap
+
+Get a formatted session recap with preferences, recent context, active goals, pending tasks, and Claude Code session notes.
+
+**Parameters:**
+- `action` (string, required) - `"recap"`
+
+**Returns:** Formatted text combining preferences, recent memories, and session notes.
 
 ### list_sessions (CLI-only)
 
@@ -37,15 +46,6 @@ View tool call history for a session.
 - `limit` (integer, optional) - Max results (default: 20)
 
 **Returns:** Tool calls with names, timestamps, success status, and result previews.
-
-### recap
-
-Get a formatted session recap with preferences, recent context, active goals, pending tasks, and Claude Code session notes.
-
-**Parameters:**
-- `action` (string, required) - `"recap"`
-
-**Returns:** Formatted text combining preferences, recent memories, and session notes.
 
 ### usage_summary (CLI-only)
 
@@ -79,34 +79,70 @@ List recent LLM usage records grouped by role.
 
 **Returns:** List of usage records per role.
 
-### tasks_list (CLI-only)
+### insights (CLI-only)
 
-List all running and recently completed background tasks.
+Query unified insights digest (pondering, proactive, doc gaps).
 
-**Parameters:**
-- `action` (string, required) - `"tasks_list"`
-
-**Returns:** Task summaries with IDs, tool names, and status (working/completed/failed/cancelled). Completed results are cached for 5 minutes.
-
-### tasks_get (CLI-only)
-
-Get the status and result of a specific background task.
+> **Note:** Also available as a standalone MCP tool. See [insights](./insights.md).
 
 **Parameters:**
-- `action` (string, required) - `"tasks_get"`
-- `task_id` (string, required) - Task ID to query
+- `action` (string, required) - `"insights"`
+- `insight_source` (string, optional) - Filter by source: `pondering`, `proactive`, `doc_gap`
+- `min_confidence` (float, optional) - Minimum confidence threshold (0.0-1.0, default: 0.5)
+- `since_days` (integer, optional) - Look back period in days (default: 30)
+- `limit` (integer, optional) - Max results
 
-**Returns:** Task status, result text, and structured content (if completed).
+**Returns:** Insights digest with source, confidence, and content.
 
-### tasks_cancel (CLI-only)
+### dismiss_insight (CLI-only)
 
-Cancel a running background task.
+Dismiss an insight by ID.
 
 **Parameters:**
-- `action` (string, required) - `"tasks_cancel"`
-- `task_id` (string, required) - Task ID to cancel
+- `action` (string, required) - `"dismiss_insight"`
+- `insight_id` (integer, required) - Insight row ID to dismiss
+- `insight_source` (string, required) - Source type: `pondering` or `doc_gap`
 
 **Returns:** Confirmation or "not found" message.
+
+### error_patterns (CLI-only)
+
+Show learned error patterns and fixes for the active project.
+
+**Parameters:**
+- `action` (string, required) - `"error_patterns"`
+- `limit` (integer, optional) - Max results (default: 20)
+
+**Returns:** Error patterns with tool name, fingerprint, occurrence count, fix description, and last seen timestamp. Requires an active project.
+
+### session_lineage (CLI-only)
+
+Show session history with resume chains for the active project.
+
+**Parameters:**
+- `action` (string, required) - `"session_lineage"`
+- `limit` (integer, optional) - Max results (default: 20)
+
+**Returns:** Sessions with source (startup/resume), resumed_from links, branch, timestamps, and goal counts. Indented formatting shows resume chains.
+
+### capabilities (CLI-only)
+
+Show capability status: what features are available, degraded, or unavailable.
+
+**Parameters:**
+- `action` (string, required) - `"capabilities"`
+
+**Returns:** Status of each capability (semantic_search, background_analysis, fuzzy_search, code_index, mcp_sampling) with availability and detail messages.
+
+### report (CLI-only)
+
+Get session injection efficiency report.
+
+**Parameters:**
+- `action` (string, required) - `"report"`
+- `session_id` (string, optional) - Session ID for session-specific report (omit for cumulative)
+
+**Returns:** Injection statistics: total injections, chars injected, deduped/cached counts, average latency, and efficiency ratio.
 
 ### storage_status (CLI-only)
 
@@ -147,18 +183,29 @@ Run data cleanup to remove old records based on retention policy.
 ```
 
 ```json
-{"action": "tasks_get", "task_id": "abc-123"}
+{"action": "error_patterns", "limit": 10}
+```
+
+```json
+{"action": "session_lineage"}
+```
+
+```json
+{"action": "capabilities"}
+```
+
+```json
+{"action": "report", "session_id": "abc-123"}
 ```
 
 ## Errors
 
-- **"No active project"** - `list_sessions` requires an active project
+- **"No active project"** - `list_sessions`, `error_patterns`, `session_lineage` require an active project
 - **"No active session"** - `get_history` with no session_id and no active session
-- **"task_id is required"** - `tasks_get` and `tasks_cancel` need a task_id
-- **"Task not found"** - The specified task ID does not exist or has expired from cache
 
 ## See Also
 
 - [project](./project.md) - Initialize session with project context
 - [memory](./memory.md) - Memories shown in recap
-- [insights](./insights.md) - Background analysis digest (split from session in v0.8.0)
+- [insights](./insights.md) - Background analysis digest (standalone MCP tool)
+- [tasks](./tasks.md) - Background task management (separate tool)

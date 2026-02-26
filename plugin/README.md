@@ -72,8 +72,6 @@ claude --plugin-dir /path/to/Mira/plugin
 | `/mira:goals [command]` | Manage goals and milestones |
 | `/mira:diff [--from REF] [--to REF]` | Semantic diff analysis |
 | `/mira:insights` | Surface background analysis |
-| `/mira:remember <content>` | Quick memory storage |
-| `/mira:recall [query]` | Browse or search stored memories |
 | `/mira:experts` | Expert consultation via Agent Teams |
 | `/mira:full-cycle` | End-to-end review, implementation, and QA |
 | `/mira:qa-hardening` | Production readiness review |
@@ -82,11 +80,10 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 9 MCP tools:
+The plugin bundles the Mira MCP server with 8 MCP tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
-| `memory` | remember, recall, forget, archive | Persistent semantic memory |
 | `code` | search, symbols, callers, callees | Code intelligence: semantic search + call graph |
 | `diff` | *(single purpose)* | Semantic git diff analysis with impact assessment |
 | `project` | start, get | Project/session management |
