@@ -398,8 +398,7 @@ pub(crate) fn query_deps(
     }
 
     // Build parameterized IN clause with ? placeholders
-    let single_in: String = std::iter::repeat("?")
-        .take(module_ids.len())
+    let single_in: String = std::iter::repeat_n("?", module_ids.len())
         .collect::<Vec<_>>()
         .join(",");
 
