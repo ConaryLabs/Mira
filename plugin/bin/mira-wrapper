@@ -16,8 +16,9 @@ REPO="ConaryLabs/Mira"
 MIRA_HOME="${HOME}/.mira"
 BIN_DIR="${MIRA_HOME}/bin"
 MIRA_EXE_EXT=""
-case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) MIRA_EXE_EXT=".exe" ;;
+OS_NAME="$(uname -s 2>/dev/null || echo "Windows")"
+case "$OS_NAME" in
+    MINGW*|MSYS*|CYGWIN*|Windows*) MIRA_EXE_EXT=".exe" ;;
 esac
 MIRA_BIN="${BIN_DIR}/mira${MIRA_EXE_EXT}"
 VERSION_FILE="${BIN_DIR}/.mira-version"
@@ -33,7 +34,7 @@ fi
 
 # --- Fast path: binary exists, version known, update cache fresh ---
 if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ]; then
-    installed="$(cat "$VERSION_FILE")"
+    installed="$(cat "$VERSION_FILE" 2>/dev/null || echo "")"
     # If pinned, only accept exact match
     if [ -n "${MIRA_VERSION_PIN:-}" ]; then
         if [ "$installed" = "$MIRA_VERSION" ]; then
@@ -43,7 +44,7 @@ if [ -x "$MIRA_BIN" ] && [ -f "$VERSION_FILE" ]; then
         # Accept any installed version if update cache is fresh
         if [ -f "$UPDATE_CACHE" ]; then
             file_mtime=$(stat -c %Y "$UPDATE_CACHE" 2>/dev/null || stat -f %m "$UPDATE_CACHE" 2>/dev/null || date -r "$UPDATE_CACHE" +%s 2>/dev/null || echo 0)
-            cache_age=$(( $(date +%s) - file_mtime ))
+            cache_age=$(( $(date +%s 2>/dev/null || echo "$file_mtime") - file_mtime ))
             if [ "$cache_age" -lt "$CACHE_TTL" ]; then
                 exec "$MIRA_BIN" "$@"
             fi
@@ -84,17 +85,19 @@ get_latest_version() {
 
 # Detect platform
 detect_platform() {
-    case "$(uname -s)" in
+    _os_name="$(uname -s 2>/dev/null || echo "Windows")"
+    case "$_os_name" in
         Linux*)                    os="unknown-linux-gnu" ;;
         Darwin*)                   os="apple-darwin" ;;
-        MINGW*|MSYS*|CYGWIN*)     os="pc-windows-msvc" ;;
-        *)       log "[mira] Unsupported OS: $(uname -s). Install manually: https://github.com/${REPO}"; exit 1 ;;
+        MINGW*|MSYS*|CYGWIN*|Windows*)     os="pc-windows-msvc" ;;
+        *)       log "[mira] Unsupported OS: $_os_name. Install manually: https://github.com/${REPO}"; exit 1 ;;
     esac
 
-    case "$(uname -m)" in
+    _arch_name="$(uname -m 2>/dev/null || echo "x86_64")"
+    case "$_arch_name" in
         x86_64|amd64)   arch="x86_64" ;;
         arm64|aarch64)  arch="aarch64" ;;
-        *) log "[mira] Unsupported architecture: $(uname -m)"; exit 1 ;;
+        *) log "[mira] Unsupported architecture: $_arch_name"; exit 1 ;;
     esac
 
     printf '%s' "${arch}-${os}"
@@ -125,7 +128,7 @@ fetch() {
 # Resolve target version
 installed=""
 if [ -f "$VERSION_FILE" ]; then
-    installed="$(cat "$VERSION_FILE")"
+    installed="$(cat "$VERSION_FILE" 2>/dev/null || echo "")"
 fi
 
 target="$MIRA_VERSION"  # Start with floor
@@ -255,7 +258,7 @@ mv -f "${VERSION_FILE}.tmp" "$VERSION_FILE"
 touch "$UPDATE_CACHE"
 
 # Strip macOS quarantine attribute if present
-case "$(uname -s)" in
+case "$(uname -s 2>/dev/null || echo "Windows")" in
     Darwin*) xattr -d com.apple.quarantine "$MIRA_BIN" 2>/dev/null || true ;;
 esac
 
