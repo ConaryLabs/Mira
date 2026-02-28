@@ -1,7 +1,7 @@
 // crates/mira-server/src/tools/core/test_utils.rs
 // Shared test utilities for tool integration tests
 
-use crate::db::pool::DatabasePool;
+use crate::db::pool::{CodePool, DatabasePool, MainPool};
 use crate::tools::core::ToolContext;
 use async_trait::async_trait;
 use mira_types::ProjectContext;
@@ -13,8 +13,8 @@ use tokio::sync::RwLock;
 // ============================================================================
 
 pub struct MockToolContext {
-    pub pool: Arc<DatabasePool>,
-    pub code_pool: Arc<DatabasePool>,
+    pub pool: MainPool,
+    pub code_pool: CodePool,
     project: RwLock<Option<ProjectContext>>,
     session_id: RwLock<Option<String>>,
     branch: RwLock<Option<String>>,
@@ -22,16 +22,16 @@ pub struct MockToolContext {
 
 impl MockToolContext {
     pub async fn new() -> Self {
-        let pool = Arc::new(
+        let pool = MainPool::new(Arc::new(
             DatabasePool::open_in_memory()
                 .await
                 .expect("Failed to open in-memory pool"),
-        );
-        let code_pool = Arc::new(
+        ));
+        let code_pool = CodePool::new(Arc::new(
             DatabasePool::open_code_db_in_memory()
                 .await
                 .expect("Failed to open in-memory code pool"),
-        );
+        ));
         Self {
             pool,
             code_pool,
@@ -67,10 +67,10 @@ impl MockToolContext {
 
 #[async_trait]
 impl ToolContext for MockToolContext {
-    fn pool(&self) -> &Arc<DatabasePool> {
+    fn pool(&self) -> &MainPool {
         &self.pool
     }
-    fn code_pool(&self) -> &Arc<DatabasePool> {
+    fn code_pool(&self) -> &CodePool {
         &self.code_pool
     }
     fn embeddings(&self) -> Option<&Arc<crate::embeddings::EmbeddingClient>> {

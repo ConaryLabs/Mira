@@ -9,11 +9,11 @@ use uuid::Uuid;
 
 #[async_trait]
 impl ToolContext for MiraServer {
-    fn pool(&self) -> &Arc<crate::db::pool::DatabasePool> {
+    fn pool(&self) -> &crate::db::pool::MainPool {
         &self.pool
     }
 
-    fn code_pool(&self) -> &Arc<crate::db::pool::DatabasePool> {
+    fn code_pool(&self) -> &crate::db::pool::CodePool {
         &self.code_pool
     }
 

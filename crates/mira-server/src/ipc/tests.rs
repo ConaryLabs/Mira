@@ -2,7 +2,7 @@
 // IPC tests — duplex-based (all platforms) + Unix socket integration tests
 
 use crate::config::ApiKeys;
-use crate::db::pool::DatabasePool;
+use crate::db::pool::{CodePool, DatabasePool, MainPool};
 use crate::db::test_support::{setup_test_pool, setup_test_pool_with_project};
 use crate::ipc::handler;
 use crate::ipc::protocol::{IpcRequest, IpcResponse};
@@ -17,12 +17,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 /// Create a MiraServer for testing.
 async fn create_test_server(pool: Arc<DatabasePool>) -> MiraServer {
-    let code_pool = Arc::new(
+    let code_pool = CodePool::new(Arc::new(
         DatabasePool::open_code_db_in_memory()
             .await
             .expect("failed to open code pool"),
-    );
-    MiraServer::from_api_keys(pool, code_pool, None, &ApiKeys::default(), false)
+    ));
+    MiraServer::from_api_keys(MainPool::new(pool), code_pool, None, &ApiKeys::default(), false)
 }
 
 /// Spawn a handler on an in-memory duplex stream. Returns the client half
@@ -301,7 +301,7 @@ async fn create_test_server_with_code(
     pool: Arc<DatabasePool>,
     code_pool: Arc<DatabasePool>,
 ) -> MiraServer {
-    MiraServer::from_api_keys(pool, code_pool, None, &ApiKeys::default(), false)
+    MiraServer::from_api_keys(MainPool::new(pool), CodePool::new(code_pool), None, &ApiKeys::default(), false)
 }
 
 /// Seed the code database with test modules and symbols.

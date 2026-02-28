@@ -370,7 +370,7 @@ impl MiraServer {
         if success {
             let project_id = self.project.read().await.as_ref().map(|p| p.id);
             super::extraction::spawn_tool_extraction(
-                self.pool.clone(),
+                self.pool.inner().clone(),
                 self.embeddings.clone(),
                 project_id,
                 tool_name,

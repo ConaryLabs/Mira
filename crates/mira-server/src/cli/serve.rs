@@ -6,7 +6,7 @@ use super::get_db_path;
 use anyhow::Result;
 use mira::background;
 use mira::config::EnvConfig;
-use mira::db::pool::DatabasePool;
+use mira::db::pool::{CodePool, DatabasePool, MainPool};
 use mira::http::create_shared_client;
 use mira::mcp::MiraServer;
 use mira::tools::core::ToolContext;
@@ -23,8 +23,8 @@ use tracing::{info, warn};
 /// (re-indexing is cheap and safer) - we just drop the old tables from the
 /// main DB to reclaim space.
 async fn migrate_code_tables_if_needed(
-    main_pool: &Arc<DatabasePool>,
-    _code_pool: &Arc<DatabasePool>,
+    main_pool: &MainPool,
+    _code_pool: &CodePool,
 ) {
     let has_old_code_tables = main_pool
         .interact(|conn| {
@@ -80,7 +80,7 @@ async fn migrate_code_tables_if_needed(
 /// Shared server components produced by `init_server_context`.
 struct ServerContext {
     server: MiraServer,
-    pool: Arc<DatabasePool>,
+    pool: MainPool,
     env_config: EnvConfig,
 }
 
@@ -102,9 +102,13 @@ async fn init_server_context() -> Result<ServerContext> {
 
     // Open database pools (main + code index)
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let raw_pool = Arc::new(DatabasePool::open(&db_path).await?);
     let code_db_path = db_path.with_file_name("mira-code.db");
-    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
+    let raw_code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
+
+    // Wrap in typed newtypes for compile-time safety
+    let pool = MainPool::new(raw_pool.clone());
+    let code_pool = CodePool::new(raw_code_pool);
 
     // Migrate code tables from main DB to code DB if needed
     migrate_code_tables_if_needed(&pool, &code_pool).await;
@@ -113,7 +117,7 @@ async fn init_server_context() -> Result<ServerContext> {
     let embeddings = get_embeddings_from_config(
         &env_config.api_keys,
         &env_config.embeddings,
-        Some(pool.clone()),
+        Some(raw_pool),
         http_client.clone(),
     );
 
@@ -123,8 +127,7 @@ async fn init_server_context() -> Result<ServerContext> {
         // vec_code is created by run_code_migrations with a hardcoded dim; this
         // detects mismatches at server startup and recreates with the correct dim.
         let dims_code = emb.dimensions();
-        let dim_code_pool = code_pool.clone();
-        if let Err(e) = dim_code_pool
+        if let Err(e) = code_pool
             .interact(move |conn| {
                 mira::db::ensure_code_vec_table_dimensions(conn, dims_code)
                     .map_err(|e| anyhow::anyhow!("{}", e))
@@ -135,10 +138,8 @@ async fn init_server_context() -> Result<ServerContext> {
         }
 
         let provider_id = emb.provider_id().to_string();
-        let check_pool = pool.clone();
-        let check_code_pool = code_pool.clone();
         let provider_id_clone = provider_id.clone();
-        match check_pool
+        match pool
             .interact(move |conn| {
                 mira::db::check_embedding_provider_change(conn, &provider_id)
                     .map_err(|e| anyhow::anyhow!("{}", e))
@@ -147,7 +148,7 @@ async fn init_server_context() -> Result<ServerContext> {
         {
             Ok(true) => {
                 // Provider changed — also invalidate code embeddings
-                if let Err(e) = check_code_pool
+                if let Err(e) = code_pool
                     .interact(move |conn| {
                         mira::db::invalidate_code_embeddings(conn)
                             .map_err(|e| anyhow::anyhow!("{}", e))
@@ -173,8 +174,7 @@ async fn init_server_context() -> Result<ServerContext> {
 
         // Recovery: if a previous provider switch cleared vec_code but crashed before
         // re-queuing, this re-queues the chunks so semantic search recovers automatically.
-        let recovery_code_pool = code_pool.clone();
-        if let Err(e) = recovery_code_pool
+        if let Err(e) = code_pool
             .interact(|conn| {
                 mira::db::ensure_code_embeddings_queued(conn).map_err(|e| anyhow::anyhow!("{}", e))
             })
@@ -286,7 +286,7 @@ fn check_dev_mode_collision() {
 pub async fn run_mcp_server() -> Result<()> {
     let ctx = init_server_context().await?;
     let mut server = ctx.server;
-    let pool = ctx.pool;
+    let _pool = ctx.pool;
     let _env_config = ctx.env_config;
 
     // Warn if plugin MCP server conflicts with a project dev instance
@@ -305,14 +305,17 @@ pub async fn run_mcp_server() -> Result<()> {
 
     // Spawn background workers with separate pools
     let bg_embeddings = server.embeddings.clone();
-    let (_shutdown_tx, fast_lane_notify) =
-        background::spawn_with_pools(server.code_pool.clone(), pool.clone(), bg_embeddings);
+    let (_shutdown_tx, fast_lane_notify) = background::spawn_with_pools(
+        server.code_pool.inner().clone(),
+        server.pool.inner().clone(),
+        bg_embeddings,
+    );
     info!("Background worker started");
 
     // Spawn file watcher for incremental indexing (uses code_pool)
     let (_watcher_shutdown_tx, watcher_shutdown_rx) = watch::channel(false);
     let watcher_handle = background::watcher::spawn(
-        server.code_pool.clone(),
+        server.code_pool.inner().clone(),
         Some(server.fuzzy_cache.clone()),
         watcher_shutdown_rx,
         Some(fast_lane_notify),

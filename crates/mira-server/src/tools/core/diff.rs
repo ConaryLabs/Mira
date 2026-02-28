@@ -110,7 +110,7 @@ pub async fn analyze_diff_tool<C: ToolContext>(
     };
 
     // Perform full analysis
-    let result = analyze_diff(ctx.pool(), path, project_id, &from, &to, include_impact).await?;
+    let result = analyze_diff(ctx.pool().inner(), path, project_id, &from, &to, include_impact).await?;
 
     let formatted = format_diff_analysis(&result);
     Ok(Json(DiffOutput {

@@ -138,7 +138,7 @@ fn list_cli_tool_names() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mira::db::pool::DatabasePool;
+    use mira::db::pool::{CodePool, DatabasePool, MainPool};
     use mira::mcp::MiraServer;
     use std::sync::Arc;
 
@@ -147,8 +147,8 @@ mod tests {
     #[tokio::test]
     async fn cli_tools_superset_of_mcp_tools() {
         // Create a minimal server to get tool list
-        let pool = Arc::new(DatabasePool::open_in_memory().await.unwrap());
-        let code_pool = Arc::new(DatabasePool::open_code_db_in_memory().await.unwrap());
+        let pool = MainPool::new(Arc::new(DatabasePool::open_in_memory().await.unwrap()));
+        let code_pool = CodePool::new(Arc::new(DatabasePool::open_code_db_in_memory().await.unwrap()));
         let server = MiraServer::new(pool, code_pool, None);
 
         let mcp_tools: std::collections::HashSet<String> =

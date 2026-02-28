@@ -43,6 +43,7 @@ use deadpool_sqlite::{Config, Hook, Pool, Runtime};
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Once;
 
 #[cfg(unix)]
@@ -590,6 +591,188 @@ pub struct PoolStatus {
     pub size: usize,
     pub available: usize,
     pub waiting: usize,
+}
+
+/// Typed wrapper for the main database pool (mira.db).
+/// Provides compile-time safety against mixing up main and code pools.
+#[derive(Clone)]
+pub struct MainPool(Arc<DatabasePool>);
+
+impl MainPool {
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self(pool)
+    }
+
+    pub fn inner(&self) -> &Arc<DatabasePool> {
+        &self.0
+    }
+
+    /// Run a closure and return Result<T, MiraError> for tool handlers.
+    pub async fn run<F, R, E>(&self, f: F) -> Result<R, MiraError>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: Into<MiraError> + Send + 'static,
+    {
+        self.0.run(f).await
+    }
+
+    /// Run a closure with a connection from the pool, returning anyhow::Result.
+    pub async fn interact<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.interact(f).await
+    }
+
+    /// Like [`run`](Self::run) but with retry on SQLite contention errors.
+    pub async fn run_with_retry<F, R, E>(&self, f: F) -> Result<R, MiraError>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + Clone + 'static,
+        R: Send + 'static,
+        E: Into<MiraError> + Send + 'static,
+    {
+        self.0.run_with_retry(f).await
+    }
+
+    /// Run a closure with retry on SQLite contention errors (anyhow variant).
+    pub async fn interact_with_retry<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + Clone + 'static,
+        R: Send + 'static,
+    {
+        self.0.interact_with_retry(f).await
+    }
+
+    /// Run a closure on a pooled connection, logging errors at debug but not propagating.
+    pub async fn try_interact<F, R>(&self, label: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.try_interact(label, f).await
+    }
+
+    /// Like `try_interact` but logs failures at warn level.
+    pub async fn try_interact_warn<F, R>(&self, label: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.try_interact_warn(label, f).await
+    }
+
+    /// Get pool status for monitoring.
+    pub fn status(&self) -> PoolStatus {
+        self.0.status()
+    }
+
+    /// Get the database file path (None for in-memory).
+    pub fn path(&self) -> Option<&Path> {
+        self.0.path()
+    }
+}
+
+/// Typed wrapper for the code index database pool (mira-code.db).
+/// Provides compile-time safety against mixing up main and code pools.
+#[derive(Clone)]
+pub struct CodePool(Arc<DatabasePool>);
+
+impl CodePool {
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self(pool)
+    }
+
+    pub fn inner(&self) -> &Arc<DatabasePool> {
+        &self.0
+    }
+
+    /// Run a closure and return Result<T, MiraError> for tool handlers.
+    pub async fn run<F, R, E>(&self, f: F) -> Result<R, MiraError>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: Into<MiraError> + Send + 'static,
+    {
+        self.0.run(f).await
+    }
+
+    /// Run a closure with a connection from the pool, returning anyhow::Result.
+    pub async fn interact<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.interact(f).await
+    }
+
+    /// Like [`run`](Self::run) but with retry on SQLite contention errors.
+    pub async fn run_with_retry<F, R, E>(&self, f: F) -> Result<R, MiraError>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + Clone + 'static,
+        R: Send + 'static,
+        E: Into<MiraError> + Send + 'static,
+    {
+        self.0.run_with_retry(f).await
+    }
+
+    /// Run a closure with retry on SQLite contention errors (anyhow variant).
+    pub async fn interact_with_retry<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + Clone + 'static,
+        R: Send + 'static,
+    {
+        self.0.interact_with_retry(f).await
+    }
+
+    /// Run a closure on a pooled connection, logging errors at debug but not propagating.
+    pub async fn try_interact<F, R>(&self, label: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.try_interact(label, f).await
+    }
+
+    /// Like `try_interact` but logs failures at warn level.
+    pub async fn try_interact_warn<F, R>(&self, label: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.try_interact_warn(label, f).await
+    }
+
+    /// Rebuild FTS5 search index from vec_code.
+    pub async fn rebuild_fts(&self) -> Result<()> {
+        self.0.rebuild_fts().await
+    }
+
+    /// Rebuild FTS5 search index for a specific project.
+    pub async fn rebuild_fts_for_project(&self, project_id: i64) -> Result<()> {
+        self.0.rebuild_fts_for_project(project_id).await
+    }
+
+    /// Compact vec_code storage and VACUUM the database file.
+    pub async fn compact_code_db(&self) -> Result<super::index::CompactStats> {
+        self.0.compact_code_db().await
+    }
+
+    /// Get pool status for monitoring.
+    pub fn status(&self) -> PoolStatus {
+        self.0.status()
+    }
+
+    /// Get the database file path (None for in-memory).
+    pub fn path(&self) -> Option<&Path> {
+        self.0.path()
+    }
+
+    /// Get the memory URI (for sharing state in tests).
+    pub fn memory_uri(&self) -> Option<&str> {
+        self.0.memory_uri()
+    }
 }
 
 /// Ensure parent directory exists with secure permissions (0o700 on Unix).

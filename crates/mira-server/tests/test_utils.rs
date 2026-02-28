@@ -2,7 +2,9 @@
 
 use async_trait::async_trait;
 use mira::{
-    background::watcher::WatcherHandle, db::pool::DatabasePool, embeddings::EmbeddingClient,
+    background::watcher::WatcherHandle,
+    db::pool::{CodePool, DatabasePool, MainPool},
+    embeddings::EmbeddingClient,
 };
 use mira_types::ProjectContext;
 use std::sync::Arc;
@@ -11,8 +13,8 @@ use uuid::Uuid;
 
 /// Test context that implements ToolContext for integration testing
 pub struct TestContext {
-    pool: Arc<DatabasePool>,
-    code_pool: Arc<DatabasePool>,
+    pool: MainPool,
+    code_pool: CodePool,
     project_state: Arc<RwLock<Option<ProjectContext>>>,
     session_state: Arc<RwLock<Option<String>>>,
     branch_state: Arc<RwLock<Option<String>>>,
@@ -22,16 +24,16 @@ impl TestContext {
     /// Create a new test context with in-memory database
     pub async fn new() -> Self {
         // Create pools with in-memory databases
-        let pool = Arc::new(
+        let pool = MainPool::new(Arc::new(
             DatabasePool::open_in_memory()
                 .await
                 .expect("Failed to create in-memory pool"),
-        );
-        let code_pool = Arc::new(
+        ));
+        let code_pool = CodePool::new(Arc::new(
             DatabasePool::open_code_db_in_memory()
                 .await
                 .expect("Failed to create in-memory code pool"),
-        );
+        ));
 
         Self {
             pool,
@@ -43,18 +45,18 @@ impl TestContext {
     }
 
     /// Get a reference to the pool
-    pub fn pool(&self) -> &Arc<DatabasePool> {
+    pub fn pool(&self) -> &MainPool {
         &self.pool
     }
 }
 
 #[async_trait]
 impl mira::tools::core::ToolContext for TestContext {
-    fn pool(&self) -> &Arc<DatabasePool> {
+    fn pool(&self) -> &MainPool {
         &self.pool
     }
 
-    fn code_pool(&self) -> &Arc<DatabasePool> {
+    fn code_pool(&self) -> &CodePool {
         &self.code_pool
     }
 

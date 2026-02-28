@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 
 use crate::background::watcher::WatcherHandle;
 use crate::config::ApiKeys;
-use crate::db::pool::DatabasePool;
+use crate::db::pool::{CodePool, MainPool};
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
@@ -46,9 +46,9 @@ pub struct CachedTaskResult {
 #[derive(Clone)]
 pub struct MiraServer {
     /// Async connection pool for main database operations (memory, sessions, goals, etc.)
-    pub pool: Arc<DatabasePool>,
+    pub pool: MainPool,
     /// Async connection pool for code index database (code_symbols, vec_code, etc.)
-    pub code_pool: Arc<DatabasePool>,
+    pub code_pool: CodePool,
     pub embeddings: Option<Arc<EmbeddingClient>>,
     pub project: Arc<RwLock<Option<ProjectContext>>>,
     /// Current session ID (generated on first tool call or session_start)
@@ -75,8 +75,8 @@ pub struct MiraServer {
 impl MiraServer {
     /// Create a new server from pre-loaded API keys (avoids duplicate env reads)
     pub fn from_api_keys(
-        pool: Arc<DatabasePool>,
-        code_pool: Arc<DatabasePool>,
+        pool: MainPool,
+        code_pool: CodePool,
         embeddings: Option<Arc<EmbeddingClient>>,
         _api_keys: &ApiKeys,
         fuzzy_enabled: bool,
@@ -103,8 +103,8 @@ impl MiraServer {
     }
 
     pub fn new(
-        pool: Arc<DatabasePool>,
-        code_pool: Arc<DatabasePool>,
+        pool: MainPool,
+        code_pool: CodePool,
         embeddings: Option<Arc<EmbeddingClient>>,
     ) -> Self {
         Self::from_api_keys(pool, code_pool, embeddings, &ApiKeys::from_env(), true)
@@ -200,9 +200,9 @@ impl MiraServer {
             .clone()
             .or_else(read_claude_session_id);
         if let Some(sid) = sid {
-            let pool_clone = self.pool.clone();
             let sid_clone = sid.clone();
-            if let Ok(Some(membership)) = pool_clone
+            if let Ok(Some(membership)) = self
+                .pool
                 .interact(move |conn| {
                     Ok::<_, anyhow::Error>(crate::db::get_team_membership_for_session_sync(
                         conn, &sid_clone,

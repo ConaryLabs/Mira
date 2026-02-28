@@ -1,3 +1,4 @@
+<!-- plugin/skills/help/SKILL.md -->
 ---
 name: help
 description: This skill should be used when the user asks "help", "what commands", "list commands", "what can mira do", "mira help", "show commands", "what can you do", "how do I use mira", or wants to see all available Mira skills and tools.
@@ -12,14 +13,12 @@ description: This skill should be used when the user asks "help", "what commands
 | `/mira:help` | Show all available commands and tools |
 | `/mira:status` | Quick health check: index stats, storage, active goals |
 | `/mira:recap` | Get session context, preferences, and active goals |
-| `/mira:remember <content>` | Store a fact or decision for future sessions |
 
 ## Daily Use
 
 | Command | Description |
 |---------|-------------|
 | `/mira:search <query>` | Semantic code search — find code by meaning, not just text |
-| `/mira:recall [query]` | Browse or search stored memories across sessions |
 | `/mira:goals` | Track cross-session objectives with milestones |
 | `/mira:diff` | Semantic analysis of git changes with impact assessment |
 | `/mira:insights` | Surface background analysis and predictions |
@@ -40,6 +39,37 @@ Beyond slash commands, Mira provides MCP tools that Claude uses automatically:
 `memory`, `code`, `diff`, `project`, `session`, `insights`, `goal`, `index`, `recipe`
 
 These power semantic search, call graph analysis, persistent memory, and more — no slash command needed.
+
+## Tool Dependencies
+
+Some tools require indexing before they work. Here's what depends on what.
+
+### Requires code index (`index(action="project")`)
+
+| Tool | Notes |
+|------|-------|
+| `code(action="search")` | Semantic search over indexed code |
+| `code(action="callers")` / `code(action="callees")` | Call graph analysis |
+| `code(action="bundle")` | Module extraction |
+| `diff(include_impact=true)` | Impact analysis of changes |
+
+### Requires health scan (`index(action="health")`)
+
+| Tool | Notes |
+|------|-------|
+| `code(action="dependencies")` | Auto-queues health scan if missing |
+| `code(action="dead_code")` | Auto-queues health scan if missing |
+| `insights()` | Needs health data for analysis |
+
+### Works without indexing
+
+| Tool | Notes |
+|------|-------|
+| `project(*)`, `session(*)`, `goal(*)`, `recipe(*)` | Session and goal management |
+| `code(action="symbols")` | Single-file parsing via tree-sitter |
+| `diff()` (without impact) | Git-based analysis only |
+
+Note: `project(action="start")` auto-triggers background indexing, so most users never need to manually index.
 
 ## Instructions
 

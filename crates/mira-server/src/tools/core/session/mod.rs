@@ -273,7 +273,7 @@ async fn get_injection_report<C: ToolContext>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::pool::DatabasePool;
+    use crate::db::pool::{DatabasePool, MainPool};
     use crate::mcp::requests::{SessionAction, SessionRequest};
     use crate::mcp::responses::SessionData;
     use crate::tools::core::test_utils::MockToolContext;
@@ -297,7 +297,7 @@ mod tests {
 
     /// Helper: insert a session row into the test DB.
     async fn insert_session(
-        pool: &Arc<DatabasePool>,
+        pool: &MainPool,
         id: &str,
         project_id: i64,
         status: &str,
@@ -320,7 +320,7 @@ mod tests {
 
     /// Helper: insert a tool_history row.
     async fn insert_tool_history(
-        pool: &Arc<DatabasePool>,
+        pool: &MainPool,
         session_id: &str,
         tool_name: &str,
         success: bool,

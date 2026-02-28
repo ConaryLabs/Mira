@@ -32,7 +32,7 @@ pub async fn query_search_code<C: ToolContext>(
 ) -> Result<HybridSearchResult, MiraError> {
     let pi = get_project_info(ctx).await;
     hybrid_search(
-        ctx.code_pool(),
+        ctx.code_pool().inner(),
         ctx.embeddings(),
         ctx.fuzzy_cache(),
         query,

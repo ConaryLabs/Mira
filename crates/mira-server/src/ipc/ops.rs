@@ -27,7 +27,7 @@ pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value
         Ok(json!({"project_id": id, "path": path}))
     } else {
         // No explicit cwd — use per-session/global file resolution
-        let (id, path, _name) = crate::hooks::resolve_project(&server.pool, session_id).await;
+        let (id, path, _name) = crate::hooks::resolve_project(server.pool.inner(), session_id).await;
         match (id, path) {
             (Some(id), Some(path)) => Ok(json!({"project_id": id, "path": path})),
             _ => anyhow::bail!(
@@ -159,7 +159,7 @@ pub async fn get_active_goals(server: &MiraServer, params: Value) -> Result<Valu
         .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
-    let goals = crate::hooks::format_active_goals(&server.pool, project_id, limit).await;
+    let goals = crate::hooks::format_active_goals(server.pool.inner(), project_id, limit).await;
     Ok(json!({"goals": goals}))
 }
 
@@ -692,7 +692,7 @@ pub async fn get_startup_context(server: &MiraServer, params: Value) -> Result<V
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty());
     let context =
-        crate::hooks::session::build_startup_context(cwd, Some(server.pool.clone()), session_id)
+        crate::hooks::session::build_startup_context(cwd, Some(server.pool.inner().clone()), session_id)
             .await;
     Ok(json!({"context": context}))
 }
@@ -702,7 +702,7 @@ pub async fn get_resume_context(server: &MiraServer, params: Value) -> Result<Va
     let cwd = params.get("cwd").and_then(|v| v.as_str());
     let session_id = params.get("session_id").and_then(|v| v.as_str());
     let context =
-        crate::hooks::session::build_resume_context(cwd, session_id, Some(server.pool.clone()))
+        crate::hooks::session::build_resume_context(cwd, session_id, Some(server.pool.inner().clone()))
             .await;
     Ok(json!({"context": context}))
 }
@@ -914,7 +914,7 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
 
     // Resolve project
     let (project_id, project_path, _project_name) =
-        crate::hooks::resolve_project(&server.pool, Some(session_id).filter(|s| !s.is_empty()))
+        crate::hooks::resolve_project(server.pool.inner(), Some(session_id).filter(|s| !s.is_empty()))
             .await;
 
     // Create ContextInjectionManager from server's shared resources
@@ -924,8 +924,8 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
         None
     };
     let manager = crate::context::ContextInjectionManager::new(
-        server.pool.clone(),
-        Some(server.code_pool.clone()),
+        server.pool.inner().clone(),
+        Some(server.code_pool.inner().clone()),
         server.embeddings.clone(),
         fuzzy,
     )
@@ -935,7 +935,7 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
 
     let (reactive, team) = tokio::join!(
         manager.get_context_for_message(message, session_id),
-        crate::hooks::user_prompt::get_team_context(&server.pool, session_id),
+        crate::hooks::user_prompt::get_team_context(server.pool.inner(), session_id),
     );
 
     let sources: Vec<&str> = reactive.sources.iter().map(|s| s.name()).collect();

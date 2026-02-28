@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::background::watcher::WatcherHandle;
-use crate::db::pool::DatabasePool;
+use crate::db::pool::{CodePool, MainPool};
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 
@@ -30,11 +30,11 @@ pub trait ToolContext: Send + Sync {
     // === Core Resources (always available) ===
 
     /// Async connection pool for main database operations (memory, sessions, goals, etc.)
-    fn pool(&self) -> &Arc<DatabasePool>;
+    fn pool(&self) -> &MainPool;
 
     /// Async connection pool for code index database operations
     /// (code_symbols, call_graph, imports, codebase_modules, vec_code, code_fts, pending_embeddings)
-    fn code_pool(&self) -> &Arc<DatabasePool>;
+    fn code_pool(&self) -> &CodePool;
 
     /// Embeddings client for semantic search (optional)
     fn embeddings(&self) -> Option<&Arc<EmbeddingClient>>;

@@ -170,7 +170,7 @@ pub async fn session_start<C: ToolContext>(
         .any(|t| matches!(*t, "rust" | "python" | "node" | "go"));
     if supported_for_map {
         match cartographer::get_or_generate_map_pool(
-            ctx.code_pool().clone(),
+            ctx.code_pool().inner().clone(),
             project_id,
             project_path.clone(),
             display_name.to_string(),

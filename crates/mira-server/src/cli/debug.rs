@@ -3,7 +3,7 @@
 
 use super::get_db_path;
 use anyhow::Result;
-use mira::db::pool::DatabasePool;
+use mira::db::pool::{CodePool, DatabasePool, MainPool};
 use mira::utils::path_to_string;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,9 +18,9 @@ pub async fn run_debug_session(path: Option<PathBuf>) -> Result<()> {
     println!("Project: {:?}\n", project_path);
 
     let db_path = get_db_path();
-    let pool = Arc::new(DatabasePool::open(&db_path).await?);
+    let pool = MainPool::new(Arc::new(DatabasePool::open(&db_path).await?));
     let code_db_path = db_path.with_file_name("mira-code.db");
-    let code_pool = Arc::new(DatabasePool::open_code_db(&code_db_path).await?);
+    let code_pool = CodePool::new(Arc::new(DatabasePool::open_code_db(&code_db_path).await?));
 
     // Create a minimal MCP server context
     let server = mira::mcp::MiraServer::new(pool, code_pool, None);

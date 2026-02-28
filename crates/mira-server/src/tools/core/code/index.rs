@@ -56,7 +56,7 @@ pub async fn index<C: ToolContext>(
                     ctx.embeddings().cloned()
                 };
                 let stats =
-                    indexer::index_project(path, ctx.code_pool().clone(), embeddings, project_id)
+                    indexer::index_project(path, ctx.code_pool().inner().clone(), embeddings, project_id)
                         .await?;
                 if let Some(cache) = ctx.fuzzy_cache() {
                     cache.invalidate_code(project_id).await;
@@ -247,8 +247,8 @@ pub async fn run_health_scan<C: ToolContext>(ctx: &C) -> Result<Json<IndexOutput
 
     // Run the full health scan (same as background worker, but forced)
     let issues = crate::background::code_health::scan_project_health_full(
-        ctx.pool(),
-        ctx.code_pool(),
+        ctx.pool().inner(),
+        ctx.code_pool().inner(),
         project_id,
         &project_path,
     )

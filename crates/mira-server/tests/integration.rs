@@ -834,7 +834,7 @@ async fn test_context_injection_basic() {
 
     // Create injection manager
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+        ContextInjectionManager::new(ctx.pool().inner().clone(), None, ctx.embeddings().cloned(), None)
             .await;
 
     // Test with a code-related message
@@ -859,7 +859,7 @@ async fn test_context_injection_skip_simple_commands() {
 
     let ctx = TestContext::new().await;
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+        ContextInjectionManager::new(ctx.pool().inner().clone(), None, ctx.embeddings().cloned(), None)
             .await;
 
     // Simple commands should be skipped
@@ -885,7 +885,7 @@ async fn test_context_injection_skip_short_messages() {
 
     let ctx = TestContext::new().await;
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+        ContextInjectionManager::new(ctx.pool().inner().clone(), None, ctx.embeddings().cloned(), None)
             .await;
 
     // Very short messages should be skipped
@@ -899,7 +899,7 @@ async fn test_context_injection_config() {
 
     let ctx = TestContext::new().await;
     let mut manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+        ContextInjectionManager::new(ctx.pool().inner().clone(), None, ctx.embeddings().cloned(), None)
             .await;
 
     // Verify default config
@@ -963,7 +963,7 @@ async fn test_context_injection_with_goals() {
 
     // Create injection manager
     let manager =
-        ContextInjectionManager::new(ctx.pool().clone(), None, ctx.embeddings().cloned(), None)
+        ContextInjectionManager::new(ctx.pool().inner().clone(), None, ctx.embeddings().cloned(), None)
             .await;
 
     // Get context - should include goal info if task-aware injection is enabled
@@ -980,7 +980,7 @@ async fn test_context_injection_file_extraction() {
     use mira::context::FileAwareInjector;
 
     let ctx = TestContext::new().await;
-    let injector = FileAwareInjector::new(ctx.pool().clone());
+    let injector = FileAwareInjector::new(ctx.pool().inner().clone());
 
     // Test file path extraction
     let paths = injector.extract_file_mentions("Check src/main.rs and lib.rs for issues");
@@ -1933,16 +1933,16 @@ use rmcp::task_manager::{OperationDescriptor, OperationMessage, ToolCallTaskResu
 
 /// Helper to create a MiraServer with in-memory DBs for task tests
 async fn make_task_server() -> MiraServer {
-    let pool = Arc::new(
+    let pool = mira::db::pool::MainPool::new(Arc::new(
         mira::db::pool::DatabasePool::open_in_memory()
             .await
             .expect("pool"),
-    );
-    let code_pool = Arc::new(
+    ));
+    let code_pool = mira::db::pool::CodePool::new(Arc::new(
         mira::db::pool::DatabasePool::open_code_db_in_memory()
             .await
             .expect("code pool"),
-    );
+    ));
     MiraServer::new(pool, code_pool, None)
 }
 

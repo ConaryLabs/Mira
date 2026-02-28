@@ -143,7 +143,7 @@ pub(crate) async fn build_startup_context(
         if previous_session.is_none() {
             // First-ever session for this user — show a welcome message
             return Some(
-                "[Mira] Welcome! Mira is now tracking this project. Try /mira:recap for context, or /mira:remember to store your first decision.".to_string()
+                "[Mira] Welcome! Mira is now tracking this project. Try /mira:recap for context, or /mira:goals to track objectives.".to_string()
             );
         }
         return None;
@@ -177,7 +177,7 @@ pub(crate) async fn build_resume_context(
     // context for the right project, not whatever was last active globally.
     let project_id: Option<i64> = if let Some(cwd_path) = cwd {
         let pool_clone = pool.clone();
-        let cwd_owned = cwd_path.to_string();
+        let cwd_owned = crate::utils::normalize_project_path(cwd_path);
         pool_clone
             .interact(move |conn| {
                 Ok::<_, anyhow::Error>(
