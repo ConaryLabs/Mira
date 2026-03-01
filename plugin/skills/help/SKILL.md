@@ -36,7 +36,7 @@ description: This skill should be used when the user asks "help", "what commands
 
 Beyond slash commands, Mira provides MCP tools that Claude uses automatically:
 
-`memory`, `code`, `diff`, `project`, `session`, `insights`, `goal`, `index`, `recipe`
+`code`, `diff`, `project`, `session`, `insights`, `goal`, `index`
 
 These power semantic search, call graph analysis, persistent memory, and more — no slash command needed.
 
@@ -65,7 +65,7 @@ Some tools require indexing before they work. Here's what depends on what.
 
 | Tool | Notes |
 |------|-------|
-| `project(*)`, `session(*)`, `goal(*)`, `recipe(*)` | Session and goal management |
+| `project(*)`, `session(*)`, `goal(*)` | Session and goal management |
 | `code(action="symbols")` | Single-file parsing via tree-sitter |
 | `diff()` (without impact) | Git-based analysis only |
 

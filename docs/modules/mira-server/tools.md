@@ -26,4 +26,3 @@ The MCP layer calls into these functions after deserializing request parameters.
 | `team.rs` | `team` | `status`, `review`, `distill` |
 | `usage.rs` | — | LLM usage tracking helpers |
 | `session_notes.rs` | — | Session notes helpers |
-| `recipe/` | `recipe` | `list`, `get` (reusable team workflow recipes) |

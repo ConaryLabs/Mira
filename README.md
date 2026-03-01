@@ -35,7 +35,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for alternative methods (cargo 
 - **Semantic code search.** "Where do we handle auth?" finds `verify_credentials` in `middleware.rs`, even when the word "auth" never appears. Falls back to keyword search without API keys.
 - **Background analysis.** Indexes your codebase with tree-sitter, detects unused functions, doc gaps, and error patterns without being asked. Learns how errors were fixed and surfaces solutions in future sessions.
 - **Change intelligence.** Diff analysis with call graph impact tracing and cross-session change tracking.
-- **Agent team coordination.** File ownership tracking and conflict detection across concurrent agents. Built-in recipes for expert review, QA hardening, and safe refactoring.
+- **Agent team coordination.** File ownership tracking and conflict detection across concurrent agents. Agent team definitions for expert review, QA hardening, and safe refactoring.
 - **Goal tracking.** Multi-session objectives with weighted milestones and automatic progress updates.
 
 ## Design Principles

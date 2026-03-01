@@ -57,5 +57,4 @@ Extract key findings and decisions from team work into team-scoped memories for 
 
 ## See Also
 
-- [recipe](./recipe.md) - Team recipes for spawning Agent Teams
 - [memory](./memory.md) - Team-scoped memories via `scope="team"`

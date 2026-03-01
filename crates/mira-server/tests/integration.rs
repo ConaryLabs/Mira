@@ -5,11 +5,11 @@
 
 mod test_utils;
 
-use mira::mcp::requests::{GoalAction, GoalRequest, IndexAction, RecipeAction, RecipeRequest};
+use mira::mcp::requests::{GoalAction, GoalRequest, IndexAction};
 use mira::mcp::responses::*;
 use mira::tools::core::{
     ToolContext, ensure_session, find_function_callees, find_function_callers, get_project,
-    get_session_recap, get_symbols, goal, handle_recipe, handle_session, index, search_code,
+    get_session_recap, get_symbols, goal, handle_session, index, search_code,
     session_start, set_project, summarize_codebase,
 };
 use mira::tools::tasks::TaskAction;
@@ -2648,83 +2648,6 @@ async fn test_goal_progress_update() {
             assert_eq!(data.progress_percent, 50);
         }
         other => panic!("Expected Get data, got: {:?}", other),
-    }
-}
-
-// ============================================================================
-// Recipe Tool Tests
-// ============================================================================
-
-#[tokio::test]
-async fn test_recipe_list() {
-    let req = RecipeRequest {
-        action: RecipeAction::List,
-        name: None,
-    };
-    let output = handle_recipe(req).await.expect("list should succeed");
-    assert!(msg!(output).contains("recipe(s) available"));
-
-    match output.0.data {
-        Some(RecipeData::List(data)) => {
-            assert_eq!(data.recipes.len(), 7);
-            assert_eq!(data.recipes[0].name, "debug");
-            assert_eq!(data.recipes[0].member_count, 4);
-            assert_eq!(data.recipes[1].name, "expert-review");
-            assert_eq!(data.recipes[1].member_count, 7);
-            assert_eq!(data.recipes[2].name, "full-cycle");
-            assert_eq!(data.recipes[2].member_count, 9);
-            assert_eq!(data.recipes[3].name, "pr-review");
-            assert_eq!(data.recipes[3].member_count, 4);
-            assert_eq!(data.recipes[4].name, "qa-hardening");
-            assert_eq!(data.recipes[4].member_count, 5);
-            assert_eq!(data.recipes[5].name, "refactor");
-            assert_eq!(data.recipes[5].member_count, 3);
-            assert_eq!(data.recipes[6].name, "test-gen");
-            assert_eq!(data.recipes[6].member_count, 4);
-        }
-        _ => panic!("Expected RecipeData::List"),
-    }
-}
-
-#[tokio::test]
-async fn test_recipe_get() {
-    let req = RecipeRequest {
-        action: RecipeAction::Get,
-        name: Some("expert-review".to_string()),
-    };
-    let output = handle_recipe(req).await.expect("get should succeed");
-    assert!(msg!(output).contains("expert-review"));
-
-    match output.0.data {
-        Some(RecipeData::Get(data)) => {
-            assert_eq!(data.name, "expert-review");
-            assert_eq!(data.members.len(), 7);
-            assert_eq!(data.tasks.len(), 7);
-            // Verify all expected roles are present
-            let member_names: Vec<&str> = data.members.iter().map(|m| m.name.as_str()).collect();
-            assert!(member_names.contains(&"architect"));
-            assert!(member_names.contains(&"code-reviewer"));
-            assert!(member_names.contains(&"security"));
-            assert!(member_names.contains(&"scope-analyst"));
-            assert!(member_names.contains(&"ux-strategist"));
-            assert!(member_names.contains(&"growth-strategist"));
-            assert!(member_names.contains(&"plan-reviewer"));
-            // Coordination instructions should be non-empty
-            assert!(!data.coordination.is_empty());
-        }
-        _ => panic!("Expected RecipeData::Get"),
-    }
-}
-
-#[tokio::test]
-async fn test_recipe_get_not_found() {
-    let req = RecipeRequest {
-        action: RecipeAction::Get,
-        name: Some("nonexistent".to_string()),
-    };
-    match handle_recipe(req).await {
-        Err(e) => assert!(e.to_string().contains("not found"), "unexpected error: {e}"),
-        Ok(_) => panic!("Expected error for nonexistent recipe"),
     }
 }
 

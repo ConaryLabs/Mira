@@ -1,6 +1,6 @@
 {
   "name": "mira",
-  "description": "Persistent context, semantic code intelligence, and team recipes for Claude Code.",
+  "description": "Persistent context, semantic code intelligence, and agent team coordination for Claude Code.",
   "version": "0.9.4",
   "author": {
     "name": "Peter Permenter"

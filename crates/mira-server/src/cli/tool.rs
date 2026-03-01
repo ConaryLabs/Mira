@@ -7,7 +7,7 @@ use mira::error::MiraError;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
     CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, ProjectRequest,
-    RecipeRequest, SessionRequest, TeamRequest,
+    SessionRequest, TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -100,12 +100,6 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 .await
                 .map(|output| output.0.message)
         }
-        "recipe" => {
-            let req: RecipeRequest = serde_json::from_str(&args)?;
-            mira::tools::handle_recipe(req)
-                .await
-                .map(|output| output.0.message)
-        }
         _ => Err(MiraError::InvalidInput(format!("Unknown tool: {}", name))),
     };
 
@@ -131,7 +125,6 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "tasks",
         "documentation",
         "team",
-        "recipe",
     ]
 }
 
@@ -169,7 +162,7 @@ mod tests {
             missing_from_cli
         );
 
-        // CLI may have extra tools not in MCP (e.g. documentation, team, recipe)
+        // CLI may have extra tools not in MCP (e.g. documentation, team)
         // — that's expected after tool surface consolidation
     }
 }

@@ -14,7 +14,6 @@ mod goal;
 mod index;
 mod insights;
 mod project;
-mod recipe;
 mod session;
 mod tasks;
 pub mod team;
@@ -27,7 +26,6 @@ pub use goal::*;
 pub use index::*;
 pub use insights::*;
 pub use project::*;
-pub use recipe::*;
 pub use session::*;
 pub use tasks::*;
 pub use team::*;
@@ -130,6 +128,5 @@ mod tests {
     fn cli_only_schemas_are_valid() {
         assert!(schema_for_output::<DocOutput>().is_ok(), "DocOutput");
         assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");
-        assert!(schema_for_output::<RecipeOutput>().is_ok(), "RecipeOutput");
     }
 }

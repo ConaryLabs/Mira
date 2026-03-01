@@ -21,7 +21,6 @@ pub use core::{
     get_symbols,
     goal,
     handle_code,
-    handle_recipe,
     handle_session,
     handle_team,
     index,

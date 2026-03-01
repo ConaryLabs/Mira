@@ -7,7 +7,7 @@ description: Reference for all Mira MCP tool signatures, parameters, and workflo
 
 # Mira Consolidated Tools Reference
 
-Mira exposes 8 MCP tools to Claude Code. Additional actions are available via the `mira tool` CLI.
+Mira exposes 7 MCP tools to Claude Code. Additional actions are available via the `mira tool` CLI.
 
 ## `project` — Project/Session Management
 
@@ -69,13 +69,6 @@ index(action="project")                     # Full project index (auto-enqueues 
 index(action="project", skip_embed=true)    # Fast re-index without embeddings
 index(action="file", path="src/main.rs")
 index(action="status")                      # Show index statistics
-```
-
-## `recipe` — Team Blueprints
-
-```
-recipe(action="list")                       # Show available recipes
-recipe(action="get", name="qa-hardening")   # Full recipe details with team members and tasks
 ```
 
 ## CLI-Only Actions
