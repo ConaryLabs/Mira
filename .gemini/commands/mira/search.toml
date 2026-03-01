@@ -1,0 +1,6 @@
+description = "Perform a semantic code search using Mira."
+prompt = """
+Search the codebase using Mira's semantic indexing. 
+
+!{mira tool code '{"action": "search", "query": "{{args}}"}'}
+"""

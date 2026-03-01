@@ -1,0 +1,8 @@
+description = "Analyze git changes semantically with Mira's impact assessment."
+prompt = """
+Review and assess the impact of recent or staged code changes.
+Mira evaluates risk levels and identifies affected callers.
+
+/skills enable diff
+{{args}}
+"""

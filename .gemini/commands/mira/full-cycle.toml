@@ -1,0 +1,10 @@
+description = "Run an end-to-end expert review, implementation, and QA pass."
+prompt = """
+Perform a comprehensive "full-cycle" review:
+1. Experts find issues or improvements.
+2. The agent automatically implements the recommended changes.
+3. A final QA pass verifies the fix.
+
+/skills enable full-cycle
+{{args}}
+"""

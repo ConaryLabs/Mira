@@ -1,0 +1,8 @@
+description = "Restructure code using Mira's architect and reviewer validation."
+prompt = """
+Safely refactor or reorganize code modules.
+Mira ensures architectural consistency and validates the restructuring.
+
+/skills enable refactor
+{{args}}
+"""

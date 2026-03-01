@@ -1,0 +1,9 @@
+description = "Initialize Mira project session and load context."
+prompt = """
+Initialize the Mira session for this project using the project start tool.
+This will load preferences, recent context, and codebase health alerts.
+
+!{mira tool project '{"action": "start", "project_path": "."}'}
+
+{{args}}
+"""

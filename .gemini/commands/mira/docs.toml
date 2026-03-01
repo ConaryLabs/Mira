@@ -1,0 +1,9 @@
+description = "Manage documentation and check for stale docs using Mira."
+prompt = """
+Check the documentation status using Mira.
+This lists items needing documentation or updates based on code changes.
+
+!{mira tool documentation '{"action": "list"}'}
+
+{{args}}
+"""

@@ -1,0 +1,9 @@
+description = "Get a recap of the current Mira session context."
+prompt = """
+Provide a session recap based on Mira's stored context. 
+This includes preferences, recent memories, and active goals.
+
+!{mira tool session '{"action": "recap"}'}
+
+{{args}}
+"""

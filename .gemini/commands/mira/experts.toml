@@ -1,0 +1,8 @@
+description = "Consult the Mira AI expert team for code, architecture, or security review."
+prompt = """
+Use Mira's expert team to review the current context.
+This activates specialized agents (architect, code-reviewer, security, etc.) to provide multi-perspective analysis.
+
+/skills enable experts
+{{args}}
+"""

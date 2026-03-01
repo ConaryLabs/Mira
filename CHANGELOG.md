@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.5] - 2026-02-28
+
+### Added
+- **`launch` MCP tool** -- Context-aware team launcher that parses `.claude/agents/*.md` files, enriches prompts with project context (goals, code bundles), and returns ready-to-spawn agent specs. Replaces manual agent file parsing in skills.
+- **Launch tool security** -- Team param validation (alphanumeric/hyphens/underscores only), path traversal prevention via canonicalization, project_path guard, empty agents guard.
+- **Goal validation** -- `progress_percent` validated to 0-100 range, empty update guard rejects no-op updates, `limit=0` returns count only without items.
+- **Typed pool wrappers** -- `MainPool` and `CodePool` newtype wrappers prevent mixing up database pool parameters at compile time.
+- **Integration tests** -- Tests for launch tool (parsing, member filtering, dynamic agents), goal limit=0, progress validation, empty update rejection.
+
+### Changed
+- **Skills rewritten** -- All 4 team skills (experts, full-cycle, qa-hardening, refactor) now use the `launch` tool instead of manually parsing agent files. Reduced ~30 lines of boilerplate per skill to ~10.
+- **DX improvements** -- Tool descriptions clarified across MCP router, error messages include actionable detail, CLI help text fixed, hook output uses `[Mira/xxx]` tags for consistency.
+- **Codebase simplification** -- Removed 405 lines of duplication across indexer, cartographer, hooks, IPC, and tools modules. Consolidated repeated patterns into shared helpers.
+- **Documentation audit** -- Pruned stale CONCEPTS.md sections (dead memory/DeepSeek references), updated goal/session/team docs, cleaned .env.example.
+- **28 dependency updates** -- anyhow, chrono, clap, rustls, syn, tempfile, and others updated to latest compatible versions.
+
+### Fixed
+- **Path canonicalization** -- Hardened canonicalize calls with fallback for missing paths, fixed macOS `/tmp` -> `/private/tmp` symlink in hook temp dir detection.
+- **`documentation` tool unwrap** -- Replaced `.unwrap()` with proper error handling to prevent panic on missing project path.
+- **`GoalData` response types** -- Update/delete now return `GoalModifiedData` instead of reusing `GoalCreatedEntry`.
+- **`fuzzy/mod.rs` error variant** -- Uses `MiraError::ProjectNotSet` instead of string error for consistency.
+- **`cli/tool.rs` process exit** -- `anyhow::bail!` instead of `process::exit(1)` for clean tokio runtime shutdown.
+- **`session_tests.rs` assertion** -- Fixed `||` to `&&` so both conditions are verified.
+- **Clippy clean** -- Fixed all collapsible_if, nonminimal_bool, unused import warnings across 15 files.
+
+### Removed
+- **Recipe system** -- Removed 1,600-line static recipe system (`recipes.rs`, `recipes/` directory, recipe MCP tool). Replaced by `launch` tool + agent files.
+- **`GoalAction::Progress`** -- Removed redundant variant; use `update` with `progress_percent` instead.
+
+---
+
 ## [0.9.4] - 2026-02-25
 
 ### Added

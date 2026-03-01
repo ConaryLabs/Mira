@@ -1,0 +1,11 @@
+description = "Show Mira's health and configuration status."
+prompt = """
+Check the health and configuration of the Mira system.
+This includes indexing status, storage usage, and active project metadata.
+
+!{mira tool project '{"action": "get"}'}
+
+!{mira tool session '{"action": "storage_status"}'}
+
+{{args}}
+"""

@@ -1,0 +1,8 @@
+description = "Run a production readiness and hardening review using Mira."
+prompt = """
+Perform a QA and hardening pass on the current code or feature.
+Identify error handling gaps, missing tests, and production risks.
+
+/skills enable qa-hardening
+{{args}}
+"""

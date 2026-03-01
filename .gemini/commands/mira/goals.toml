@@ -1,0 +1,8 @@
+description = "List and manage project goals and milestones."
+prompt = """
+Show the current project goals and milestone progress tracked by Mira.
+
+!{mira tool goal '{"action": "list"}'}
+
+{{args}}
+"""

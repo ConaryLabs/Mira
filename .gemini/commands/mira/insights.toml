@@ -1,0 +1,9 @@
+description = "Show Mira's background analysis and predicted next steps."
+prompt = """
+Analyze the project's state using Mira's background insights.
+Look for patterns, technical debt, and suggested improvements.
+
+!{mira tool insights '{"action": "digest"}'}
+
+{{args}}
+"""
