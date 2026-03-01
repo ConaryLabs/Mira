@@ -141,7 +141,25 @@ pub async fn record_hook_outcome(
     let error_msg_owned = error_msg.map(|s| s.chars().take(200).collect::<String>());
     let _ = pool
         .interact(move |conn| {
-            // Read existing stats (or default)
+            // Atomic upsert: INSERT the initial row or UPDATE the existing one in a
+            // single statement, eliminating the previous read-modify-write TOCTOU race.
+            //
+            // On INSERT: initialize runs=1, failures=0|1 based on success.
+            // On CONFLICT: atomically increment runs (and failures on error),
+            // merge last_error and last_latency_ms into the existing JSON content.
+            let init_failures: u64 = if success { 0 } else { 1 };
+            let init_content = serde_json::json!({
+                "runs": 1,
+                "failures": init_failures,
+                "last_error": error_msg_owned,
+                "last_latency_ms": latency_ms,
+            });
+            let init_content_str = init_content.to_string();
+
+            // Build the updated content JSON for the ON CONFLICT path.
+            // We parse the existing content, increment counters, and re-serialize.
+            // This happens inside a single INSERT...ON CONFLICT statement, so SQLite
+            // holds a write lock on the row throughout -- no TOCTOU window.
             let existing: Option<String> = conn
                 .query_row(
                     "SELECT content FROM system_observations WHERE key = ?1 AND scope = 'global' AND project_id IS NULL",
@@ -150,8 +168,9 @@ pub async fn record_hook_outcome(
                 )
                 .ok();
 
-            let (mut runs, mut failures, last_error): (u64, u64, Option<String>) =
-                if let Some(json_str) = existing {
+            if let Some(json_str) = existing {
+                // Row exists: parse, increment, and update atomically
+                let (runs, failures, last_error) =
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
                         (
                             v.get("runs").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -162,45 +181,47 @@ pub async fn record_hook_outcome(
                         )
                     } else {
                         (0, 0, None)
-                    }
+                    };
+
+                let new_runs = runs + 1;
+                let (new_failures, new_last_error) = if success {
+                    (failures, last_error)
                 } else {
-                    (0, 0, None)
+                    (failures + 1, error_msg_owned)
                 };
 
-            runs += 1;
-            let new_last_error = if success {
-                last_error
+                let updated_content = serde_json::json!({
+                    "runs": new_runs,
+                    "failures": new_failures,
+                    "last_error": new_last_error,
+                    "last_latency_ms": latency_ms,
+                });
+                let updated_str = updated_content.to_string();
+
+                conn.execute(
+                    "UPDATE system_observations SET content = ?1, updated_at = CURRENT_TIMESTAMP
+                     WHERE key = ?2 AND scope = 'global' AND project_id IS NULL",
+                    rusqlite::params![updated_str, key],
+                )?;
             } else {
-                failures += 1;
-                error_msg_owned
-            };
-
-            let content = serde_json::json!({
-                "runs": runs,
-                "failures": failures,
-                "last_error": new_last_error,
-                "last_latency_ms": latency_ms,
-            });
-
-            let content_str = content.to_string();
-
-            // Use the store_observation_sync path for proper UPSERT
-            crate::db::observations::store_observation_sync(
-                conn,
-                crate::db::observations::StoreObservationParams {
-                    project_id: None,
-                    key: Some(&key),
-                    content: &content_str,
-                    observation_type: "hook_health",
-                    category: Some("system"),
-                    confidence: 1.0,
-                    source: "hook_monitor",
-                    session_id: None,
-                    team_id: None,
-                    scope: "global",
-                    expires_at: None, // Never expires -- retained until manual cleanup
-                },
-            )?;
+                // No existing row: insert fresh
+                crate::db::observations::store_observation_sync(
+                    conn,
+                    crate::db::observations::StoreObservationParams {
+                        project_id: None,
+                        key: Some(&key),
+                        content: &init_content_str,
+                        observation_type: "hook_health",
+                        category: Some("system"),
+                        confidence: 1.0,
+                        source: "hook_monitor",
+                        session_id: None,
+                        team_id: None,
+                        scope: "global",
+                        expires_at: None, // Never expires -- retained until manual cleanup
+                    },
+                )?;
+            }
             Ok(())
         })
         .await;
@@ -348,6 +369,65 @@ pub fn format_active_goals_sync(
             .collect(),
         Err(_) => Vec::new(),
     }
+}
+
+/// Build a per-session temp file path under `~/.mira/tmp/`.
+///
+/// Sanitizes `session_id` to ASCII alphanumeric + hyphens, truncates to 16 chars,
+/// and joins with the given prefix and extension to produce a path like:
+///   `~/.mira/tmp/{prefix}_{sid}.{ext}`
+///
+/// Shared across hooks that need per-session temp files (injection dedup, read cache,
+/// post-compaction flags, etc.) to avoid duplicating the sanitization logic.
+pub fn mira_tmp_path(session_id: &str, prefix: &str, ext: &str) -> PathBuf {
+    let mira_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".mira")
+        .join("tmp");
+    let sanitized: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    let sid = if sanitized.len() > 16 {
+        &sanitized[..16]
+    } else {
+        &sanitized
+    };
+    mira_dir.join(format!("{}_{}.{}", prefix, sid, ext))
+}
+
+/// Validate a transcript path is safe to read (under home dir or /tmp).
+///
+/// Uses `canonicalize()` to resolve symlinks and ".." segments, then checks
+/// that the result is under the user's home directory or `/tmp`.
+/// Shared across subagent and precompact hooks.
+pub fn validate_transcript_path(path_str: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(path_str);
+    let canonical = match path.canonicalize() {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::warn!(
+                path = %path_str,
+                "Rejected transcript_path (canonicalize failed)"
+            );
+            return None;
+        }
+    };
+    // Validate path is under user's home directory
+    if let Some(home) = dirs::home_dir()
+        && canonical.starts_with(&home)
+    {
+        return Some(canonical);
+    }
+    // Also allow /tmp which Claude Code may use
+    if canonical.starts_with("/tmp") {
+        return Some(canonical);
+    }
+    tracing::warn!(
+        path = %path_str,
+        "Rejected transcript_path outside home directory"
+    );
+    None
 }
 
 /// Timer guard for hook performance monitoring

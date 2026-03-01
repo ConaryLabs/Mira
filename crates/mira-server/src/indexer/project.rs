@@ -195,13 +195,7 @@ async fn process_parsed_files(
         let parsed_symbols: Vec<ParsedSymbol> = parsed
             .symbols
             .iter()
-            .map(|s| ParsedSymbol {
-                name: s.name.clone(),
-                kind: s.symbol_type.clone(),
-                start_line: s.start_line,
-                end_line: s.end_line,
-                signature: s.signature.clone(),
-            })
+            .map(ParsedSymbol::from)
             .collect();
 
         let symbol_count = parsed.symbols.len();

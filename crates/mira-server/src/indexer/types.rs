@@ -1,6 +1,7 @@
 // crates/mira-server/src/indexer/types.rs
 // Public types for the indexer module
 
+use crate::indexer::parsers::Symbol;
 use std::collections::HashMap;
 
 /// Index statistics
@@ -35,6 +36,30 @@ pub struct ParsedSymbol {
     pub start_line: u32,
     pub end_line: u32,
     pub signature: Option<String>,
+}
+
+impl From<Symbol> for ParsedSymbol {
+    fn from(s: Symbol) -> Self {
+        Self {
+            name: s.name,
+            kind: s.symbol_type,
+            start_line: s.start_line,
+            end_line: s.end_line,
+            signature: s.signature,
+        }
+    }
+}
+
+impl From<&Symbol> for ParsedSymbol {
+    fn from(s: &Symbol) -> Self {
+        Self {
+            name: s.name.clone(),
+            kind: s.symbol_type.clone(),
+            start_line: s.start_line,
+            end_line: s.end_line,
+            signature: s.signature.clone(),
+        }
+    }
 }
 
 /// Simplified import for incremental indexing

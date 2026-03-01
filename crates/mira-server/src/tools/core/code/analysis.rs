@@ -6,7 +6,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     CodeData, CodeOutput, DeadCodeData, DependenciesData, DependencyEdge, UnreferencedSymbol,
 };
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::{ToolContext, require_project_id};
 
 /// Try to queue a health scan for a cold-start project (never scanned before).
 /// Returns a user-facing message appropriate for the outcome.
@@ -20,7 +20,7 @@ async fn maybe_queue_health_scan<C: ToolContext>(
         .pool()
         .run(move |conn| {
             Ok::<_, MiraError>(
-                crate::db::get_scan_info_sync(conn, pid, "health_scan_time").is_some(),
+                crate::db::get_observation_info_sync(conn, pid, "health_scan_time").is_some(),
             )
         })
         .await
@@ -48,10 +48,7 @@ async fn maybe_queue_health_scan<C: ToolContext>(
 
 /// Get module dependencies and circular dependency warnings
 pub async fn get_dependencies<C: ToolContext>(ctx: &C) -> Result<Json<CodeOutput>, MiraError> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let deps = ctx
         .code_pool()
@@ -139,10 +136,7 @@ pub async fn get_dead_code<C: ToolContext>(
     ctx: &C,
     limit: Option<i64>,
 ) -> Result<Json<CodeOutput>, MiraError> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let limit = limit.unwrap_or(50).clamp(1, 200) as usize;
 

@@ -320,6 +320,22 @@ pub(crate) fn build_session_summary(
     Some(parts.join(". "))
 }
 
+/// Read existing compaction_context from a session's snapshot (if any).
+/// Used to preserve context stored by the PreCompact hook when overwriting the snapshot.
+fn read_existing_compaction(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Option<serde_json::Value> {
+    conn.query_row(
+        "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
+        [session_id],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
+    .and_then(|snap| snap.get("compaction_context").cloned())
+}
+
 /// Save a structured session snapshot for future resume context.
 ///
 /// Captures tool usage counts, top tools, and modified files as JSON
@@ -344,16 +360,7 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
             .collect();
         let top_tool_names: Vec<&str> = behavior_tools.iter().map(|(n, _)| n.as_str()).collect();
 
-        // Check for existing compaction context
-        let existing_compaction: Option<serde_json::Value> = conn
-            .query_row(
-                "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
-                [session_id],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-            .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
-            .and_then(|snap| snap.get("compaction_context").cloned());
+        let existing_compaction = read_existing_compaction(conn, session_id);
 
         let mut snapshot = serde_json::json!({
             "tool_count": behavior_count,
@@ -413,15 +420,7 @@ pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &st
     let files_modified = super::get_session_modified_files_sync(conn, session_id);
 
     // Check if a compaction_context was stored by PreCompact hook
-    let existing_compaction: Option<serde_json::Value> = conn
-        .query_row(
-            "SELECT snapshot FROM session_snapshots WHERE session_id = ?",
-            [session_id],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
-        .and_then(|snap| snap.get("compaction_context").cloned());
+    let existing_compaction = read_existing_compaction(conn, session_id);
 
     let mut snapshot = serde_json::json!({
         "tool_count": tool_count,

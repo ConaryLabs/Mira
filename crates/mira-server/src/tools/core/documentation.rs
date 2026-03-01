@@ -12,7 +12,7 @@ use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     DocData, DocGetData, DocInventoryData, DocInventoryItem, DocListData, DocOutput, DocTaskItem,
 };
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::{ToolContext, require_project_id};
 use std::collections::BTreeMap;
 
 /// List documentation that needs to be written or updated
@@ -24,10 +24,7 @@ pub async fn list_doc_tasks(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Json<DocOutput>, MiraError> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let tasks = ctx
         .pool()
@@ -140,18 +137,14 @@ fn list_db_doc_tasks(
     crate::db::documentation::list_doc_tasks(conn, project_id, status, doc_type, priority)
 }
 
-/// Get full task details with writing guidelines for Claude to use
-pub async fn get_doc_task_details(
+/// Fetch a doc task by ID, verify it belongs to the current project and is pending.
+async fn fetch_pending_doc_task(
     ctx: &(impl ToolContext + ?Sized),
     task_id: i64,
-) -> Result<Json<DocOutput>, MiraError> {
-    // Require active project
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    verb: &str,
+) -> Result<DocTask, MiraError> {
+    let current_project_id = require_project_id(ctx).await?;
 
-    // Get task
     let task = ctx
         .pool()
         .run(move |conn| get_doc_task(conn, task_id))
@@ -163,27 +156,34 @@ pub async fn get_doc_task_details(
             ))
         })?;
 
-    // Verify task belongs to current project
-    let task_project_id = task
-        .project_id
-        .ok_or_else(|| MiraError::InvalidInput("No project_id on task".to_string()))?;
-    if task_project_id != current_project_id {
+    if task.project_id != Some(current_project_id) {
         return Err(MiraError::InvalidInput(format!(
-            "Task {} belongs to a different project. Switch projects first.",
+            "Task {} belongs to a different project.",
             task_id
         )));
     }
 
-    // Only allow getting pending tasks
     if task.status != "pending" {
         return Err(MiraError::InvalidInput(format!(
-            "Task {} is not pending (status: {}). Only pending tasks can be written.",
-            task_id, task.status
+            "Task {} is not pending (status: {}). Cannot {}.",
+            task_id, task.status, verb
         )));
     }
 
+    Ok(task)
+}
+
+/// Get full task details with writing guidelines for Claude to use
+pub async fn get_doc_task_details(
+    ctx: &(impl ToolContext + ?Sized),
+    task_id: i64,
+) -> Result<Json<DocOutput>, MiraError> {
+    let task = fetch_pending_doc_task(ctx, task_id, "get details for").await?;
+
     // Get project path
-    let project_id = task_project_id;
+    let project_id = task
+        .project_id
+        .ok_or_else(|| MiraError::InvalidInput("No project_id on task".to_string()))?;
     let project_path: String = ctx
         .pool()
         .run(move |conn| crate::db::get_project_path_sync(conn, project_id))
@@ -292,38 +292,7 @@ pub async fn complete_doc_task(
     ctx: &(impl ToolContext + ?Sized),
     task_id: i64,
 ) -> Result<Json<DocOutput>, MiraError> {
-    // Require active project
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
-
-    // Verify task exists and is pending
-    let task = ctx
-        .pool()
-        .run(move |conn| get_doc_task(conn, task_id))
-        .await?
-        .ok_or_else(|| {
-            MiraError::InvalidInput(format!(
-                "Task '{}' not found. Use documentation(action=\"list\") to see available tasks.",
-                task_id
-            ))
-        })?;
-
-    // Verify task belongs to current project
-    if task.project_id != Some(current_project_id) {
-        return Err(MiraError::InvalidInput(format!(
-            "Task {} belongs to a different project.",
-            task_id
-        )));
-    }
-
-    if task.status != "pending" {
-        return Err(MiraError::InvalidInput(format!(
-            "Task {} is not pending (status: {}). Cannot mark as complete.",
-            task_id, task.status
-        )));
-    }
+    let task = fetch_pending_doc_task(ctx, task_id, "mark as complete").await?;
 
     // Mark as completed
     ctx.pool()
@@ -346,37 +315,7 @@ pub async fn skip_doc_task(
     task_id: i64,
     reason: Option<String>,
 ) -> Result<Json<DocOutput>, MiraError> {
-    // Require active project
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
-
-    // Verify task exists and belongs to current project
-    let task = ctx
-        .pool()
-        .run(move |conn| get_doc_task(conn, task_id))
-        .await?
-        .ok_or_else(|| {
-            MiraError::InvalidInput(format!(
-                "Task '{}' not found. Use documentation(action=\"list\") to see available tasks.",
-                task_id
-            ))
-        })?;
-
-    if task.project_id != Some(current_project_id) {
-        return Err(MiraError::InvalidInput(format!(
-            "Task {} belongs to a different project.",
-            task_id
-        )));
-    }
-
-    if task.status != "pending" {
-        return Err(MiraError::InvalidInput(format!(
-            "Task {} is not pending (status: {}). Cannot skip.",
-            task_id, task.status
-        )));
-    }
+    let _task = fetch_pending_doc_task(ctx, task_id, "skip").await?;
 
     let skip_reason = reason.unwrap_or_else(|| "Skipped by user".to_string());
     let skip_reason_clone = skip_reason.clone();
@@ -400,10 +339,7 @@ pub async fn batch_skip_doc_tasks(
     doc_type: Option<String>,
     priority: Option<String>,
 ) -> Result<Json<DocOutput>, MiraError> {
-    let current_project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let current_project_id = require_project_id(ctx).await?;
 
     let skip_reason = reason.unwrap_or_else(|| "Batch skipped by user".to_string());
 
@@ -492,10 +428,7 @@ pub async fn batch_skip_doc_tasks(
 pub async fn show_doc_inventory(
     ctx: &(impl ToolContext + ?Sized),
 ) -> Result<Json<DocOutput>, MiraError> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let inventory = ctx
         .pool()
@@ -623,10 +556,7 @@ fn get_doc_impact_data(
 pub async fn scan_documentation(
     ctx: &(impl ToolContext + ?Sized),
 ) -> Result<Json<DocOutput>, MiraError> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     // Clear the scan marker to force new scan
     ctx.pool()

@@ -8,7 +8,7 @@ use crate::mcp::responses::{
     HistoryEntry, SessionCurrentData, SessionData, SessionHistoryData, SessionListData,
     SessionOutput, SessionSummary,
 };
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::{ToolContext, require_project_id};
 use crate::utils::{truncate, truncate_at_boundary};
 
 /// Internal kind enum for session history queries (replaces deleted SessionHistoryAction)
@@ -44,11 +44,7 @@ pub async fn session_history<C: ToolContext>(
             }
         }
         HistoryKind::List => {
-            let project = ctx.get_project().await;
-            let project_id = project
-                .as_ref()
-                .map(|p| p.id)
-                .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+            let project_id = require_project_id(ctx).await?;
 
             let sessions = ctx
                 .pool()
@@ -116,12 +112,7 @@ pub async fn session_history<C: ToolContext>(
                 })?,
             };
 
-            let project_id = ctx
-                .get_project()
-                .await
-                .as_ref()
-                .map(|p| p.id)
-                .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+            let project_id = require_project_id(ctx).await?;
             let session_id_clone = target_session_id.clone();
             let history = ctx
                 .pool()

@@ -62,9 +62,9 @@ pub async fn run() -> Result<()> {
     // Connect via IPC (falls back to direct DB)
     let mut client = crate::ipc::client::HookClient::connect().await;
 
-    // Get current project
+    // Get current project (reuse project_path later for AST diff)
     let sid = Some(post_input.session_id.as_str()).filter(|s| !s.is_empty());
-    let Some((project_id, _)) = client.resolve_project(None, sid).await else {
+    let Some((project_id, project_path)) = client.resolve_project(None, sid).await else {
         write_hook_output(&serde_json::json!({}));
         return Ok(());
     };
@@ -168,7 +168,6 @@ pub async fn run() -> Result<()> {
 
     // AST-level change detection for Write/Edit tools
     if is_write_tool
-        && let Some((_, project_path)) = client.resolve_project(None, sid).await
         && let Some(old_content) = ast_diff::get_previous_content(&file_path, &project_path).await
         && let Ok(new_content) = tokio::fs::read_to_string(&file_path).await
         && let Some(changes) = ast_diff::detect_structural_changes(

@@ -54,17 +54,19 @@ pub struct OllamaEmbeddings {
 }
 
 impl OllamaEmbeddings {
-    /// Create a new Ollama embeddings client
-    pub fn new(base_url: String, model: Option<String>, dimensions: Option<usize>) -> Self {
+    /// Create a new Ollama embeddings client.
+    /// If `http_client` is `None`, creates one using `create_fast_client()`.
+    pub fn new(
+        base_url: String,
+        model: Option<String>,
+        dimensions: Option<usize>,
+        http_client: Option<reqwest::Client>,
+    ) -> Self {
         let model = model.unwrap_or_else(|| DEFAULT_MODEL.to_string());
         let dimensions = dimensions.unwrap_or(DEFAULT_DIMENSIONS);
         let base_url = base_url.trim_end_matches('/').to_string();
 
-        let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| create_fast_client());
+        let http_client = http_client.unwrap_or_else(create_fast_client);
 
         Self {
             base_url,
@@ -233,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_default_dimensions() {
-        let client = OllamaEmbeddings::new("http://localhost:11434".to_string(), None, None);
+        let client = OllamaEmbeddings::new("http://localhost:11434".to_string(), None, None, None);
         assert_eq!(client.dimensions(), DEFAULT_DIMENSIONS);
         assert_eq!(client.model_name(), DEFAULT_MODEL);
     }
@@ -244,6 +246,7 @@ mod tests {
             "http://localhost:11434".to_string(),
             Some("mxbai-embed-large".to_string()),
             Some(1024),
+            None,
         );
         assert_eq!(client.dimensions(), 1024);
         assert_eq!(client.model_name(), "mxbai-embed-large");
@@ -251,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_base_url_normalization() {
-        let client = OllamaEmbeddings::new("http://localhost:11434/".to_string(), None, None);
+        let client = OllamaEmbeddings::new("http://localhost:11434/".to_string(), None, None, None);
         assert_eq!(client.base_url, "http://localhost:11434");
     }
 
@@ -327,6 +330,7 @@ mod tests {
             format!("http://127.0.0.1:{port}"),
             Some(DEFAULT_MODEL.to_string()),
             Some(DEFAULT_DIMENSIONS),
+            None,
         );
 
         // Input longer than MAX_TEXT_CHARS to trigger truncation

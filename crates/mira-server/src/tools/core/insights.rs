@@ -5,7 +5,7 @@ use crate::db::{compute_age_days, dismiss_insight_sync, get_unified_insights_syn
 use crate::error::MiraError;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{InsightItem, InsightsData, SessionData, SessionOutput};
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::{ToolContext, require_project_id};
 
 /// Category display order and human-readable labels.
 pub(crate) const CATEGORY_ORDER: &[(&str, &str)] = &[
@@ -28,11 +28,7 @@ pub async fn query_insights<C: ToolContext>(
 ) -> Result<Json<SessionOutput>, MiraError> {
     use std::collections::BTreeMap;
 
-    let project = ctx.get_project().await;
-    let project_id = project
-        .as_ref()
-        .map(|p| p.id)
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let filter_source = insight_source.clone();
     let min_conf = min_confidence.unwrap_or(0.5);
@@ -82,12 +78,12 @@ pub async fn query_insights<C: ToolContext>(
 
     // Separate high-priority items into "attention" bucket; track their indices
     // so they don't also appear under their original category.
-    let mut attention_indices: Vec<usize> = Vec::new();
-    for (i, insight) in insights.iter().enumerate() {
-        if insight.priority_score >= 0.75 {
-            attention_indices.push(i);
-        }
-    }
+    let attention_indices: std::collections::HashSet<usize> = insights
+        .iter()
+        .enumerate()
+        .filter(|(_, insight)| insight.priority_score >= 0.75)
+        .map(|(i, _)| i)
+        .collect();
 
     // Group remaining insights by category
     let mut by_category: BTreeMap<String, Vec<(usize, &crate::db::UnifiedInsight)>> =
@@ -228,11 +224,7 @@ pub async fn dismiss_insight<C: ToolContext>(
         )
     })?;
 
-    let project = ctx.get_project().await;
-    let project_id = project
-        .as_ref()
-        .map(|p| p.id)
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let source_clone = source.clone();
     let updated = ctx

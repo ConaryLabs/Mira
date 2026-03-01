@@ -4,7 +4,6 @@
 use crate::hooks::{HookTimer, read_hook_input, write_hook_output};
 use crate::utils::truncate_at_boundary;
 use anyhow::{Context, Result};
-use std::path::PathBuf;
 
 /// Maximum total characters for full-capability subagents (Plan, general-purpose)
 const MAX_CONTEXT_CHARS_FULL: usize = 5000;
@@ -363,43 +362,14 @@ pub async fn run_stop() -> Result<()> {
     Ok(())
 }
 
-/// Validate a transcript path is safe to read (under home dir or /tmp).
-/// Uses the same pattern as precompact.rs.
-fn validate_transcript_path(path_str: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(path_str);
-    let canonical = match path.canonicalize() {
-        Ok(c) => c,
-        Err(_) => {
-            tracing::warn!(
-                path = %path_str,
-                "SubagentStop rejected transcript_path (canonicalize failed)"
-            );
-            return None;
-        }
-    };
-    // Validate path is under user's home directory
-    if let Some(home) = dirs::home_dir()
-        && canonical.starts_with(&home)
-    {
-        return Some(canonical);
-    }
-    // Also allow /tmp which Claude Code may use
-    if canonical.starts_with("/tmp") {
-        return Some(canonical);
-    }
-    tracing::warn!(
-        path = %path_str,
-        "SubagentStop rejected transcript_path outside home directory"
-    );
-    None
-}
+// validate_transcript_path is in hooks/mod.rs (shared with precompact)
 
 /// Extract entities from a subagent's JSONL transcript file.
 /// Returns None if the path is missing, invalid, or unreadable.
 /// Errors are logged but never block the hook.
 fn extract_transcript_entities(path: &Option<String>) -> Option<Vec<crate::entities::RawEntity>> {
     let path_str = path.as_deref()?;
-    let canonical = validate_transcript_path(path_str)?;
+    let canonical = crate::hooks::validate_transcript_path(path_str)?;
 
     let content = match std::fs::read_to_string(&canonical) {
         Ok(c) => c,
@@ -892,7 +862,7 @@ mod tests {
 
     #[test]
     fn validate_transcript_path_rejects_outside_home_and_tmp() {
-        assert!(validate_transcript_path("/etc/passwd").is_none());
+        assert!(crate::hooks::validate_transcript_path("/etc/passwd").is_none());
     }
 
     #[test]

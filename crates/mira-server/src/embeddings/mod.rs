@@ -68,6 +68,7 @@ impl EmbeddingClient {
                 ollama_host.clone(),
                 config.ollama_embedding_model.clone(),
                 config.dimensions,
+                None,
             );
             info!(
                 model = client.model_name(),
@@ -96,17 +97,18 @@ impl EmbeddingClient {
                     OpenAiEmbeddingModel::default(),
                     config.dimensions,
                     pool,
-                    http_client,
+                    http_client.clone(),
                 )),
             });
         }
 
-        // Ollama uses its own HTTP client (different timeout/config)
+        // Pass the shared HTTP client to Ollama too
         if let Some(ollama_host) = api_keys.ollama.as_ref() {
             let client = OllamaEmbeddings::new(
                 ollama_host.clone(),
                 config.ollama_embedding_model.clone(),
                 config.dimensions,
+                Some(http_client),
             );
             info!(
                 model = client.model_name(),

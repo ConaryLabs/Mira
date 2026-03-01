@@ -392,17 +392,7 @@ mod tests {
 
     #[test]
     fn test_module_default_values() {
-        let module = Module {
-            id: "test".to_string(),
-            name: "test".to_string(),
-            path: "src/test".to_string(),
-            purpose: None,
-            exports: vec![],
-            depends_on: vec![],
-            symbol_count: 0,
-            line_count: 0,
-            detected_patterns: None,
-        };
+        let module = Module::new("test", "test", "src/test");
         assert!(module.purpose.is_none());
         assert!(module.exports.is_empty());
         assert!(module.depends_on.is_empty());

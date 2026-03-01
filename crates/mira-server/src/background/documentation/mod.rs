@@ -6,7 +6,8 @@ mod inventory;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    StoreObservationParams, get_scan_info_sync, is_time_older_than_sync, store_observation_sync,
+    StoreObservationParams, get_observation_info_sync, is_time_older_than_sync,
+    store_observation_sync,
 };
 use crate::utils::{ResultExt, truncate_at_boundary};
 use std::sync::Arc;
@@ -293,7 +294,7 @@ pub fn needs_documentation_scan(
     project_path: &str,
 ) -> Result<bool, String> {
     // Get last scan info from memory_facts
-    let scan_info = get_scan_info_sync(conn, project_id, DOC_SCAN_MARKER_KEY);
+    let scan_info = get_observation_info_sync(conn, project_id, DOC_SCAN_MARKER_KEY);
 
     let (last_commit, last_scan_time) = match scan_info {
         Some((commit, time)) => (Some(commit), Some(time)),

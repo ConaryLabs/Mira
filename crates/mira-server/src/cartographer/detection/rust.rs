@@ -113,17 +113,7 @@ fn detect_modules_in_src(
 
             if !seen_dirs.contains(&module_path) {
                 seen_dirs.insert(module_path.clone());
-                modules.push(Module {
-                    id: crate_name.to_string(),
-                    name: crate_name.to_string(),
-                    path: module_path,
-                    purpose: None,
-                    exports: vec![],
-                    depends_on: vec![],
-                    symbol_count: 0,
-                    line_count: 0,
-                    detected_patterns: None,
-                });
+                modules.push(Module::new(crate_name, crate_name, module_path));
             }
         }
         // mod.rs indicates a module directory
@@ -145,17 +135,7 @@ fn detect_modules_in_src(
 
                 if !seen_dirs.contains(&module_path) {
                     seen_dirs.insert(module_path.clone());
-                    modules.push(Module {
-                        id: module_id,
-                        name: module_name.to_string(),
-                        path: module_path,
-                        purpose: None,
-                        exports: vec![],
-                        depends_on: vec![],
-                        symbol_count: 0,
-                        line_count: 0,
-                        detected_patterns: None,
-                    });
+                    modules.push(Module::new(module_id, module_name, module_path));
                 }
             }
         }
@@ -168,17 +148,7 @@ fn detect_modules_in_src(
 
             if !seen_dirs.contains(&module_path) {
                 seen_dirs.insert(module_path.clone());
-                modules.push(Module {
-                    id: module_id,
-                    name: module_name.to_string(),
-                    path: module_path,
-                    purpose: None,
-                    exports: vec![],
-                    depends_on: vec![],
-                    symbol_count: 0,
-                    line_count: 0,
-                    detected_patterns: None,
-                });
+                modules.push(Module::new(module_id, module_name, module_path));
             }
         }
     }

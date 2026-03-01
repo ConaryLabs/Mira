@@ -6,7 +6,7 @@ use tree_sitter::{Node, Parser};
 
 use super::{
     FunctionCall, Import, LanguageParser, NodeExt, ParseContext, ParseResult, Symbol,
-    default_parse, node_text,
+    SymbolBuilder, default_parse, node_text,
 };
 
 /// Go language parser
@@ -94,14 +94,23 @@ pub fn walk(
     }
 }
 
+/// Go visibility: uppercase initial = public, lowercase = private.
+fn go_visibility(name: &str) -> Option<String> {
+    Some(
+        if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            "public".to_string()
+        } else {
+            "private".to_string()
+        },
+    )
+}
+
 fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
+    let name = node.field_text("name", source)?;
 
     // For method declarations, get the receiver type
     let receiver = if node.kind() == "method_declaration" {
         node.child_by_field_name("receiver").and_then(|r| {
-            // Find the type identifier in the receiver
             for child in r.children(&mut r.walk()) {
                 if child.kind() == "type_identifier" || child.kind() == "pointer_type" {
                     return Some(node_text(child, source));
@@ -113,53 +122,29 @@ fn extract_function(node: Node, source: &[u8], parent_name: Option<&str>) -> Opt
         None
     };
 
-    let qualified_name = match (parent_name, receiver) {
-        (Some(parent), _) => format!("{}.{}", parent, name),
-        (None, Some(recv)) => format!("{}.{}", recv.trim_start_matches('*'), name),
-        (None, None) => name.clone(),
+    // Build qualified name: parent.name or receiver.name or just name
+    let effective_parent = match (parent_name, receiver.as_deref()) {
+        (Some(p), _) => Some(p.to_string()),
+        (None, Some(recv)) => Some(recv.trim_start_matches('*').to_string()),
+        (None, None) => None,
     };
 
-    let signature = node
-        .child_by_field_name("parameters")
-        .map(|n| node_text(n, source));
-
-    let return_type = node
-        .child_by_field_name("result")
-        .map(|n| node_text(n, source));
-
-    // Check for test functions
     let is_test =
         name.starts_with("Test") || name.starts_with("Benchmark") || name.starts_with("Example");
-
-    // Check visibility (exported = starts with uppercase)
-    let visibility = if name
-        .chars()
-        .next()
-        .map(|c| c.is_uppercase())
-        .unwrap_or(false)
-    {
-        Some("public".to_string())
-    } else {
-        Some("private".to_string())
-    };
-
+    let return_type = node.field_text("result", source);
     let documentation = get_doc_comment(node, source);
+    let visibility = go_visibility(&name);
 
-    Some(Symbol {
-        name,
-        qualified_name: Some(qualified_name),
-        symbol_type: "function".to_string(),
-        language: "go".to_string(),
-        start_line: node.start_line(),
-        end_line: node.end_line(),
-        signature,
-        visibility,
-        documentation,
-        is_test,
-        is_async: false, // Go doesn't have async keyword
-        return_type,
-        decorators: None,
-    })
+    SymbolBuilder::new(node, source, "go")
+        .name(name)
+        .qualified_with_parent(effective_parent.as_deref(), ".")
+        .symbol_type("function")
+        .signature_from_field("parameters")
+        .visibility(visibility)
+        .documentation(documentation)
+        .is_test(is_test)
+        .return_type(return_type)
+        .build()
 }
 
 fn extract_type(node: Node, source: &[u8]) -> Vec<Symbol> {
@@ -170,11 +155,10 @@ fn extract_type(node: Node, source: &[u8]) -> Vec<Symbol> {
             continue;
         }
 
-        let name_node = match child.child_by_field_name("name") {
+        let name = match child.field_text("name", source) {
             Some(n) => n,
             None => continue,
         };
-        let name = node_text(name_node, source);
 
         let symbol_type = child
             .child_by_field_name("type")
@@ -185,34 +169,19 @@ fn extract_type(node: Node, source: &[u8]) -> Vec<Symbol> {
             })
             .unwrap_or("type");
 
-        let visibility = if name
-            .chars()
-            .next()
-            .map(|c| c.is_uppercase())
-            .unwrap_or(false)
-        {
-            Some("public".to_string())
-        } else {
-            Some("private".to_string())
-        };
-
         let documentation = get_doc_comment(child, source);
+        let visibility = go_visibility(&name);
 
-        symbols.push(Symbol {
-            name: name.clone(),
-            qualified_name: Some(name),
-            symbol_type: symbol_type.to_string(),
-            language: "go".to_string(),
-            start_line: child.start_line(),
-            end_line: child.end_line(),
-            signature: None,
-            visibility,
-            documentation,
-            is_test: false,
-            is_async: false,
-            return_type: None,
-            decorators: None,
-        });
+        if let Some(sym) = SymbolBuilder::new(child, source, "go")
+            .name(name)
+            .qualified_with_parent(None, ".")
+            .symbol_type(symbol_type)
+            .visibility(visibility)
+            .documentation(documentation)
+            .build()
+        {
+            symbols.push(sym);
+        }
     }
 
     symbols
@@ -269,10 +238,8 @@ fn extract_imports(node: Node, source: &[u8]) -> Vec<Import> {
     imports
 }
 
-fn extract_spec(spec: Node, source: &[u8], symbol_type: &str, symbols: &mut Vec<Symbol>) {
-    let return_type = spec
-        .child_by_field_name("type")
-        .map(|t| node_text(t, source));
+fn extract_spec(spec: Node, source: &[u8], symbol_type: &'static str, symbols: &mut Vec<Symbol>) {
+    let return_type = spec.field_text("type", source);
     let documentation = get_doc_comment(spec, source);
 
     // Go allows multi-name specs: `const a, b = 1, 2`
@@ -288,31 +255,18 @@ fn extract_spec(spec: Node, source: &[u8], symbol_type: &str, symbols: &mut Vec<
     }
 
     for name in names {
-        let visibility = if name
-            .chars()
-            .next()
-            .map(|c| c.is_uppercase())
-            .unwrap_or(false)
+        let visibility = go_visibility(&name);
+        if let Some(sym) = SymbolBuilder::new(spec, source, "go")
+            .name(name)
+            .qualified_with_parent(None, ".")
+            .symbol_type(symbol_type)
+            .visibility(visibility)
+            .documentation(documentation.clone())
+            .return_type(return_type.clone())
+            .build()
         {
-            Some("public".to_string())
-        } else {
-            Some("private".to_string())
-        };
-        symbols.push(Symbol {
-            name: name.clone(),
-            qualified_name: Some(name),
-            symbol_type: symbol_type.to_string(),
-            language: "go".to_string(),
-            start_line: spec.start_line(),
-            end_line: spec.end_line(),
-            signature: None,
-            visibility,
-            documentation: documentation.clone(),
-            is_test: false,
-            is_async: false,
-            return_type: return_type.clone(),
-            decorators: None,
-        });
+            symbols.push(sym);
+        }
     }
 }
 

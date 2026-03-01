@@ -51,13 +51,7 @@ pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
     // Convert to simplified types
     let parsed_symbols: Vec<ParsedSymbol> = symbols
         .into_iter()
-        .map(|s| ParsedSymbol {
-            name: s.name,
-            kind: s.symbol_type,
-            start_line: s.start_line,
-            end_line: s.end_line,
-            signature: s.signature,
-        })
+        .map(ParsedSymbol::from)
         .collect();
 
     let parsed_imports: Vec<ParsedImport> = imports

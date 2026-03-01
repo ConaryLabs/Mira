@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::db::{Goal, get_active_goals_sync};
 use crate::error::MiraError;
+use crate::hooks::pre_tool::unix_now;
 use crate::mcp::responses::launch::{AgentSpec, LaunchData, LaunchOutput};
 use crate::mcp::responses::Json;
 use crate::tools::core::project::detect_project_types;
@@ -14,7 +15,7 @@ use crate::tools::core::{ToolContext, get_project_info};
 // Agent file parser
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ParsedAgent {
     name: String,
     role: String,
@@ -70,9 +71,9 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
     for line in body.lines() {
         if line.starts_with("### ") {
             // Flush previous agent
-            if let Some(ref mut agent) = current_agent {
-                flush_field(agent, current_field, &current_text);
-                agents.push(agent.clone());
+            if let Some(mut agent) = current_agent.take() {
+                flush_field(&mut agent, current_field, &current_text);
+                agents.push(agent);
             }
 
             // Parse "### Name -- Role"
@@ -111,47 +112,36 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
             continue;
         }
 
-        if current_agent.is_some() {
+        if current_agent.is_some() && line.starts_with("## ") {
+            // H2 heading = end of agent sections
+            if let Some(mut agent) = current_agent.take() {
+                flush_field(&mut agent, current_field, &current_text);
+                agents.push(agent);
+            }
+            current_field = None;
+            current_text.clear();
+        } else if let Some(agent) = current_agent.as_mut() {
             // Detect bold field labels
             if line.starts_with("**Personality:**") {
-                if let Some(ref mut agent) = current_agent {
-                    flush_field(agent, current_field, &current_text);
-                }
+                flush_field(agent, current_field, &current_text);
                 current_field = Some("personality");
                 current_text = line.strip_prefix("**Personality:**").unwrap_or("").trim().to_string();
             } else if line.starts_with("**Weakness:**") {
-                if let Some(ref mut agent) = current_agent {
-                    flush_field(agent, current_field, &current_text);
-                }
+                flush_field(agent, current_field, &current_text);
                 current_field = Some("weakness");
                 current_text = line.strip_prefix("**Weakness:**").unwrap_or("").trim().to_string();
             } else if line.starts_with("**Focus:**") {
-                if let Some(ref mut agent) = current_agent {
-                    flush_field(agent, current_field, &current_text);
-                }
+                flush_field(agent, current_field, &current_text);
                 current_field = Some("focus");
                 current_text = line.strip_prefix("**Focus:**").unwrap_or("").trim().to_string();
             } else if line.starts_with("**Tools:**") {
-                if let Some(ref mut agent) = current_agent {
-                    flush_field(agent, current_field, &current_text);
-                }
+                flush_field(agent, current_field, &current_text);
                 current_field = Some("tools");
                 current_text = line.strip_prefix("**Tools:**").unwrap_or("").trim().to_string();
             } else if line.starts_with("**Role:**") {
-                if let Some(ref mut agent) = current_agent {
-                    flush_field(agent, current_field, &current_text);
-                }
+                flush_field(agent, current_field, &current_text);
                 current_field = Some("tools");
                 current_text = line.strip_prefix("**Role:**").unwrap_or("").trim().to_string();
-            } else if line.starts_with("## ") {
-                // H2 heading = end of agent sections
-                if let Some(ref mut agent) = current_agent {
-                    flush_field(agent, current_field, &current_text);
-                    agents.push(agent.clone());
-                }
-                current_agent = None;
-                current_field = None;
-                current_text.clear();
             } else if current_field.is_some() && !line.trim().is_empty() {
                 // Continuation line for current field
                 if !current_text.is_empty() {
@@ -163,9 +153,9 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
     }
 
     // Flush last agent
-    if let Some(ref mut agent) = current_agent {
-        flush_field(agent, current_field, &current_text);
-        agents.push(agent.clone());
+    if let Some(mut agent) = current_agent.take() {
+        flush_field(&mut agent, current_field, &current_text);
+        agents.push(agent);
     }
 
     if name.is_empty() {
@@ -182,12 +172,16 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
 }
 
 fn flush_field(agent: &mut ParsedAgent, field: Option<&str>, text: &str) {
+    let field = match field {
+        Some(f) => f,
+        None => return,
+    };
     let text = text.trim().to_string();
     match field {
-        Some("personality") => agent.personality = text,
-        Some("weakness") => agent.weakness = text,
-        Some("focus") => agent.focus = text,
-        Some("tools") => agent.tools_desc = text,
+        "personality" => agent.personality = text,
+        "weakness" => agent.weakness = text,
+        "focus" => agent.focus = text,
+        "tools" => agent.tools_desc = text,
         _ => {}
     }
 }
@@ -221,13 +215,11 @@ async fn build_project_context<C: ToolContext>(
 
     // Active goals
     if let Some(pid) = project_id {
-        let goals: Option<Vec<Goal>> = ctx
+        let goals: Result<Vec<Goal>, _> = ctx
             .pool()
-            .try_interact("launch: get active goals", move |conn| {
-                get_active_goals_sync(conn, Some(pid), 3)
-            })
+            .run(move |conn| get_active_goals_sync(conn, Some(pid), 3))
             .await;
-        if let Some(goals) = goals {
+        if let Ok(goals) = goals {
             if !goals.is_empty() {
                 let mut goal_lines = Vec::new();
                 for g in &goals {
@@ -408,11 +400,7 @@ pub async fn handle_launch<C: ToolContext>(
         })
         .collect();
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let suggested_team_id = format!("{}-{}", parsed.name, timestamp);
+    let suggested_team_id = format!("{}-{}", parsed.name, unix_now());
 
     let agent_count = agent_specs.len();
     Ok(Json(LaunchOutput {

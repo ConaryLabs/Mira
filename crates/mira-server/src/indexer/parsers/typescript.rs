@@ -6,7 +6,7 @@ use tree_sitter::{Node, Parser};
 
 use super::{
     FunctionCall, Import, LanguageParser, NodeExt, ParseContext, ParseResult, Symbol,
-    default_parse, node_text,
+    SymbolBuilder, default_parse, node_text,
 };
 
 /// TypeScript/JavaScript language parser
@@ -165,23 +165,14 @@ fn extract_function(
     node: Node,
     source: &[u8],
     parent_name: Option<&str>,
-    language: &str,
+    language: &'static str,
 ) -> Option<Symbol> {
     let name = node
         .child_by_field_name("name")
         .map(|n| node_text(n, source))
         .unwrap_or_else(|| "<anonymous>".to_string());
 
-    let qualified_name = match parent_name {
-        Some(parent) => format!("{}.{}", parent, name),
-        None => name.clone(),
-    };
-
-    let signature = node
-        .child_by_field_name("parameters")
-        .map(|n| node_text(n, source));
-
-    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
+    let is_async = node.has_child_kind("async");
 
     let is_test = name.starts_with("test")
         || name == "it"
@@ -191,120 +182,65 @@ fn extract_function(
         || name == "beforeAll"
         || name == "afterAll";
 
-    let visibility = node
-        .children(&mut node.walk())
-        .find(|n| n.kind() == "accessibility_modifier")
-        .map(|n| node_text(n, source));
-
-    let return_type = node
-        .child_by_field_name("return_type")
-        .map(|n| node_text(n, source));
-
+    let visibility = node.find_child_text("accessibility_modifier", source);
+    let return_type = node.field_text("return_type", source);
     let documentation = get_jsdoc(node, source);
 
-    Some(Symbol {
-        name,
-        qualified_name: Some(qualified_name),
-        symbol_type: "function".to_string(),
-        language: language.to_string(),
-        start_line: node.start_line(),
-        end_line: node.end_line(),
-        signature,
-        visibility,
-        documentation,
-        is_test,
-        is_async,
-        return_type,
-        decorators: None,
-    })
+    SymbolBuilder::new(node, source, language)
+        .name(name)
+        .qualified_with_parent(parent_name, ".")
+        .symbol_type("function")
+        .signature_from_field("parameters")
+        .visibility(visibility)
+        .documentation(documentation)
+        .is_test(is_test)
+        .is_async(is_async)
+        .return_type(return_type)
+        .build()
 }
 
-fn extract_class(node: Node, source: &[u8], language: &str) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
+fn extract_class(node: Node, source: &[u8], language: &'static str) -> Option<Symbol> {
     let documentation = get_jsdoc(node, source);
 
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "class".to_string(),
-        language: language.to_string(),
-        start_line: node.start_line(),
-        end_line: node.end_line(),
-        signature: None,
-        visibility: None,
-        documentation,
-        is_test: false,
-        is_async: false,
-        return_type: None,
-        decorators: None,
-    })
+    SymbolBuilder::new(node, source, language)
+        .name_from_field("name")
+        .qualified_with_parent(None, ".")
+        .symbol_type("class")
+        .documentation(documentation)
+        .build()
 }
 
 fn extract_interface(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
     let documentation = get_jsdoc(node, source);
 
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "interface".to_string(),
-        language: "typescript".to_string(),
-        start_line: node.start_line(),
-        end_line: node.end_line(),
-        signature: None,
-        visibility: None,
-        documentation,
-        is_test: false,
-        is_async: false,
-        return_type: None,
-        decorators: None,
-    })
+    SymbolBuilder::new(node, source, "typescript")
+        .name_from_field("name")
+        .qualified_with_parent(None, ".")
+        .symbol_type("interface")
+        .documentation(documentation)
+        .build()
 }
 
 fn extract_type_alias(node: Node, source: &[u8]) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
     let documentation = get_jsdoc(node, source);
 
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "type".to_string(),
-        language: "typescript".to_string(),
-        start_line: node.start_line(),
-        end_line: node.end_line(),
-        signature: None,
-        visibility: None,
-        documentation,
-        is_test: false,
-        is_async: false,
-        return_type: None,
-        decorators: None,
-    })
+    SymbolBuilder::new(node, source, "typescript")
+        .name_from_field("name")
+        .qualified_with_parent(None, ".")
+        .symbol_type("type")
+        .documentation(documentation)
+        .build()
 }
 
-fn extract_enum(node: Node, source: &[u8], language: &str) -> Option<Symbol> {
-    let name_node = node.child_by_field_name("name")?;
-    let name = node_text(name_node, source);
+fn extract_enum(node: Node, source: &[u8], language: &'static str) -> Option<Symbol> {
     let documentation = get_jsdoc(node, source);
 
-    Some(Symbol {
-        name: name.clone(),
-        qualified_name: Some(name),
-        symbol_type: "enum".to_string(),
-        language: language.to_string(),
-        start_line: node.start_line(),
-        end_line: node.end_line(),
-        signature: None,
-        visibility: None,
-        documentation,
-        is_test: false,
-        is_async: false,
-        return_type: None,
-        decorators: None,
-    })
+    SymbolBuilder::new(node, source, language)
+        .name_from_field("name")
+        .qualified_with_parent(None, ".")
+        .symbol_type("enum")
+        .documentation(documentation)
+        .build()
 }
 
 fn extract_import(node: Node, source: &[u8]) -> Option<Import> {

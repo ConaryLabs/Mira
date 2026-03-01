@@ -120,7 +120,7 @@ pub fn fts_search_sync(
          FROM code_fts f
          JOIN code_chunks c ON c.rowid = f.rowid
          WHERE code_fts MATCH ?1 AND (?2 IS NULL OR c.project_id = ?2)
-         ORDER BY bm25(code_fts, 1.0, 2.0)
+         ORDER BY score
          LIMIT ?3",
     )
     .and_then(|mut stmt| {

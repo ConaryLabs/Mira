@@ -304,33 +304,30 @@ pub async fn search_code<C: ToolContext>(
     }))
 }
 
-/// Find functions that call a specific function
-pub async fn find_function_callers<C: ToolContext>(
+/// Shared helper for formatting callers/callees query results.
+async fn find_function_crossref<C>(
     ctx: &C,
     function_name: String,
-    limit: Option<i64>,
-) -> Result<Json<CodeOutput>, MiraError> {
-    if function_name.is_empty() {
-        return Err(MiraError::InvalidInput(
-            "function_name is required for code(action=callers)".to_string(),
-        ));
-    }
-
-    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+    action_name: &str,
+    direction: &str,
+    ref_type: CrossRefType,
+    results: Vec<crate::search::CrossRefResult>,
+) -> Result<Json<CodeOutput>, MiraError>
+where
+    C: ToolContext,
+{
     let context_header = get_project_info(ctx).await.header;
-
-    let results = query_callers(ctx, &function_name, limit).await?;
 
     if results.is_empty() {
         return Ok(Json(CodeOutput {
-            action: "callers".into(),
+            action: action_name.into(),
             message: format!(
-                "{}No callers found for `{}`. The function may have no callers, or try re-indexing with index(action=\"project\").",
-                context_header, function_name
+                "{}No {} found for `{}`. The function may have no {}, or try re-indexing with index(action=\"project\").",
+                context_header, direction, function_name, direction
             ),
             data: Some(CodeData::CallGraph(CallGraphData {
                 target: function_name,
-                direction: "callers".into(),
+                direction: direction.into(),
                 functions: vec![],
                 total: 0,
             })),
@@ -339,15 +336,15 @@ pub async fn find_function_callers<C: ToolContext>(
 
     let total = results.len();
     Ok(Json(CodeOutput {
-        action: "callers".into(),
+        action: action_name.into(),
         message: format!(
             "{}{}",
             context_header,
-            format_crossref_results(&function_name, CrossRefType::Caller, &results)
+            format_crossref_results(&function_name, ref_type, &results)
         ),
         data: Some(CodeData::CallGraph(CallGraphData {
             target: function_name,
-            direction: "callers".into(),
+            direction: direction.into(),
             functions: results
                 .iter()
                 .map(|r| CallGraphEntry {
@@ -361,6 +358,22 @@ pub async fn find_function_callers<C: ToolContext>(
     }))
 }
 
+/// Find functions that call a specific function
+pub async fn find_function_callers<C: ToolContext>(
+    ctx: &C,
+    function_name: String,
+    limit: Option<i64>,
+) -> Result<Json<CodeOutput>, MiraError> {
+    if function_name.is_empty() {
+        return Err(MiraError::InvalidInput(
+            "function_name is required for code(action=callers)".to_string(),
+        ));
+    }
+    let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+    let results = query_callers(ctx, &function_name, limit).await?;
+    find_function_crossref(ctx, function_name, "callers", "callers", CrossRefType::Caller, results).await
+}
+
 /// Find functions called by a specific function
 pub async fn find_function_callees<C: ToolContext>(
     ctx: &C,
@@ -372,50 +385,9 @@ pub async fn find_function_callees<C: ToolContext>(
             "function_name is required for code(action=callees)".to_string(),
         ));
     }
-
     let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
-    let context_header = get_project_info(ctx).await.header;
-
     let results = query_callees(ctx, &function_name, limit).await?;
-
-    if results.is_empty() {
-        return Ok(Json(CodeOutput {
-            action: "callees".into(),
-            message: format!(
-                "{}No callees found for `{}`. The function may have no callees, or try re-indexing with index(action=\"project\").",
-                context_header, function_name
-            ),
-            data: Some(CodeData::CallGraph(CallGraphData {
-                target: function_name,
-                direction: "callees".into(),
-                functions: vec![],
-                total: 0,
-            })),
-        }));
-    }
-
-    let total = results.len();
-    Ok(Json(CodeOutput {
-        action: "callees".into(),
-        message: format!(
-            "{}{}",
-            context_header,
-            format_crossref_results(&function_name, CrossRefType::Callee, &results)
-        ),
-        data: Some(CodeData::CallGraph(CallGraphData {
-            target: function_name,
-            direction: "callees".into(),
-            functions: results
-                .iter()
-                .map(|r| CallGraphEntry {
-                    function_name: r.symbol_name.clone(),
-                    file_path: r.file_path.clone(),
-                    line: r.line.map(|l| l as usize),
-                })
-                .collect(),
-            total,
-        })),
-    }))
+    find_function_crossref(ctx, function_name, "callees", "callees", CrossRefType::Callee, results).await
 }
 
 /// Get symbols from a file

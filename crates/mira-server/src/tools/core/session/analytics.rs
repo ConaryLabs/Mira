@@ -8,7 +8,7 @@ use crate::mcp::responses::{
     CapabilitiesData, CapabilityStatus, ErrorPatternItem, ErrorPatternsData, LineageSession,
     SessionData, SessionLineageData, SessionOutput,
 };
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::{ToolContext, require_project_id};
 use crate::utils::truncate_at_boundary;
 
 /// Query error patterns for the active project.
@@ -16,11 +16,7 @@ pub(super) async fn get_error_patterns<C: ToolContext>(
     ctx: &C,
     limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, MiraError> {
-    let project = ctx.get_project().await;
-    let project_id = project
-        .as_ref()
-        .map(|p| p.id)
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
 
@@ -78,11 +74,7 @@ pub(super) async fn get_session_lineage<C: ToolContext>(
     ctx: &C,
     limit: Option<i64>,
 ) -> Result<Json<SessionOutput>, MiraError> {
-    let project = ctx.get_project().await;
-    let project_id = project
-        .as_ref()
-        .map(|p| p.id)
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
 

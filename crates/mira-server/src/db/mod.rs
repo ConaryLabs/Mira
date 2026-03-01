@@ -48,7 +48,6 @@ mod types;
 mod usage;
 
 pub use background::{
-    clear_health_issues_by_categories_sync,
     clear_old_health_issues_sync,
     delete_pending_embedding_sync,
     get_documented_by_category_sync,
@@ -57,7 +56,6 @@ pub use background::{
     // Summaries processor
     get_project_ids_needing_summaries_sync,
     get_projects_with_pending_summaries_sync,
-    get_scan_info_sync,
     get_symbols_for_file_sync,
     get_unused_functions_sync,
     insert_system_marker_sync,
@@ -65,7 +63,6 @@ pub use background::{
     // Diff analysis
     map_files_to_symbols_sync,
     mark_health_scanned_sync,
-    memory_key_exists_sync,
     store_code_embedding_sync,
 };
 pub use cartographer::{

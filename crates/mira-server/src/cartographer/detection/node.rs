@@ -83,17 +83,7 @@ fn detect_in_package(
                         format!("{}/{}", package_name, pkg_relative.to_string_lossy())
                     };
 
-                    modules.push(Module {
-                        id: module_id,
-                        name: module_name.to_string(),
-                        path: module_path,
-                        purpose: None,
-                        exports: vec![],
-                        depends_on: vec![],
-                        symbol_count: 0,
-                        line_count: 0,
-                        detected_patterns: None,
-                    });
+                    modules.push(Module::new(module_id, module_name, module_path));
                 }
             }
         }
@@ -132,17 +122,7 @@ fn detect_in_package(
 
                     let module_id = format!("{}/{}", package_name, module_name);
 
-                    modules.push(Module {
-                        id: module_id,
-                        name: module_name.to_string(),
-                        path: module_path,
-                        purpose: None,
-                        exports: vec![],
-                        depends_on: vec![],
-                        symbol_count: 0,
-                        line_count: 0,
-                        detected_patterns: None,
-                    });
+                    modules.push(Module::new(module_id, module_name, module_path));
                 }
             }
         }
@@ -156,17 +136,7 @@ fn detect_in_package(
             .to_string_lossy()
             .to_string();
 
-        modules.push(Module {
-            id: package_name.to_string(),
-            name: package_name.to_string(),
-            path: module_path,
-            purpose: None,
-            exports: vec![],
-            depends_on: vec![],
-            symbol_count: 0,
-            line_count: 0,
-            detected_patterns: None,
-        });
+        modules.push(Module::new(package_name, package_name, module_path));
     }
 }
 

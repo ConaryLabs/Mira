@@ -296,7 +296,7 @@ impl EnvConfig {
     }
 }
 
-fn parse_bool_env(name: &str) -> Option<bool> {
+pub(crate) fn parse_bool_env(name: &str) -> Option<bool> {
     let value = std::env::var(name).ok()?.to_lowercase();
     match value.as_str() {
         "1" | "true" | "yes" | "on" => Some(true),

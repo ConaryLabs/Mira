@@ -14,11 +14,15 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     tracing::info!("detect_python_modules: scanning {:?}", project_path);
 
     // Find the main package - look for pyproject.toml, setup.py, or top-level __init__.py
-    let project_name = find_project_name(project_path);
+    let _project_name = find_project_name(project_path);
 
     // Walk directory looking for packages (__init__.py) and modules (.py files)
     let mut seen_dirs: HashSet<String> = HashSet::new();
 
+    // Detect packages (dirs with __init__.py) from project root
+    detect_packages_in_dir(project_path, project_path, "", &mut modules, &mut seen_dirs);
+
+    // Also detect top-level .py files as modules
     for entry in FileWalker::new(project_path)
         .for_language("python")
         .max_depth(8)
@@ -26,77 +30,37 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        let relative = relative_to(path, project_path);
 
-        // Directory with __init__.py is a package
-        if path.is_dir() {
-            let init_py = path.join("__init__.py");
-            if init_py.exists() {
-                let module_path = path_to_string(relative);
-                if !seen_dirs.contains(&module_path) && !module_path.is_empty() {
-                    seen_dirs.insert(module_path.clone());
-
-                    let module_name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
-
-                    // Create module ID using dot notation like Python imports
-                    let module_id = module_path.replace('/', ".");
-
-                    modules.push(Module {
-                        id: module_id,
-                        name: module_name.to_string(),
-                        path: module_path,
-                        purpose: None,
-                        exports: vec![],
-                        depends_on: vec![],
-                        symbol_count: 0,
-                        line_count: 0,
-                        detected_patterns: None,
-                    });
-                }
-            }
+        if !path.is_file() || !path.extension().is_some_and(|e| e == "py") {
+            continue;
         }
 
-        // Top-level .py files (not in packages) are also modules
-        if path.is_file() && path.extension().is_some_and(|e| e == "py") {
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-            // Skip __init__.py, setup.py, conftest.py and test files at root
-            if file_name == "__init__.py"
-                || file_name == "setup.py"
-                || file_name == "conftest.py"
-                || file_name.starts_with("test_")
-            {
-                continue;
-            }
+        // Skip __init__.py, setup.py, conftest.py and test files at root
+        if file_name == "__init__.py"
+            || file_name == "setup.py"
+            || file_name == "conftest.py"
+            || file_name.starts_with("test_")
+        {
+            continue;
+        }
 
-            // Only include top-level .py files (directly under project root or src/)
-            let parent = path.parent();
-            let is_top_level =
-                parent == Some(project_path) || parent == Some(&project_path.join("src"));
+        // Only include top-level .py files (directly under project root or src/)
+        let parent = path.parent();
+        let is_top_level =
+            parent == Some(project_path) || parent == Some(&project_path.join("src"));
 
-            if is_top_level {
-                let module_path = path_to_string(relative);
-                if !seen_dirs.contains(&module_path) {
-                    seen_dirs.insert(module_path.clone());
+        if is_top_level {
+            let relative = relative_to(path, project_path);
+            let module_path = path_to_string(relative);
+            if !seen_dirs.contains(&module_path) {
+                seen_dirs.insert(module_path.clone());
 
-                    let module_name = file_name.trim_end_matches(".py");
-                    let module_id = module_name.to_string();
+                let module_name = file_name.trim_end_matches(".py");
+                let module_id = module_name.to_string();
 
-                    modules.push(Module {
-                        id: module_id,
-                        name: module_name.to_string(),
-                        path: module_path,
-                        purpose: None,
-                        exports: vec![],
-                        depends_on: vec![],
-                        symbol_count: 0,
-                        line_count: 0,
-                        detected_patterns: None,
-                    });
-                }
+                modules.push(Module::new(module_id, module_name, module_path));
             }
         }
     }
@@ -105,13 +69,7 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     if modules.is_empty() {
         let src_dir = project_path.join("src");
         if src_dir.exists() {
-            detect_in_src(
-                &src_dir,
-                project_path,
-                &project_name,
-                &mut modules,
-                &mut seen_dirs,
-            );
+            detect_packages_in_dir(&src_dir, project_path, "src/", &mut modules, &mut seen_dirs);
         }
     }
 
@@ -123,50 +81,48 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     modules
 }
 
-fn detect_in_src(
-    src_dir: &Path,
+/// Walk `search_dir` for Python packages (dirs with `__init__.py`).
+/// Paths are relativized against `project_path`.
+/// `strip_prefix` is removed from module IDs (e.g. "src/" for src-layout projects).
+fn detect_packages_in_dir(
+    search_dir: &Path,
     project_path: &Path,
-    _project_name: &str,
+    strip_prefix: &str,
     modules: &mut Vec<Module>,
     seen_dirs: &mut HashSet<String>,
 ) {
-    for entry in FileWalker::new(src_dir)
+    for entry in FileWalker::new(search_dir)
         .for_language("python")
         .max_depth(8)
         .walk_entries()
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        let relative = relative_to(path, project_path);
-
-        if path.is_dir() {
-            let init_py = path.join("__init__.py");
-            if init_py.exists() {
-                let module_path = path_to_string(relative);
-                if !seen_dirs.contains(&module_path) {
-                    seen_dirs.insert(module_path.clone());
-
-                    let module_name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
-
-                    let module_id = module_path.replace("src/", "").replace('/', ".");
-
-                    modules.push(Module {
-                        id: module_id,
-                        name: module_name.to_string(),
-                        path: module_path,
-                        purpose: None,
-                        exports: vec![],
-                        depends_on: vec![],
-                        symbol_count: 0,
-                        line_count: 0,
-                        detected_patterns: None,
-                    });
-                }
-            }
+        if !path.is_dir() {
+            continue;
         }
+
+        let init_py = path.join("__init__.py");
+        if !init_py.exists() {
+            continue;
+        }
+
+        let relative = relative_to(path, project_path);
+        let module_path = path_to_string(relative);
+        if module_path.is_empty() || seen_dirs.contains(&module_path) {
+            continue;
+        }
+
+        seen_dirs.insert(module_path.clone());
+
+        let module_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        let module_id = module_path.replace(strip_prefix, "").replace('/', ".");
+
+        modules.push(Module::new(module_id, module_name, module_path));
     }
 }
 

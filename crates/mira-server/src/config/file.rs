@@ -80,11 +80,8 @@ impl RetentionConfig {
 
     /// Check if retention is enabled (config field OR env var override)
     pub fn is_enabled(&self) -> bool {
-        if std::env::var("MIRA_RETENTION_ENABLED")
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-            .unwrap_or(false)
-        {
-            return true;
+        if let Some(env_val) = crate::config::env::parse_bool_env("MIRA_RETENTION_ENABLED") {
+            return env_val;
         }
         self.enabled
     }

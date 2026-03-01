@@ -1,16 +1,14 @@
-// crates/mira-server/src/llm/deepseek/client.rs
+// crates/mira-server/src/llm/deepseek.rs
 // DeepSeek API client (non-streaming, uses deepseek-reasoner)
 
 use crate::llm::http_client::LlmHttpClient;
-use crate::llm::openai_compat::{ChatRequest, parse_chat_response};
+use crate::llm::openai_compat::{CompatChatConfig, execute_openai_compat_chat};
 use crate::llm::provider::{LlmClient, Provider};
-use crate::llm::truncate_messages_to_default_budget;
 use crate::llm::{ChatResult, Message, Tool};
 use anyhow::Result;
 use async_trait::async_trait;
-use std::time::{Duration, Instant};
-use tracing::{Span, debug, info, instrument};
-use uuid::Uuid;
+use std::time::Duration;
+use tracing::{info, instrument};
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
 
@@ -63,67 +61,31 @@ impl DeepSeekClient {
         messages: Vec<Message>,
         tools: Option<Vec<Tool>>,
     ) -> Result<ChatResult> {
-        let request_id = Uuid::new_v4().to_string();
-        let start_time = Instant::now();
-
-        Span::current().record("request_id", &request_id);
-
-        // Apply budget-aware truncation if enabled
-        let messages = if self.supports_context_budget() {
-            let original_count = messages.len();
-            let messages = truncate_messages_to_default_budget(messages);
-            if messages.len() != original_count {
-                info!(
-                    request_id = %request_id,
-                    original_messages = original_count,
-                    truncated_messages = messages.len(),
-                    "Applied context budget truncation"
-                );
-            }
-            messages
-        } else {
-            messages
+        let config = CompatChatConfig {
+            provider_name: "DeepSeek",
+            model: self.model.clone(),
+            supports_budget: self.supports_context_budget(),
+            max_tokens: Some(Self::max_tokens_for_model(&self.model)),
         };
 
-        info!(
-            request_id = %request_id,
-            message_count = messages.len(),
-            tool_count = tools.as_ref().map(|t| t.len()).unwrap_or(0),
-            model = %self.model,
-            "Starting DeepSeek chat request"
-        );
+        let result = execute_openai_compat_chat(config, messages, tools, |req_id, body| async move {
+            self.http
+                .execute_with_retry(&req_id, DEEPSEEK_API_URL, &self.api_key, body)
+                .await
+        })
+        .await?;
 
-        // Build request using shared ChatRequest
-        let max_tokens = Self::max_tokens_for_model(&self.model);
-        let request = ChatRequest::new(&self.model, messages)
-            .with_tools(tools)
-            .with_max_tokens(max_tokens);
-
-        let body = serde_json::to_string(&request)?;
-        debug!(request_id = %request_id, "DeepSeek request: {}", body);
-
-        let response_body = self
-            .http
-            .execute_with_retry(&request_id, DEEPSEEK_API_URL, &self.api_key, body)
-            .await?;
-
-        let duration_ms = start_time.elapsed().as_millis() as u64;
-
-        // Parse response using shared parser
-        let result = parse_chat_response(&response_body, request_id.clone(), duration_ms)?;
-
-        // Log usage stats with DeepSeek-specific cache metrics
+        // DeepSeek-specific: log usage stats with cache metrics
         if let Some(ref u) = result.usage {
-            crate::llm::logging::log_usage(&request_id, "DeepSeek", u);
+            crate::llm::logging::log_usage(&result.request_id, "DeepSeek", u);
 
-            // DeepSeek-specific: cache hit/miss stats
             let cache_hit_ratio = Self::calculate_cache_hit_ratio(
                 u.prompt_cache_hit_tokens,
                 u.prompt_cache_miss_tokens,
             );
             if cache_hit_ratio.is_some() {
                 info!(
-                    request_id = %request_id,
+                    request_id = %result.request_id,
                     cache_hit = ?u.prompt_cache_hit_tokens,
                     cache_miss = ?u.prompt_cache_miss_tokens,
                     cache_hit_ratio = ?cache_hit_ratio.map(|r| format!("{:.1}%", r * 100.0)),
@@ -131,23 +93,6 @@ impl DeepSeekClient {
                 );
             }
         }
-
-        if let Some(ref tcs) = result.tool_calls {
-            crate::llm::logging::log_tool_calls(&request_id, "DeepSeek", tcs);
-        }
-
-        crate::llm::logging::log_completion(
-            &request_id,
-            "DeepSeek",
-            duration_ms,
-            result.content.as_ref().map(|c| c.len()).unwrap_or(0),
-            result
-                .reasoning_content
-                .as_ref()
-                .map(|r| r.len())
-                .unwrap_or(0),
-            result.tool_calls.as_ref().map(|t| t.len()).unwrap_or(0),
-        );
 
         Ok(result)
     }

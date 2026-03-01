@@ -170,35 +170,7 @@ pub async fn run() -> Result<()> {
     let transcript_path = input
         .get("transcript_path")
         .and_then(|v| v.as_str())
-        .and_then(|p| {
-            let path = PathBuf::from(p);
-            // Canonicalize to resolve ".." segments before checking prefix
-            let canonical = match path.canonicalize() {
-                Ok(c) => c,
-                Err(_) => {
-                    tracing::warn!(
-                        path = p,
-                        "PreCompact rejected transcript_path (canonicalize failed)"
-                    );
-                    return None;
-                }
-            };
-            // Validate transcript_path is under user's home directory
-            if let Some(home) = dirs::home_dir()
-                && canonical.starts_with(&home)
-            {
-                return Some(canonical);
-            }
-            // Also allow /tmp which Claude Code may use
-            if canonical.starts_with("/tmp") {
-                return Some(canonical);
-            }
-            tracing::warn!(
-                path = p,
-                "PreCompact rejected transcript_path outside home directory"
-            );
-            None
-        });
+        .and_then(crate::hooks::validate_transcript_path);
 
     tracing::debug!(
         session = truncate_at_boundary(session_id, 8),
@@ -295,20 +267,7 @@ async fn save_pre_compaction_state(
 
 /// Path to the post-compaction flag file for a session
 pub(crate) fn post_compaction_flag_path(session_id: &str) -> PathBuf {
-    let mira_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mira")
-        .join("tmp");
-    let sanitized: String = session_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .collect();
-    let sid = if sanitized.len() > 16 {
-        sanitized[..16].to_string()
-    } else {
-        sanitized
-    };
-    mira_dir.join(format!("post_compact_{}.flag", sid))
+    crate::hooks::mira_tmp_path(session_id, "post_compact", "flag")
 }
 
 /// Set the post-compaction flag for a session

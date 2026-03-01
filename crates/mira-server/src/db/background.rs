@@ -4,6 +4,7 @@
 use rusqlite::{Connection, params};
 
 use super::log_and_discard;
+use super::observations;
 
 /// (id, name, symbol_type, start_line, end_line, signature)
 pub type SymbolRow = (
@@ -19,37 +20,12 @@ pub type SymbolRow = (
 // Common scan time/rate limiting functions
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Get scan info (content/commit, updated_at) for a system observation key
-pub fn get_scan_info_sync(
-    conn: &Connection,
-    project_id: i64,
-    key: &str,
-) -> Option<(String, String)> {
-    conn.query_row(
-        "SELECT content, updated_at FROM system_observations
-         WHERE project_id = ? AND key = ?",
-        params![project_id, key],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )
-    .ok()
-}
-
 /// Check if a time is older than a duration (e.g., '-1 day', '-7 days', '-1 hour')
 pub fn is_time_older_than_sync(conn: &Connection, time: &str, duration: &str) -> bool {
     conn.query_row(
         "SELECT datetime(?1) < datetime('now', ?2)",
         params![time, duration],
         |row| row.get(0),
-    )
-    .unwrap_or(false)
-}
-
-/// Check if a system observation key exists for a project
-pub fn memory_key_exists_sync(conn: &Connection, project_id: i64, key: &str) -> bool {
-    conn.query_row(
-        "SELECT 1 FROM system_observations WHERE project_id = ? AND key = ?",
-        params![project_id, key],
-        |_| Ok(true),
     )
     .unwrap_or(false)
 }
@@ -62,26 +38,22 @@ pub fn insert_system_marker_sync(
     content: &str,
     category: &str,
 ) -> rusqlite::Result<()> {
-    // Manual UPSERT: check if key exists, then update or insert
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM system_observations WHERE project_id = ? AND key = ?",
-            params![project_id, key],
-            |row| row.get(0),
-        )
-        .ok();
-    if let Some(id) = existing {
-        conn.execute(
-            "UPDATE system_observations SET content = ?, category = ?, updated_at = datetime('now') WHERE id = ?",
-            params![content, category, id],
-        )?;
-    } else {
-        conn.execute(
-            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
-             VALUES (?, ?, ?, 'system', ?, 1.0, 'background', 'project', datetime('now'), datetime('now'))",
-            params![project_id, key, content, category],
-        )?;
-    }
+    observations::store_observation_sync(
+        conn,
+        observations::StoreObservationParams {
+            project_id: Some(project_id),
+            key: Some(key),
+            content,
+            observation_type: "system",
+            category: Some(category),
+            confidence: 1.0,
+            source: "background",
+            session_id: None,
+            team_id: None,
+            scope: "project",
+            expires_at: None,
+        },
+    )?;
     Ok(())
 }
 
@@ -102,27 +74,8 @@ pub fn mark_health_scanned_sync(conn: &Connection, project_id: i64) -> rusqlite:
         "DELETE FROM system_observations WHERE project_id = ? AND key = 'health_fast_scan_done'",
         [project_id],
     )?;
-    // Update last scan time (manual UPSERT)
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM system_observations WHERE project_id = ? AND key = 'health_scan_time'",
-            [project_id],
-            |row| row.get(0),
-        )
-        .ok();
-    if let Some(id) = existing {
-        conn.execute(
-            "UPDATE system_observations SET content = 'scanned', updated_at = datetime('now') WHERE id = ?",
-            [id],
-        )?;
-    } else {
-        conn.execute(
-            "INSERT INTO system_observations (project_id, key, content, observation_type, category, confidence, source, scope, created_at, updated_at)
-             VALUES (?, 'health_scan_time', 'scanned', 'system', 'health', 1.0, 'code_health', 'project', datetime('now'), datetime('now'))",
-            [project_id],
-        )?;
-    }
-    Ok(())
+    // Update last scan time via insert_system_marker_sync (handles UPSERT)
+    insert_system_marker_sync(conn, project_id, "health_scan_time", "scanned", "health")
 }
 
 /// Clear old health issues before refresh
@@ -131,21 +84,6 @@ pub fn clear_old_health_issues_sync(conn: &Connection, project_id: i64) -> rusql
         "DELETE FROM system_observations WHERE project_id = ? AND observation_type = 'health'",
         [project_id],
     )?;
-    Ok(())
-}
-
-/// Clear health issues for specific categories before refresh
-pub fn clear_health_issues_by_categories_sync(
-    conn: &Connection,
-    project_id: i64,
-    categories: &[&str],
-) -> rusqlite::Result<()> {
-    for category in categories {
-        conn.execute(
-            "DELETE FROM system_observations WHERE project_id = ? AND observation_type = 'health' AND category = ?",
-            params![project_id, category],
-        )?;
-    }
     Ok(())
 }
 
@@ -545,7 +483,7 @@ mod tests {
     #[test]
     fn test_get_scan_info_not_found() {
         let (conn, pid) = setup_conn_with_project();
-        let info = get_scan_info_sync(&conn, pid, "nonexistent_key");
+        let info = observations::get_observation_info_sync(&conn, pid, "nonexistent_key");
         assert!(info.is_none());
     }
 
@@ -555,7 +493,7 @@ mod tests {
 
         insert_system_marker_sync(&conn, pid, "last_scan", "abc123", "indexing").unwrap();
 
-        let info = get_scan_info_sync(&conn, pid, "last_scan");
+        let info = observations::get_observation_info_sync(&conn, pid, "last_scan");
         assert!(info.is_some());
         let (content, _updated_at) = info.unwrap();
         assert_eq!(content, "abc123");
@@ -568,7 +506,7 @@ mod tests {
         insert_system_marker_sync(&conn, pid, "scan_key", "old_value", "scan").unwrap();
         insert_system_marker_sync(&conn, pid, "scan_key", "new_value", "scan").unwrap();
 
-        let info = get_scan_info_sync(&conn, pid, "scan_key").unwrap();
+        let info = observations::get_observation_info_sync(&conn, pid, "scan_key").unwrap();
         assert_eq!(info.0, "new_value");
     }
 
@@ -576,11 +514,11 @@ mod tests {
     fn test_memory_key_exists() {
         let (conn, pid) = setup_conn_with_project();
 
-        assert!(!memory_key_exists_sync(&conn, pid, "some_key"));
+        assert!(!observations::observation_key_exists_sync(&conn, pid, "some_key"));
 
         insert_system_marker_sync(&conn, pid, "some_key", "value", "test").unwrap();
 
-        assert!(memory_key_exists_sync(&conn, pid, "some_key"));
+        assert!(observations::observation_key_exists_sync(&conn, pid, "some_key"));
     }
 
     #[test]
@@ -609,10 +547,10 @@ mod tests {
 
         mark_health_scanned_sync(&conn, pid).unwrap();
 
-        assert!(!memory_key_exists_sync(&conn, pid, "health_scan_needed"));
-        assert!(!memory_key_exists_sync(&conn, pid, "health_fast_scan_done"));
+        assert!(!observations::observation_key_exists_sync(&conn, pid, "health_scan_needed"));
+        assert!(!observations::observation_key_exists_sync(&conn, pid, "health_fast_scan_done"));
         // Scan time marker should exist
-        let info = get_scan_info_sync(&conn, pid, "health_scan_time");
+        let info = observations::get_observation_info_sync(&conn, pid, "health_scan_time");
         assert!(info.is_some());
     }
 
@@ -655,7 +593,7 @@ mod tests {
             .unwrap();
         }
 
-        clear_health_issues_by_categories_sync(&conn, pid, &["complexity", "dead_code"]).unwrap();
+        observations::delete_observations_by_categories_sync(&conn, pid, "health", &["complexity", "dead_code"]).unwrap();
 
         let count: i64 = conn
             .query_row(

@@ -586,18 +586,19 @@ async fn action_add_milestone<C: ToolContext>(
     }))
 }
 
-/// Complete a milestone and update goal progress
-async fn action_complete_milestone<C: ToolContext>(
+/// Shared helper for milestone complete/delete: verify project, perform DB op,
+/// update goal progress, optionally record interaction, build response.
+async fn milestone_mutate<C: ToolContext>(
     ctx: &C,
     milestone_id: i64,
+    action_name: &str,
+    verb_past: &str,
+    db_op: impl FnOnce(i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<i64>, MiraError>> + Send>> + Send,
+    interaction_type: Option<&str>,
 ) -> Result<Json<GoalOutput>, MiraError> {
     verify_milestone_project(ctx, milestone_id).await?;
 
-    let session_id = ctx.get_session_id().await;
-    let goal_id_result = ctx
-        .pool()
-        .run(move |conn| complete_milestone_sync(conn, milestone_id, session_id.as_deref()))
-        .await?;
+    let goal_id_result = db_op(milestone_id).await?;
 
     if let Some(gid) = goal_id_result {
         let progress = ctx
@@ -605,14 +606,15 @@ async fn action_complete_milestone<C: ToolContext>(
             .run(move |conn| update_goal_progress_from_milestones_sync(conn, gid))
             .await?;
 
-        // Record session-goal link
-        record_goal_interaction(ctx, gid, "milestone_completed").await;
+        if let Some(itype) = interaction_type {
+            record_goal_interaction(ctx, gid, itype).await;
+        }
 
         Ok(Json(GoalOutput {
-            action: "complete_milestone".into(),
+            action: action_name.into(),
             message: format!(
-                "Completed milestone {}. Goal progress updated to {}%",
-                milestone_id, progress
+                "{} milestone {}. Goal progress updated to {}%",
+                verb_past, milestone_id, progress
             ),
             data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
                 milestone_id,
@@ -622,8 +624,8 @@ async fn action_complete_milestone<C: ToolContext>(
         }))
     } else {
         Ok(Json(GoalOutput {
-            action: "complete_milestone".into(),
-            message: format!("Completed milestone {}", milestone_id),
+            action: action_name.into(),
+            message: format!("{} milestone {}", verb_past, milestone_id),
             data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
                 milestone_id,
                 goal_id: None,
@@ -633,47 +635,52 @@ async fn action_complete_milestone<C: ToolContext>(
     }
 }
 
+/// Complete a milestone and update goal progress
+async fn action_complete_milestone<C: ToolContext>(
+    ctx: &C,
+    milestone_id: i64,
+) -> Result<Json<GoalOutput>, MiraError> {
+    let pool = ctx.pool().clone();
+    let session_id = ctx.get_session_id().await;
+    milestone_mutate(
+        ctx,
+        milestone_id,
+        "complete_milestone",
+        "Completed",
+        |mid| {
+            let pool = pool.clone();
+            let sid = session_id.clone();
+            Box::pin(async move {
+                pool.run(move |conn| complete_milestone_sync(conn, mid, sid.as_deref()))
+                    .await
+            })
+        },
+        Some("milestone_completed"),
+    )
+    .await
+}
+
 /// Delete a milestone and update goal progress
 async fn action_delete_milestone<C: ToolContext>(
     ctx: &C,
     milestone_id: i64,
 ) -> Result<Json<GoalOutput>, MiraError> {
-    verify_milestone_project(ctx, milestone_id).await?;
-
-    let goal_id_result = ctx
-        .pool()
-        .run(move |conn| delete_milestone_sync(conn, milestone_id))
-        .await?;
-
-    if let Some(gid) = goal_id_result {
-        let progress = ctx
-            .pool()
-            .run(move |conn| update_goal_progress_from_milestones_sync(conn, gid))
-            .await?;
-
-        Ok(Json(GoalOutput {
-            action: "delete_milestone".into(),
-            message: format!(
-                "Deleted milestone {}. Goal progress updated to {}%",
-                milestone_id, progress
-            ),
-            data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
-                milestone_id,
-                goal_id: Some(gid),
-                progress_percent: Some(progress),
-            })),
-        }))
-    } else {
-        Ok(Json(GoalOutput {
-            action: "delete_milestone".into(),
-            message: format!("Deleted milestone {}", milestone_id),
-            data: Some(GoalData::MilestoneProgress(MilestoneProgressData {
-                milestone_id,
-                goal_id: None,
-                progress_percent: None,
-            })),
-        }))
-    }
+    let pool = ctx.pool().clone();
+    milestone_mutate(
+        ctx,
+        milestone_id,
+        "delete_milestone",
+        "Deleted",
+        |mid| {
+            let pool = pool.clone();
+            Box::pin(async move {
+                pool.run(move |conn| delete_milestone_sync(conn, mid))
+                    .await
+            })
+        },
+        None,
+    )
+    .await
 }
 
 /// List sessions that worked on a goal

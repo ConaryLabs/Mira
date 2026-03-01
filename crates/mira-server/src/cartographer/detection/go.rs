@@ -63,21 +63,12 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
             format!("{}/{}", module_name, module_path)
         };
 
-        modules.push(Module {
-            id: module_id,
-            name: package_name.to_string(),
-            path: if module_path.is_empty() {
-                ".".to_string()
-            } else {
-                module_path
-            },
-            purpose: None,
-            exports: vec![],
-            depends_on: vec![],
-            symbol_count: 0,
-            line_count: 0,
-            detected_patterns: None,
-        });
+        let path = if module_path.is_empty() {
+            ".".to_string()
+        } else {
+            module_path
+        };
+        modules.push(Module::new(module_id, package_name, path));
     }
 
     tracing::info!("detect_go_modules: found {} modules", modules.len());

@@ -257,15 +257,34 @@ pub fn delete_observations_by_categories_sync(
     observation_type: &str,
     categories: &[&str],
 ) -> rusqlite::Result<usize> {
-    let mut total = 0;
-    for category in categories {
-        total += conn.execute(
-            "DELETE FROM system_observations
-             WHERE project_id = ?1 AND observation_type = ?2 AND category = ?3",
-            params![project_id, observation_type, category],
-        )?;
+    if categories.is_empty() {
+        return Ok(0);
     }
-    Ok(total)
+    let categories = if categories.len() > 50 {
+        &categories[..50]
+    } else {
+        categories
+    };
+    let placeholders: Vec<String> = categories
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 3))
+        .collect();
+    let sql = format!(
+        "DELETE FROM system_observations
+         WHERE project_id = ?1 AND observation_type = ?2
+           AND category IN ({})",
+        placeholders.join(", ")
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(project_id));
+    param_values.push(Box::new(observation_type.to_string()));
+    for cat in categories {
+        param_values.push(Box::new(cat.to_string()));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
+    conn.execute(&sql, param_refs.as_slice())
 }
 
 /// Clean up expired observations (TTL-based). Returns count of deleted rows.

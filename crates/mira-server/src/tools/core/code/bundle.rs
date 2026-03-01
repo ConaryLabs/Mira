@@ -6,7 +6,7 @@ use std::fmt::Write;
 
 use crate::error::MiraError;
 use crate::mcp::responses::{BundleData, CodeData, CodeOutput, Json};
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::{ToolContext, require_project_id};
 
 /// Default character budget (~1500 tokens at ~4 chars/token = 6000 chars)
 const DEFAULT_BUDGET: usize = 6000;
@@ -83,10 +83,7 @@ pub async fn generate_bundle<C: ToolContext>(
     budget: Option<i64>,
     depth: Option<String>,
 ) -> Result<Json<CodeOutput>, MiraError> {
-    let project_id = ctx
-        .project_id()
-        .await
-        .ok_or_else(|| MiraError::InvalidInput(NO_ACTIVE_PROJECT_ERROR.to_string()))?;
+    let project_id = require_project_id(ctx).await?;
 
     let budget = budget
         .map(|b| (b.max(0) as usize).clamp(MIN_BUDGET, MAX_BUDGET))

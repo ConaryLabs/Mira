@@ -24,6 +24,23 @@ pub struct Module {
     pub detected_patterns: Option<String>,
 }
 
+impl Module {
+    /// Create a new Module with default fields (empty exports, deps, zero counts).
+    pub fn new(id: impl Into<String>, name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            path: path.into(),
+            purpose: None,
+            exports: vec![],
+            depends_on: vec![],
+            symbol_count: 0,
+            line_count: 0,
+            detected_patterns: None,
+        }
+    }
+}
+
 /// Complete codebase map
 #[derive(Debug, Clone)]
 pub struct CodebaseMap {

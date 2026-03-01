@@ -44,7 +44,7 @@ pub struct ResponseFunction {
 /// Parse an OpenAI-compatible chat response into a ChatResult
 pub fn parse_chat_response(
     response_body: &str,
-    request_id: String,
+    request_id: &str,
     duration_ms: u64,
 ) -> Result<ChatResult> {
     let data: ChatResponse = serde_json::from_str(response_body)
@@ -76,7 +76,7 @@ pub fn parse_chat_response(
     };
 
     Ok(ChatResult {
-        request_id,
+        request_id: request_id.to_owned(),
         content,
         reasoning_content,
         tool_calls,
@@ -104,7 +104,7 @@ mod tests {
             }
         }"#;
 
-        let result = parse_chat_response(json, "test-123".into(), 100).unwrap();
+        let result = parse_chat_response(json, "test-123", 100).unwrap();
         assert_eq!(result.request_id, "test-123");
         assert_eq!(result.content, Some("Hello, world!".to_string()));
         assert!(result.tool_calls.is_none());
@@ -130,7 +130,7 @@ mod tests {
             "usage": null
         }"#;
 
-        let result = parse_chat_response(json, "test-456".into(), 200).unwrap();
+        let result = parse_chat_response(json, "test-456", 200).unwrap();
         assert!(result.content.is_none());
         let calls = result.tool_calls.unwrap();
         assert_eq!(calls.len(), 1);
@@ -150,7 +150,7 @@ mod tests {
             "usage": null
         }"#;
 
-        let result = parse_chat_response(json, "test-789".into(), 300).unwrap();
+        let result = parse_chat_response(json, "test-789", 300).unwrap();
         assert_eq!(result.content, Some("The answer is 42.".to_string()));
         assert_eq!(
             result.reasoning_content,
@@ -160,14 +160,14 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_json() {
-        let result = parse_chat_response("not json", "test".into(), 0);
+        let result = parse_chat_response("not json", "test", 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_empty_choices() {
         let json = r#"{"choices": [], "usage": null}"#;
-        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        let result = parse_chat_response(json, "test", 0).unwrap();
         assert!(result.content.is_none());
         assert!(result.reasoning_content.is_none());
         assert!(result.tool_calls.is_none());
@@ -185,7 +185,7 @@ mod tests {
                 "prompt_cache_miss_tokens": 20
             }
         }"#;
-        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        let result = parse_chat_response(json, "test", 0).unwrap();
         let usage = result.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 100);
         assert_eq!(usage.completion_tokens, 50);
@@ -208,7 +208,7 @@ mod tests {
             }],
             "usage": null
         }"#;
-        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        let result = parse_chat_response(json, "test", 0).unwrap();
         let calls = result.tool_calls.unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].id, "call_1");
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn test_parse_preserves_request_id_and_duration() {
         let json = r#"{"choices": [{"message": {"content": "hi"}}], "usage": null}"#;
-        let result = parse_chat_response(json, "req-abc-123".into(), 42).unwrap();
+        let result = parse_chat_response(json, "req-abc-123", 42).unwrap();
         assert_eq!(result.request_id, "req-abc-123");
         assert_eq!(result.duration_ms, 42);
     }
@@ -239,7 +239,7 @@ mod tests {
             }],
             "usage": null
         }"#;
-        let result = parse_chat_response(json, "test".into(), 0).unwrap();
+        let result = parse_chat_response(json, "test", 0).unwrap();
         let call = &result.tool_calls.unwrap()[0];
         assert_eq!(call.id, "tc_1");
         assert_eq!(call.call_type, "function");

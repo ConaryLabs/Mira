@@ -41,26 +41,31 @@ pub fn truncate_messages_to_budget(mut messages: Vec<Message>, budget: u64) -> V
     let mut current_total = total;
 
     // Phase 1: Remove oldest non-system, non-tool messages
-    while current_total > budget && messages.len() > 1 {
-        let mut remove_index = None;
-        for (i, msg) in messages.iter().enumerate() {
-            if i == 0 {
-                continue; // Never remove system message
-            }
-            if msg.role != "system" && msg.role != "tool" {
-                remove_index = Some(i);
-                break;
-            }
-        }
+    // Collect all removable indices in one pass, mark which to remove (oldest first),
+    // then remove from back to front to avoid index invalidation.
+    let removable: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(i, msg)| *i > 0 && msg.role != "system" && msg.role != "tool")
+        .map(|(i, _)| i)
+        .collect();
 
-        if let Some(idx) = remove_index {
-            let removed = messages.remove(idx);
-            let removed_tokens = estimate_tokens(removed.content.as_deref().unwrap_or(""))
-                + estimate_tokens(removed.reasoning_content.as_deref().unwrap_or(""));
-            current_total = current_total.saturating_sub(removed_tokens);
-        } else {
+    // Determine which indices to remove (oldest first until under budget)
+    let mut to_remove = Vec::new();
+    for &idx in &removable {
+        if current_total <= budget || messages.len() - to_remove.len() <= 1 {
             break;
         }
+        let msg = &messages[idx];
+        let tokens = estimate_tokens(msg.content.as_deref().unwrap_or(""))
+            + estimate_tokens(msg.reasoning_content.as_deref().unwrap_or(""));
+        current_total = current_total.saturating_sub(tokens);
+        to_remove.push(idx);
+    }
+
+    // Remove from back to front to keep indices valid
+    for &idx in to_remove.iter().rev() {
+        messages.remove(idx);
     }
 
     // Phase 2: If still over budget, truncate oldest tool result content (keep last 3 intact)

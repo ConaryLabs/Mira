@@ -75,20 +75,7 @@ struct InjectionDedupState {
 }
 
 fn injection_dedup_path(session_id: &str) -> std::path::PathBuf {
-    let mira_dir = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".mira")
-        .join("tmp");
-    let sanitized: String = session_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .collect();
-    let sid = if sanitized.len() > 16 {
-        sanitized[..16].to_string()
-    } else {
-        sanitized
-    };
-    mira_dir.join(format!("inj_dedup_{}.json", sid))
+    crate::hooks::mira_tmp_path(session_id, "inj_dedup", "json")
 }
 
 fn load_injection_dedup(session_id: &str) -> InjectionDedupState {

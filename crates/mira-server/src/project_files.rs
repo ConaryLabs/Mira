@@ -173,23 +173,24 @@ impl FileWalker {
     fn create_walker(&self) -> Box<dyn Iterator<Item = Result<Entry>>> {
         let skip_hidden = self.skip_hidden;
         let language = self.language;
+        let extra_patterns = crate::config::ignore::load_project_ignore_patterns(&self.path);
+
+        let predicate = move |name: &str| {
+            if skip_hidden && name.starts_with('.') {
+                return true;
+            }
+            if let Some(lang) = language {
+                crate::config::ignore::should_skip_for_lang_with_patterns(
+                    name,
+                    lang,
+                    &extra_patterns,
+                )
+            } else {
+                crate::config::ignore::should_skip_with_patterns(name, &extra_patterns)
+            }
+        };
 
         if self.use_gitignore {
-            let extra_patterns = crate::config::ignore::load_project_ignore_patterns(&self.path);
-            let predicate = move |name: &str| {
-                if skip_hidden && name.starts_with('.') {
-                    return true;
-                }
-                if let Some(lang) = language {
-                    crate::config::ignore::should_skip_for_lang_with_patterns(
-                        name,
-                        lang,
-                        &extra_patterns,
-                    )
-                } else {
-                    crate::config::ignore::should_skip_with_patterns(name, &extra_patterns)
-                }
-            };
             // Use ignore::WalkBuilder for .gitignore support
             let mut builder = ignore_crate::WalkBuilder::new(&self.path);
             builder
@@ -213,21 +214,6 @@ impl FileWalker {
                 });
             Box::new(iter)
         } else {
-            let extra_patterns = crate::config::ignore::load_project_ignore_patterns(&self.path);
-            let predicate = move |name: &str| {
-                if skip_hidden && name.starts_with('.') {
-                    return true;
-                }
-                if let Some(lang) = language {
-                    crate::config::ignore::should_skip_for_lang_with_patterns(
-                        name,
-                        lang,
-                        &extra_patterns,
-                    )
-                } else {
-                    crate::config::ignore::should_skip_with_patterns(name, &extra_patterns)
-                }
-            };
             // Use walkdir::WalkDir for simple walking
             let mut walker = walkdir::WalkDir::new(&self.path).follow_links(self.follow_links);
             if let Some(depth) = self.max_depth {

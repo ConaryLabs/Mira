@@ -19,6 +19,9 @@ pub fn get_modules_needing_summaries(
 }
 
 /// Read code preview for a module (first ~50 lines of key files)
+// TODO: This function is Rust-only (candidates and file walker use .rs patterns).
+// Needs polyglot support for Python (__init__.py, main.py), Go (*.go),
+// and Node.js (index.ts/js) entry files.
 pub fn get_module_code_preview(project_path: &Path, module_path: &str) -> String {
     let full_path = project_path.join(module_path);
     let mut preview = String::new();
@@ -66,6 +69,8 @@ pub fn get_module_code_preview(project_path: &Path, module_path: &str) -> String
 
 /// Read full code for a module (all .rs files in the directory)
 /// Returns concatenated code with file headers, up to max_bytes total
+// TODO: This function is Rust-only (file walker uses "rust" language filter).
+// Needs polyglot support to handle Python, Go, and Node.js module files.
 pub fn get_module_full_code(project_path: &Path, module_path: &str, max_bytes: usize) -> String {
     let full_path = project_path.join(module_path);
     let mut code = String::new();
