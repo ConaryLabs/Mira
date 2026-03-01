@@ -138,8 +138,11 @@ pub async fn run_start() -> Result<()> {
     let context_cap = MAX_CONTEXT_CHARS_FULL;
 
     // Get active goals -- skip for narrow/exploratory subagents (goals are
-    // strategic context, not useful for focused search/review tasks)
-    if !narrow {
+    // strategic context, not useful for focused search/review tasks).
+    // Also skip if SessionStart already injected goals this session to avoid duplication.
+    let goals_already_shown =
+        crate::hooks::session::were_goals_shown(Some(&start_input.session_id));
+    if !narrow && !goals_already_shown {
         let goal_lines = client.get_active_goals(project_id, 3).await;
         if !goal_lines.is_empty() {
             let label = if project_label.is_empty() {

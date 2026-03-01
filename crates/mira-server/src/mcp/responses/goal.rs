@@ -1,3 +1,4 @@
+// crates/mira-server/src/mcp/responses/goal.rs
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -28,7 +29,7 @@ pub struct GoalBulkCreatedData {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct GoalCreatedEntry {
-    pub id: i64,
+    pub goal_id: i64,
     pub title: String,
 }
 

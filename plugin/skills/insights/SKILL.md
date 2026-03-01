@@ -1,6 +1,7 @@
 ---
 name: insights
 description: This skill should be used when the user asks "what did you learn", "show insights", "any patterns noticed", "what should I know", "background analysis", "what patterns", or wants to see Mira's background analysis and predictions.
+argument-hint: "[--source pondering|doc_gap] [--min-confidence 0.0-1.0]"
 ---
 
 # Mira Insights

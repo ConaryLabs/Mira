@@ -43,9 +43,9 @@ fn verify_goal_project(
         (Some(goal_pid), Some(ctx_pid)) if goal_pid != ctx_pid => Err(MiraError::InvalidInput(
             "Access denied: goal belongs to a different project".to_string(),
         )),
-        // Goal has a project but no context project — deny access
+        // Goal has a project but no context project — no active project set
         (Some(_), None) => Err(MiraError::InvalidInput(
-            "Access denied: goal belongs to a different project".to_string(),
+            "Access denied: this goal belongs to a project, but no active project is set. Use project(action=\"start\") to set one.".to_string(),
         )),
         // Both match, goal is global, or both are None — allow
         _ => Ok(()),
@@ -341,7 +341,7 @@ async fn action_bulk_create<C: ToolContext>(
         .collect();
     let entries: Vec<GoalCreatedEntry> = results
         .into_iter()
-        .map(|(id, title)| GoalCreatedEntry { id, title })
+        .map(|(id, title)| GoalCreatedEntry { goal_id: id, title })
         .collect();
 
     Ok(Json(GoalOutput {
@@ -481,11 +481,7 @@ async fn action_list<C: ToolContext>(
             }
         })
         .collect();
-    let total = if total_count > 0 {
-        total_count
-    } else {
-        items.len()
-    }; // fallback only if count query failed
+    let total = if total_count > 0 { total_count } else { items.len() };
     Ok(Json(GoalOutput {
         action: "list".into(),
         message: response,
@@ -511,6 +507,18 @@ async fn action_update<C: ToolContext>(
 
     get_authorized_goal(ctx, goal_id).await?;
 
+    let mut changed = Vec::new();
+    if title.is_some() { changed.push("title"); }
+    if description.is_some() { changed.push("description"); }
+    if status.is_some() { changed.push("status"); }
+    if priority.is_some() { changed.push("priority"); }
+    if progress_percent.is_some() { changed.push("progress"); }
+    let fields = if changed.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", changed.join(", "))
+    };
+
     ctx.pool()
         .run(move |conn| {
             update_goal_sync(
@@ -530,8 +538,8 @@ async fn action_update<C: ToolContext>(
 
     Ok(Json(GoalOutput {
         action: "update".into(),
-        message: format!("Updated goal {}", goal_id),
-        data: None,
+        message: format!("Updated goal {}{}", goal_id, fields),
+        data: Some(GoalData::Created(GoalCreatedData { goal_id })),
     }))
 }
 
@@ -549,7 +557,7 @@ async fn action_delete<C: ToolContext>(
     Ok(Json(GoalOutput {
         action: "delete".into(),
         message: format!("Deleted goal {}", goal_id),
-        data: None,
+        data: Some(GoalData::Created(GoalCreatedData { goal_id })),
     }))
 }
 
@@ -789,14 +797,9 @@ pub async fn goal<C: ToolContext>(
             )
             .await
         }
-        GoalAction::Update | GoalAction::Progress => {
-            let action_name = if matches!(req.action, GoalAction::Progress) {
-                "progress"
-            } else {
-                "update"
-            };
+        GoalAction::Update => {
             let id = req.goal_id.ok_or_else(|| {
-                MiraError::InvalidInput(format!("goal_id is required for goal(action={}). Use goal(action=\"list\") to see available goals.", action_name))
+                MiraError::InvalidInput("goal_id is required for goal(action=update). Use goal(action=\"list\") to see available goals.".to_string())
             })?;
             let id = validate_positive_id(id, "goal_id")?;
             action_update(
@@ -1015,7 +1018,6 @@ mod tests {
             ("bulk_create", GoalAction::BulkCreate),
             ("list", GoalAction::List),
             ("update", GoalAction::Update),
-            ("progress", GoalAction::Progress),
             ("delete", GoalAction::Delete),
             ("add_milestone", GoalAction::AddMilestone),
             ("complete_milestone", GoalAction::CompleteMilestone),

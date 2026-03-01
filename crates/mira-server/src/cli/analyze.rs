@@ -238,7 +238,11 @@ fn resolve_session(session: Option<String>) -> Result<(PathBuf, String)> {
             return Ok((path, s.clone()));
         }
 
-        bail!("Could not find session JSONL for: {s}");
+        bail!(
+            "Could not find session JSONL for: {s}\n  \
+             Sessions are stored in ~/.claude/projects/<project-slug>/<session-id>.jsonl\n  \
+             Run without arguments to auto-detect the most recent session."
+        );
     }
 
     // No argument: find most recent JSONL scoped to the current working directory.

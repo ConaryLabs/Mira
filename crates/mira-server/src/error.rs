@@ -14,7 +14,7 @@ pub enum MiraError {
     )]
     ProjectNotSet,
 
-    #[error("Database error. Try re-indexing with index(action=\"project\") if this persists.")]
+    #[error("Database error: {0}")]
     Db(#[from] rusqlite::Error),
 
     #[error("I/O error: {0}")]

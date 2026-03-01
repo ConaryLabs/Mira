@@ -16,7 +16,7 @@ Present the recap above in a clear, organized format:
 - **Recent Context**: What was worked on recently
 - **Active Goals**: In-progress goals with milestones
 
-Highlight any blocked or high-priority items. If the recap above is empty, suggest using `memory(action="remember")` to store context for future sessions.
+Highlight any blocked or high-priority items. If the recap above is empty, suggest creating goals with `goal(action="create")` or using `session(action="recap")` directly to check for prior context.
 
 ## When to Use
 

@@ -328,9 +328,14 @@ pub async fn handle_launch<C: ToolContext>(
     }
 
     let content = std::fs::read_to_string(&agent_file).map_err(|e| {
+        let reason = if e.kind() == std::io::ErrorKind::NotFound {
+            "file not found".to_string()
+        } else {
+            format!("could not read file: {}", e.kind())
+        };
         MiraError::InvalidInput(format!(
-            "Agent file not found: .claude/agents/{}.md ({})",
-            team, e
+            "Agent file not found: .claude/agents/{}.md ({}). Create it with team member definitions.",
+            team, reason
         ))
     })?;
 

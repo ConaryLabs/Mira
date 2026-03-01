@@ -12,7 +12,7 @@ use crate::mcp::responses::{
     IndexCompactData, IndexData, IndexHealthData, IndexOutput, IndexProjectData, IndexStatusData,
     IndexSummarizeData,
 };
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::ToolContext;
 
 /// Index project
 pub async fn index<C: ToolContext>(
@@ -23,6 +23,7 @@ pub async fn index<C: ToolContext>(
 ) -> Result<Json<IndexOutput>, MiraError> {
     match action {
         IndexAction::Project | IndexAction::File => {
+            // Note: IndexAction::File runs a full project index (file-level indexing not yet supported)
             #[cfg(not(feature = "parsers"))]
             {
                 return Err(MiraError::Other("Code indexing requires the 'parsers' feature. Reinstall with: cargo install --git https://github.com/ConaryLabs/Mira.git --features parsers".to_string()));
@@ -33,10 +34,9 @@ pub async fn index<C: ToolContext>(
                 let project_path = path
                     .or_else(|| project.as_ref().map(|p| p.path.clone()))
                     .ok_or_else(|| {
-                        MiraError::InvalidInput(format!(
-                            "{} Provide a path directly.",
-                            NO_ACTIVE_PROJECT_ERROR
-                        ))
+                        MiraError::InvalidInput(
+                            "No active project. Provide a path directly or use project(action=\"start\", project_path=\"/your/path\") first.".to_string()
+                        )
                     })?;
 
                 let project_id = project.as_ref().map(|p| p.id);
@@ -62,10 +62,13 @@ pub async fn index<C: ToolContext>(
                     cache.invalidate_code(project_id).await;
                 }
 
-                let response = format!(
+                let mut response = format!(
                     "Indexed {} files, {} symbols, {} chunks",
                     stats.files, stats.symbols, stats.chunks
                 );
+                if matches!(action, IndexAction::File) {
+                    response.push_str("\nNote: file-level indexing runs a full project index.");
+                }
 
                 // Auto-queue health scan after project indexing
                 if let Some(pid) = project_id {
@@ -168,7 +171,7 @@ pub async fn summarize_codebase<C: ToolContext>(ctx: &C) -> Result<Json<IndexOut
     if modules.is_empty() {
         return Ok(Json(IndexOutput {
             action: "summarize".into(),
-            message: "All modules already have summaries.".to_string(),
+            message: "All modules already have summaries. If no modules exist, run index(action=\"project\") first.".to_string(),
             data: Some(IndexData::Summarize(IndexSummarizeData {
                 modules_summarized: 0,
             })),

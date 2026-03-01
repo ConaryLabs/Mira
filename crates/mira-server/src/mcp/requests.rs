@@ -32,8 +32,6 @@ pub enum GoalAction {
     List,
     /// Update a goal
     Update,
-    /// Update goal progress
-    Progress,
     /// Delete a goal
     Delete,
     /// Add a milestone to a goal
@@ -168,7 +166,7 @@ pub struct CodeRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GoalRequest {
     #[schemars(
-        description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/progress/sessions"
+        description = "Action: create/bulk_create/list/get/update/delete/add_milestone/complete_milestone/delete_milestone/sessions"
     )]
     pub action: GoalAction,
     #[schemars(description = "Goal ID")]
@@ -194,7 +192,7 @@ pub struct GoalRequest {
     #[schemars(description = "Max results")]
     pub limit: Option<i64>,
     #[schemars(
-        description = "For bulk_create: JSON array of goals [{title, description?, priority?}, ...]"
+        description = "For bulk_create: JSON-encoded string containing an array of goals, e.g. \"[{\\\"title\\\": \\\"Goal A\\\", \\\"priority\\\": \\\"high\\\"}, ...]\"  (title required, description and priority optional)"
     )]
     pub goals: Option<String>,
 }

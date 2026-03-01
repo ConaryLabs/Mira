@@ -55,19 +55,19 @@ pub async fn query_callers<C: ToolContext>(
         .run(move |conn| {
             find_callers(conn, project_id, &fn_name, limit).map_err(|e| {
                 tracing::debug!("callers query error: {}", e);
-                MiraError::Other(
-                    "Failed to query callers. Try re-indexing with index(action=\"project\")."
-                        .to_string(),
-                )
+                MiraError::Other(format!(
+                    "Failed to query callers: {}. Try re-indexing with index(action=\"project\").",
+                    e
+                ))
             })
         })
         .await
         .map_err(|e| {
             tracing::debug!("callers pool error: {}", e);
-            MiraError::Other(
-                "Failed to query callers. Try re-indexing with index(action=\"project\")."
-                    .to_string(),
-            )
+            MiraError::Other(format!(
+                "Failed to query callers: {}. Try re-indexing with index(action=\"project\").",
+                e
+            ))
         })
 }
 
@@ -83,19 +83,19 @@ pub async fn query_callees<C: ToolContext>(
         .run(move |conn| {
             find_callees(conn, project_id, &fn_name, limit).map_err(|e| {
                 tracing::debug!("callees query error: {}", e);
-                MiraError::Other(
-                    "Failed to query callees. Try re-indexing with index(action=\"project\")."
-                        .to_string(),
-                )
+                MiraError::Other(format!(
+                    "Failed to query callees: {}. Try re-indexing with index(action=\"project\").",
+                    e
+                ))
             })
         })
         .await
         .map_err(|e| {
             tracing::debug!("callees pool error: {}", e);
-            MiraError::Other(
-                "Failed to query callees. Try re-indexing with index(action=\"project\")."
-                    .to_string(),
-            )
+            MiraError::Other(format!(
+                "Failed to query callees: {}. Try re-indexing with index(action=\"project\").",
+                e
+            ))
         })
 }
 

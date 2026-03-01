@@ -12,7 +12,7 @@ use crate::error::MiraError;
 use crate::mcp::requests::ProjectAction;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{ProjectData, ProjectGetData, ProjectOutput, ProjectSetData};
-use crate::tools::core::{NO_ACTIVE_PROJECT_ERROR, ToolContext};
+use crate::tools::core::ToolContext;
 
 pub use detection::{detect_project_type, detect_project_types};
 pub use session_start::session_start;
@@ -118,11 +118,7 @@ pub async fn get_project<C: ToolContext>(ctx: &C) -> Result<Json<ProjectOutput>,
                 project_path: p.path,
             })),
         })),
-        None => Ok(Json(ProjectOutput {
-            action: "get".into(),
-            message: NO_ACTIVE_PROJECT_ERROR.to_string(),
-            data: None,
-        })),
+        None => Err(MiraError::ProjectNotSet),
     }
 }
 

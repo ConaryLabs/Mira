@@ -38,6 +38,8 @@ Beyond slash commands, Mira provides MCP tools that Claude uses automatically:
 
 `code`, `diff`, `project`, `session`, `insights`, `goal`, `index`, `launch`
 
+Note: `team` is available via `mira tool team ...` (CLI only, not exposed as an MCP tool).
+
 These power semantic search, call graph analysis, persistent memory, and more — no slash command needed.
 
 ## Tool Dependencies

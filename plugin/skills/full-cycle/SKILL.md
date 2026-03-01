@@ -1,7 +1,7 @@
 <!-- plugin/skills/full-cycle/SKILL.md -->
 ---
 name: full-cycle
-description: This skill should be used when the user asks for a "full review and fix", "find and fix issues", "review and implement", "end-to-end review", "audit and fix", "comprehensive review", "full-cycle review", or wants experts to find issues AND have them implemented automatically.
+description: This skill should be used when the user asks for a "full review and fix", "find and fix issues", "review and implement", "end-to-end review", "audit and fix", "comprehensive review", "full-cycle review", or wants experts to find issues AND have them automatically implemented (not just reviewed). Use /mira:experts instead if the user only wants opinions or analysis without code changes.
 argument-hint: "[focus area or --discovery-only]"
 ---
 
@@ -99,7 +99,7 @@ End-to-end expert review with automatic implementation and QA verification.
     Task(
       subagent_type="general-purpose",
       name="fixer-{group-name}",
-      team_name=result.data.suggested_team_id,
+      team_name=implement_result.data.suggested_team_id,  # result from step 10's launch call
       prompt=implementation_prompt + task_descriptions,
       run_in_background=true,
       mode="bypassPermissions"

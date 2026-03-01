@@ -1,3 +1,4 @@
+// crates/mira-server/src/mcp/responses/diff.rs
 use schemars::JsonSchema;
 use serde::Serialize;
 

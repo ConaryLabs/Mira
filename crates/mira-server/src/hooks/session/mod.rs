@@ -595,7 +595,7 @@ mod tests {
         assert!(result.is_some());
         let summary = result.unwrap();
         assert!(
-            summary.contains("Pre-compaction context:"),
+            summary.contains("[Mira/context]") && summary.contains("Pre-compaction context:"),
             "got: {}",
             summary
         );

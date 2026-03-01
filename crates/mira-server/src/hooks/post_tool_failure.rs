@@ -115,29 +115,36 @@ pub async fn run() -> Result<()> {
         "Tool has failed in this session"
     );
 
-    // If 3+ failures, look up known fixes first, then fall back to memory recall
-    if failure_count >= 3 {
-        // Check for resolved error patterns (cross-session fix knowledge)
-        let fix_context = client
-            .lookup_resolved_pattern(project_id, &failure_input.tool_name, &fingerprint)
-            .await;
+    // On 1st failure, check for a resolved pattern and inject a lightweight hint.
+    // For 3+ failures, inject the full context (repeat mention + fix).
+    let fix_context = client
+        .lookup_resolved_pattern(project_id, &failure_input.tool_name, &fingerprint)
+        .await;
 
-        if let Some(fix_description) = fix_context {
-            let context = format!(
+    if let Some(fix_description) = fix_context {
+        let context = if failure_count >= 3 {
+            format!(
                 "[Mira/fix] Tool '{}' failed ({}x). A similar error was resolved before:\n  Fix: {}",
                 failure_input.tool_name,
                 failure_count,
                 crate::utils::truncate(&fix_description, 300),
-            );
-            let output = serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PostToolUseFailure",
-                    "additionalContext": context,
-                }
-            });
-            write_hook_output(&output);
-            return Ok(());
-        }
+            )
+        } else {
+            // Lightweight hint on first occurrence
+            format!(
+                "[Mira/fix] Hint for '{}': {}",
+                failure_input.tool_name,
+                crate::utils::truncate(&fix_description, 200),
+            )
+        };
+        let output = serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUseFailure",
+                "additionalContext": context,
+            }
+        });
+        write_hook_output(&output);
+        return Ok(());
     }
 
     write_hook_output(&serde_json::json!({}));

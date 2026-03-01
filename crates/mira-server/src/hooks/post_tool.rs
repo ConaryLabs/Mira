@@ -244,7 +244,7 @@ pub async fn run() -> Result<()> {
                         })
                         .collect();
                     impact_lines.push(format!(
-                        "[impact] {} `{}` -> {} caller(s): {}",
+                        "[Mira/impact] {} `{}` -> {} caller(s): {}",
                         change_kind,
                         change.symbol_name,
                         callers.len(),

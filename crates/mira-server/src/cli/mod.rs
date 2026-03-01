@@ -33,12 +33,12 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run as MCP server (default)
+    /// Run as MCP server (spawned by Claude Code via .mcp.json)
     Serve,
 
     /// Execute a tool directly
     Tool {
-        /// Tool name (e.g. memory, code, goal, session)
+        /// Tool name (e.g. goal, code, session, project)
         #[arg(index = 1)]
         name: String,
 
@@ -57,7 +57,7 @@ pub enum Commands {
         #[arg(long)]
         no_embed: bool,
 
-        /// Suppress verbose output (show only summary)
+        /// Suppress progress output (show only final summary line)
         #[arg(short, long)]
         quiet: bool,
     },
@@ -108,12 +108,15 @@ pub enum Commands {
         #[arg(long, short)]
         yes: bool,
 
-        /// Filter by category: sessions, analytics, behavior, or all (default)
+        /// Display-only filter for preview output. Valid values: sessions, analytics, behavior, all (default).
+        /// Note: when --execute is used, full cleanup always runs regardless of this filter.
         #[arg(long)]
         category: Option<String>,
     },
 
-    /// Output status line for Claude Code (reads stdin, prints stats to stdout)
+    /// Output a stats line for use in Claude Code's status bar.
+    /// Reads a JSON object with a "cwd" field from stdin, prints a formatted
+    /// status line (goals, indexed files, alerts) to stdout.
     #[command(name = "statusline")]
     StatusLine,
 
@@ -144,10 +147,10 @@ pub enum ConfigAction {
     Show,
     /// Set a config value (e.g. `mira config set background_provider deepseek`)
     Set {
-        /// Config key (background_provider, default_provider)
+        /// Config key to set. Valid keys: background_provider, default_provider
         #[arg(index = 1)]
         key: String,
-        /// Value to set (deepseek, ollama)
+        /// Provider value to set. Valid providers: deepseek, ollama
         #[arg(index = 2)]
         value: String,
     },

@@ -14,6 +14,8 @@ Manage goals and milestones that persist across Claude Code sessions.
 
 !`mira tool goal '{"action":"list","limit":5}'`
 
+<!-- If the above command fails or returns empty, call mcp__mira__goal with action="list" directly. -->
+
 ## Instructions
 
 Parse the command and use the appropriate `mcp__mira__goal` action:

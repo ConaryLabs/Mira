@@ -106,7 +106,7 @@ pub(crate) async fn build_startup_context(
 
     if let Some(ref prev_session) = previous_session {
         if let Some(ref summary) = prev_session.summary {
-            context_parts.push(format!("**Last session:** {}", summary));
+            context_parts.push(format!("[Mira/resume] Last session: {}", summary));
         }
 
         // Check snapshot for a brief "you were working on" note
@@ -125,7 +125,7 @@ pub(crate) async fn build_startup_context(
             && context_parts.is_empty()
         {
             // Only add if we didn't already have a summary
-            context_parts.push(format!("**Last session:** {}", working_on));
+            context_parts.push(format!("[Mira/resume] Last session: {}", working_on));
         }
     }
 
@@ -220,52 +220,8 @@ pub(crate) async fn build_resume_context(
         .ok()
         .flatten();
 
-    // Get recent tool calls and modified files from previous session
+    // Get modified files and context from previous session
     if let Some(ref prev_session) = previous_session {
-        // Fetch last 5 tool calls
-        let pool_clone = pool.clone();
-        let prev_id = prev_session.id.clone();
-        let tool_history: Option<Vec<crate::db::ToolHistoryEntry>> = pool_clone
-            .interact(move |conn| {
-                Ok::<_, anyhow::Error>(
-                    crate::db::get_session_history_sync(conn, &prev_id, 5)
-                        .map_err(|e| {
-                            tracing::debug!("context load: get_session_history failed: {e}")
-                        })
-                        .ok(),
-                )
-            })
-            .await
-            .map_err(|e| tracing::debug!("context load: tool history interact failed: {e}"))
-            .ok()
-            .flatten();
-
-        if let Some(history) = tool_history.filter(|h| !h.is_empty()) {
-            let tool_lines: Vec<String> = history
-                .iter()
-                .rev() // Oldest first
-                .map(|h| {
-                    let status = if h.success { "ok" } else { "err" };
-                    let summary = h
-                        .result_summary
-                        .as_deref()
-                        .map(|s| {
-                            if s.len() > 80 {
-                                format!("{}...", crate::utils::truncate_at_boundary(s, 80))
-                            } else {
-                                s.to_string()
-                            }
-                        })
-                        .unwrap_or_default();
-                    format!("  [{}] {} -> {}", status, h.tool_name, summary)
-                })
-                .collect();
-            context_parts.push(format!(
-                "**Last session's recent actions:**\n{}",
-                tool_lines.join("\n")
-            ));
-        }
-
         // Fetch files modified in the previous session (Write/Edit/NotebookEdit tool calls)
         let pool_clone = pool.clone();
         let prev_id = prev_session.id.clone();
@@ -297,12 +253,12 @@ pub(crate) async fn build_resume_context(
                     file_names.len() - 5
                 )
             };
-            context_parts.push(format!("**Files modified last session:** {}", files_str));
+            context_parts.push(format!("[Mira/resume] Files modified last session: {}", files_str));
         }
 
         // Add session summary if available
         if let Some(ref summary) = prev_session.summary {
-            context_parts.push(format!("**Previous session summary:** {}", summary));
+            context_parts.push(format!("[Mira/resume] Previous session summary: {}", summary));
         }
 
         // Check for a stored session snapshot (structured metadata from stop hook)
@@ -321,7 +277,7 @@ pub(crate) async fn build_resume_context(
             // Build "You were working on X" from snapshot data
             if let Some(working_on) = build_working_on_summary(&snap) {
                 // Insert at the beginning for prominence
-                context_parts.insert(0, format!("**You were working on:** {}", working_on));
+                context_parts.insert(0, format!("[Mira/resume] You were working on: {}", working_on));
             }
 
             // Surface pre-compaction context right after "working on" for prominence.
@@ -330,7 +286,7 @@ pub(crate) async fn build_resume_context(
                 // Position after "working on" (index 0) if it exists, otherwise at top
                 let insert_pos = context_parts
                     .iter()
-                    .position(|p| p.starts_with("**You were working on:"))
+                    .position(|p| p.starts_with("[Mira/resume] You were working on:"))
                     .map_or(0, |i| i + 1);
                 context_parts.insert(insert_pos, compaction_summary);
             }
@@ -355,7 +311,7 @@ pub(crate) async fn build_resume_context(
                 .take(10)
                 .collect();
             context_parts.push(format!(
-                "**Previous session had {} incomplete task(s):** {}",
+                "[Mira/resume] Previous session had {} incomplete task(s): {}",
                 incomplete_tasks.len(),
                 subjects.join(", ")
             ));
@@ -396,12 +352,12 @@ pub(crate) async fn build_resume_context(
 
         let team_line = if other_members.is_empty() {
             format!(
-                "**Team:** {} (you are {}, no other active teammates)",
+                "[Mira/team] {} (you are {}, no other active teammates)",
                 membership.team_name, membership.member_name
             )
         } else {
             format!(
-                "**Team:** {} (you are {}, active teammates: {})",
+                "[Mira/team] {} (you are {}, active teammates: {})",
                 membership.team_name,
                 membership.member_name,
                 other_members.join(", ")
@@ -415,7 +371,7 @@ pub(crate) async fn build_resume_context(
     }
 
     let output = format!(
-        "**Resuming session** - Here's context from your previous work:\n\n{}",
+        "[Mira/resume] Resuming session - context from your previous work:\n\n{}",
         context_parts.join("\n\n")
     );
     Some(truncate_session_context(output))
@@ -549,7 +505,7 @@ pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<S
         return None;
     }
 
-    Some(format!("**Pre-compaction context:**\n{}", parts.join("\n")))
+    Some(format!("[Mira/context] Pre-compaction context:\n{}", parts.join("\n")))
 }
 
 /// Infer a human-readable activity description from the most-used tools

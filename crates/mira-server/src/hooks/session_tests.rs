@@ -536,7 +536,7 @@ async fn test_compaction_context_end_to_end() {
 
     // Verify the summary reflects the merged (second) compaction context
     assert!(
-        summary_text.contains("Pre-compaction context:"),
+        summary_text.contains("Pre-compaction context:") || summary_text.contains("[Mira/context]"),
         "got: {}",
         summary_text
     );

@@ -117,7 +117,10 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
 
     match res {
         Ok(output) => println!("{}", output),
-        Err(e) => eprintln!("Error: {}", e),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
     }
     Ok(())
 }

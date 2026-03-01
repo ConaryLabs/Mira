@@ -2595,7 +2595,7 @@ async fn test_goal_progress_update() {
     let output = goal(
         &ctx,
         GoalRequest {
-            action: GoalAction::Progress,
+            action: GoalAction::Update,
             goal_id: Some(goal_id),
             title: None,
             description: None,

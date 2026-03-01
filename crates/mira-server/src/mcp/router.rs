@@ -63,7 +63,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Analyze git changes semantically with change classification, impact assessment, and risk analysis. Compares refs, staged changes, or working tree.",
+        description = "Analyze git changes semantically with change classification, impact assessment, and risk analysis. Compares refs, staged changes, or working tree. Standalone — no action field needed.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DiffOutput>()
             .expect("DiffOutput schema")
     )]
@@ -77,7 +77,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Track cross-session objectives, progress, and milestones. Actions: create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, progress, sessions. Use for multi-session work planning and progress tracking.",
+        description = "Track cross-session objectives, progress, and milestones. Actions: create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, sessions. Use for multi-session work planning and progress tracking.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::GoalOutput>()
             .expect("GoalOutput schema")
     )]
@@ -89,7 +89,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Index codebase for semantic search and analysis. Actions: project (full reindex), file (single file), status (index stats). Builds embeddings and symbol tables.",
+        description = "Index codebase for semantic search and analysis. Actions: project (full reindex of entire codebase — distinct from the project tool), file (single file), status (index stats including modules_summarized). Builds embeddings and symbol tables.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
             .expect("IndexOutput schema")
     )]
@@ -102,7 +102,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session management. Actions: recap (preferences + context + goals), current_session (show current).",
+        description = "Session management. Actions: recap (preferences + context + goals), current_session (show current; use action=\"current_session\").",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
             .expect("SessionOutput schema")
     )]
@@ -114,7 +114,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Session insights and background analysis. Actions: insights (background analysis digest), dismiss_insight (remove resolved insight; insight_source required: 'pondering' or 'doc_gap').",
+        description = "Session insights and background analysis. Actions: insights (background analysis digest), dismiss_insight (remove a resolved insight; both insight_id AND insight_source are required; insight_source must be 'pondering' or 'doc_gap'). Standalone — no action field needed for insights.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::InsightsOutput>()
             .expect("InsightsOutput schema")
     )]
@@ -126,7 +126,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Context-aware team launcher. Parses .claude/agents/{team}.md, enriches with project context, returns ready-to-spawn agent specs.",
+        description = "Context-aware team launcher. Parses .claude/agents/{team}.md, enriches with project context, returns ready-to-spawn agent specs. Standalone — no action field needed.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::LaunchOutput>()
             .expect("LaunchOutput schema")
     )]

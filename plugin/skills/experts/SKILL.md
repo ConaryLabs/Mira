@@ -1,7 +1,7 @@
 <!-- plugin/skills/experts/SKILL.md -->
 ---
 name: experts
-description: This skill should be used when the user asks to "consult experts", "get expert opinion", "expert review", "code review", "architecture review", "security review", "review this code", "what would an architect say", or wants a multi-perspective analysis from AI specialists.
+description: This skill should be used when the user asks to "consult experts", "get expert opinion", "expert review", "code review", "architecture review", "security review", "review this code", "what would an architect say", or wants a multi-perspective analysis from AI specialists. Use this for analysis and opinions only — no code changes are made. Use /mira:full-cycle instead if the user wants issues to be automatically implemented.
 argument-hint: "[context or focus area]"
 ---
 

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::info;
 
 /// Run the index command to index a project
-pub async fn run_index(path: Option<PathBuf>, no_embed: bool, _quiet: bool) -> Result<()> {
+pub async fn run_index(path: Option<PathBuf>, no_embed: bool, quiet: bool) -> Result<()> {
     let path =
         path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
@@ -86,10 +86,12 @@ pub async fn run_index(path: Option<PathBuf>, no_embed: bool, _quiet: bool) -> R
     {
         let stats = mira::indexer::index_project(&path, pool, embeddings, Some(project_id)).await?;
 
-        println!(
-            "Indexed {} files, {} symbols, {} code chunks",
-            stats.files, stats.symbols, stats.chunks
-        );
+        if !quiet {
+            println!(
+                "Indexed {} files, {} symbols, {} code chunks",
+                stats.files, stats.symbols, stats.chunks
+            );
+        }
 
         Ok(())
     }
