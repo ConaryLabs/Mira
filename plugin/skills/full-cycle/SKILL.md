@@ -87,7 +87,7 @@ End-to-end expert review with automatic implementation and QA verification.
       subagent_type="general-purpose",
       name="kai",
       model=kai_agent.model,
-      team_name=result.data.suggested_team_id,
+      team_name=implement_result.data.suggested_team_id,
       prompt=kai_agent.prompt + "\n\n## Approved Findings\n\n" + approved_items,
       run_in_background=true
     )
@@ -114,7 +114,7 @@ End-to-end expert review with automatic implementation and QA verification.
       subagent_type="general-purpose",
       name="rio",
       model=rio_agent.model,
-      team_name=result.data.suggested_team_id,
+      team_name=implement_result.data.suggested_team_id,
       prompt=rio_agent.prompt + "\n\n## Changes Made\n\n" + summary_of_changes,
       run_in_background=true,
       mode="bypassPermissions"
@@ -139,7 +139,7 @@ End-to-end expert review with automatic implementation and QA verification.
       subagent_type="general-purpose",
       name=agent.name,
       model=agent.model,
-      team_name=result.data.suggested_team_id,
+      team_name=qa_result.data.suggested_team_id,  # result from step 15's launch call
       prompt=agent.prompt + "\n\n## Changes Made\n\n" + summary_of_changes,
       run_in_background=true
     )

@@ -89,7 +89,7 @@ impl MiraServer {
     }
 
     #[tool(
-        description = "Index codebase for semantic search and analysis. Actions: project (full reindex of entire codebase — distinct from the project tool), file (single file), status (index stats including modules_summarized). Builds embeddings and symbol tables.",
+        description = "Index codebase for semantic search and analysis. Actions: project (full reindex of entire codebase — distinct from the project tool), file (re-indexes full project, same as project), status (index stats including modules_summarized). Builds embeddings and symbol tables.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
             .expect("IndexOutput schema")
     )]

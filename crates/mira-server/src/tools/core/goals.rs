@@ -13,7 +13,7 @@ use crate::mcp::requests::{GoalAction, GoalRequest};
 use crate::mcp::responses::Json;
 use crate::mcp::responses::{
     GoalBulkCreatedData, GoalCreatedData, GoalCreatedEntry, GoalData, GoalGetData, GoalListData,
-    GoalOutput, GoalSessionEntry, GoalSessionsData, GoalSummary, MilestoneInfo,
+    GoalModifiedData, GoalOutput, GoalSessionEntry, GoalSessionsData, GoalSummary, MilestoneInfo,
     MilestoneProgressData,
 };
 use crate::tools::core::ToolContext;
@@ -539,7 +539,7 @@ async fn action_update<C: ToolContext>(
     Ok(Json(GoalOutput {
         action: "update".into(),
         message: format!("Updated goal {}{}", goal_id, fields),
-        data: Some(GoalData::Created(GoalCreatedData { goal_id })),
+        data: Some(GoalData::Modified(GoalModifiedData { goal_id, action: "updated".into() })),
     }))
 }
 
@@ -557,7 +557,7 @@ async fn action_delete<C: ToolContext>(
     Ok(Json(GoalOutput {
         action: "delete".into(),
         message: format!("Deleted goal {}", goal_id),
-        data: Some(GoalData::Created(GoalCreatedData { goal_id })),
+        data: Some(GoalData::Modified(GoalModifiedData { goal_id, action: "deleted".into() })),
     }))
 }
 

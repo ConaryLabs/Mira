@@ -10,6 +10,7 @@ pub type GoalOutput = ToolOutput<GoalData>;
 #[serde(untagged)]
 pub enum GoalData {
     Created(GoalCreatedData),
+    Modified(GoalModifiedData),
     BulkCreated(GoalBulkCreatedData),
     List(GoalListData),
     Get(GoalGetData),
@@ -20,6 +21,12 @@ pub enum GoalData {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct GoalCreatedData {
     pub goal_id: i64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GoalModifiedData {
+    pub goal_id: i64,
+    pub action: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
