@@ -55,7 +55,8 @@ pub struct OllamaEmbeddings {
 
 impl OllamaEmbeddings {
     /// Create a new Ollama embeddings client.
-    /// If `http_client` is `None`, creates one using `create_fast_client()`.
+    /// If `http_client` is `None`, creates one with a 60s timeout suitable for
+    /// local embedding batches (longer than `create_fast_client`'s 30s).
     pub fn new(
         base_url: String,
         model: Option<String>,
@@ -66,7 +67,13 @@ impl OllamaEmbeddings {
         let dimensions = dimensions.unwrap_or(DEFAULT_DIMENSIONS);
         let base_url = base_url.trim_end_matches('/').to_string();
 
-        let http_client = http_client.unwrap_or_else(create_fast_client);
+        let http_client = http_client.unwrap_or_else(|| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| create_fast_client())
+        });
 
         Self {
             base_url,

@@ -141,12 +141,9 @@ pub async fn record_hook_outcome(
     let error_msg_owned = error_msg.map(|s| s.chars().take(200).collect::<String>());
     let _ = pool
         .interact(move |conn| {
-            // Atomic upsert: INSERT the initial row or UPDATE the existing one in a
-            // single statement, eliminating the previous read-modify-write TOCTOU race.
-            //
-            // On INSERT: initialize runs=1, failures=0|1 based on success.
-            // On CONFLICT: atomically increment runs (and failures on error),
-            // merge last_error and last_latency_ms into the existing JSON content.
+            // Read-modify-write within a single pool closure. This runs on a
+            // single connection so concurrent callers on different connections
+            // can still interleave (minor counter drift on health stats, acceptable).
             let init_failures: u64 = if success { 0 } else { 1 };
             let init_content = serde_json::json!({
                 "runs": 1,
@@ -155,11 +152,6 @@ pub async fn record_hook_outcome(
                 "last_latency_ms": latency_ms,
             });
             let init_content_str = init_content.to_string();
-
-            // Build the updated content JSON for the ON CONFLICT path.
-            // We parse the existing content, increment counters, and re-serialize.
-            // This happens inside a single INSERT...ON CONFLICT statement, so SQLite
-            // holds a write lock on the row throughout -- no TOCTOU window.
             let existing: Option<String> = conn
                 .query_row(
                     "SELECT content FROM system_observations WHERE key = ?1 AND scope = 'global' AND project_id IS NULL",
@@ -169,7 +161,7 @@ pub async fn record_hook_outcome(
                 .ok();
 
             if let Some(json_str) = existing {
-                // Row exists: parse, increment, and update atomically
+                // Row exists: parse, increment, and update
                 let (runs, failures, last_error) =
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
                         (

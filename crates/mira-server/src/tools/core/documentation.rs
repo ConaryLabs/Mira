@@ -180,10 +180,8 @@ pub async fn get_doc_task_details(
 ) -> Result<Json<DocOutput>, MiraError> {
     let task = fetch_pending_doc_task(ctx, task_id, "get details for").await?;
 
-    // Get project path
-    let project_id = task
-        .project_id
-        .ok_or_else(|| MiraError::InvalidInput("No project_id on task".to_string()))?;
+    // project_id is guaranteed Some by fetch_pending_doc_task
+    let project_id = task.project_id.unwrap();
     let project_path: String = ctx
         .pool()
         .run(move |conn| crate::db::get_project_path_sync(conn, project_id))
