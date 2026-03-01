@@ -469,7 +469,7 @@ The following were previously planned and are now complete:
 - ✓ MCP Elicitation for interactive API key setup
 - ✓ MCP Tasks for async long-running operations
 - ✓ Structured JSON responses via outputSchema
-- ✓ Tool consolidation from ~20 to 7 action-based MCP tools (project, code, goal, index, session, insights, diff) with documentation, memory, team, and recipe moved to CLI-only
+- ✓ Tool consolidation from ~20 to 8 action-based MCP tools (project, code, goal, index, session, insights, diff, launch) with documentation, memory, and team available as CLI-only
 - ✓ Change Intelligence (outcome tracking, pattern mining, predictive risk)
 - ✓ Entity layer for memory recall boost
 - ✓ Dependency graphs, architectural pattern detection, tech debt scoring

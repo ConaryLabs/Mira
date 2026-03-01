@@ -124,15 +124,15 @@ mod tests {
         );
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
         assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");
+        assert!(
+            schema_for_output::<LaunchOutput>().is_ok(),
+            "LaunchOutput"
+        );
     }
 
     #[test]
     fn cli_only_schemas_are_valid() {
         assert!(schema_for_output::<DocOutput>().is_ok(), "DocOutput");
         assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");
-        assert!(
-            schema_for_output::<LaunchOutput>().is_ok(),
-            "LaunchOutput"
-        );
     }
 }

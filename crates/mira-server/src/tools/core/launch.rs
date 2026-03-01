@@ -78,7 +78,7 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
             // Parse "### Name -- Role"
             let heading = &line[4..];
             let is_dynamic = heading.contains("(dynamic)")
-                || heading.to_lowercase().contains("dynamic");
+                || heading.contains("(Dynamic)");
             let (agent_name, role) = if let Some(sep) = heading.find(" -- ") {
                 (heading[..sep].trim().to_string(), heading[sep + 4..].trim().to_string())
             } else if let Some(sep) = heading.find(" - ") {
