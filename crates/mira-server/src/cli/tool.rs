@@ -6,8 +6,8 @@ use anyhow::Result;
 use mira::error::MiraError;
 use mira::hooks::session::read_claude_session_id;
 use mira::mcp::requests::{
-    CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, ProjectRequest,
-    SessionRequest, TeamRequest,
+    CodeAction, CodeRequest, DocumentationRequest, GoalRequest, IndexRequest, LaunchRequest,
+    ProjectRequest, SessionRequest, TeamRequest,
 };
 
 /// Execute a tool directly from the command line
@@ -100,6 +100,18 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
                 .await
                 .map(|output| output.0.message)
         }
+        "launch" => {
+            let req: LaunchRequest = serde_json::from_str(&args)?;
+            mira::tools::handle_launch(
+                &server,
+                req.team,
+                req.scope,
+                req.members,
+                req.context_budget,
+            )
+            .await
+            .map(|output| output.0.message)
+        }
         _ => Err(MiraError::InvalidInput(format!("Unknown tool: {}", name))),
     };
 
@@ -125,6 +137,7 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "tasks",
         "documentation",
         "team",
+        "launch",
     ]
 }
 

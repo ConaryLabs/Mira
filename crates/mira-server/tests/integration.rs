@@ -9,7 +9,7 @@ use mira::mcp::requests::{GoalAction, GoalRequest, IndexAction};
 use mira::mcp::responses::*;
 use mira::tools::core::{
     ToolContext, ensure_session, find_function_callees, find_function_callers, get_project,
-    get_session_recap, get_symbols, goal, handle_session, index, search_code,
+    get_session_recap, get_symbols, goal, handle_launch, handle_session, index, search_code,
     session_start, set_project, summarize_codebase,
 };
 use mira::tools::tasks::TaskAction;
@@ -3147,5 +3147,191 @@ fn hook_stop_no_panic() {
         output.status.success(),
         "Hook should exit 0. stderr: {}",
         stderr
+    );
+}
+
+// ============================================================================
+// Launch tool tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_launch_team_not_found() {
+    let ctx = TestContext::new().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().to_str().unwrap().to_string();
+    session_start(&ctx, path, None, None).await.unwrap();
+
+    let result = handle_launch(&ctx, "nonexistent-team".into(), None, None, None).await;
+    assert!(result.is_err(), "Should fail when team file doesn't exist");
+    let err = format!("{}", result.err().unwrap());
+    assert!(
+        err.contains("not found") || err.contains("No such file"),
+        "Error should mention file not found: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_launch_requires_project() {
+    let ctx = TestContext::new().await;
+
+    let result = handle_launch(&ctx, "expert-review-team".into(), None, None, None).await;
+    assert!(result.is_err(), "Should fail when no project is active");
+}
+
+#[tokio::test]
+async fn test_launch_parses_agent_file() {
+    let ctx = TestContext::new().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let agents_dir = tmp.path().join(".claude").join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    std::fs::write(
+        agents_dir.join("test-team.md"),
+        r#"---
+name: test-team
+description: A test team for integration testing
+---
+
+### Alice -- Code Reviewer
+
+**Personality:** Thorough and detail-oriented
+
+**Focus:** Code quality and correctness
+
+**Tools:** Read-only (Glob, Grep, Read)
+
+### Bob -- Security Analyst
+
+**Personality:** Cautious and methodical
+
+**Focus:** Security vulnerabilities and data handling
+
+**Tools:** Full tools
+"#,
+    )
+    .unwrap();
+
+    let path = tmp.path().to_str().unwrap().to_string();
+    session_start(&ctx, path, None, None).await.unwrap();
+
+    let result = handle_launch(&ctx, "test-team".into(), None, None, None).await;
+    assert!(result.is_ok(), "Launch should succeed: {}", result.as_ref().err().map(|e| e.to_string()).unwrap_or_default());
+    let output = result.unwrap();
+    let data = output.0.data.as_ref().unwrap();
+
+    assert_eq!(data.team_name, "test-team");
+    assert_eq!(data.team_description, "A test team for integration testing");
+    assert_eq!(data.agents.len(), 2);
+
+    assert_eq!(data.agents[0].name, "alice");
+    assert_eq!(data.agents[0].role, "Code Reviewer");
+    assert!(data.agents[0].read_only);
+    assert_eq!(data.agents[0].model, "sonnet");
+
+    assert_eq!(data.agents[1].name, "bob");
+    assert_eq!(data.agents[1].role, "Security Analyst");
+    assert!(!data.agents[1].read_only);
+    assert!(data.agents[1].model.is_empty());
+
+    assert!(data.agents[0].prompt.contains("Code Reviewer"));
+    assert!(!data.project_context.is_empty());
+    assert!(data.suggested_team_id.starts_with("test-team-"));
+}
+
+#[tokio::test]
+async fn test_launch_member_filter() {
+    let ctx = TestContext::new().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let agents_dir = tmp.path().join(".claude").join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    std::fs::write(
+        agents_dir.join("filter-team.md"),
+        r#"---
+name: filter-team
+description: Team for filter testing
+---
+
+### Alice -- Reviewer
+
+**Focus:** Reviews
+
+**Tools:** Read-only
+
+### Bob -- Implementer
+
+**Focus:** Implementation
+
+**Tools:** Full tools
+
+### Charlie -- Tester
+
+**Focus:** Testing
+
+**Tools:** Read-only
+"#,
+    )
+    .unwrap();
+
+    let path = tmp.path().to_str().unwrap().to_string();
+    session_start(&ctx, path, None, None).await.unwrap();
+
+    let result = handle_launch(
+        &ctx,
+        "filter-team".into(),
+        None,
+        Some("alice,charlie".into()),
+        None,
+    )
+    .await;
+    assert!(result.is_ok(), "Filtered launch should succeed");
+    let data = result.unwrap().0.data.unwrap();
+    assert_eq!(data.agents.len(), 2);
+    assert_eq!(data.agents[0].name, "alice");
+    assert_eq!(data.agents[1].name, "charlie");
+}
+
+#[tokio::test]
+async fn test_launch_member_filter_no_match() {
+    let ctx = TestContext::new().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let agents_dir = tmp.path().join(".claude").join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    std::fs::write(
+        agents_dir.join("small-team.md"),
+        r#"---
+name: small-team
+description: Small team
+---
+
+### Alice -- Reviewer
+
+**Focus:** Reviews
+
+**Tools:** Read-only
+"#,
+    )
+    .unwrap();
+
+    let path = tmp.path().to_str().unwrap().to_string();
+    session_start(&ctx, path, None, None).await.unwrap();
+
+    let result = handle_launch(
+        &ctx,
+        "small-team".into(),
+        None,
+        Some("nonexistent".into()),
+        None,
+    )
+    .await;
+    assert!(result.is_err(), "Should fail with no matching members");
+    let err = format!("{}", result.err().unwrap());
+    assert!(
+        err.contains("No matching members"),
+        "Should mention no matching members: {}",
+        err
     );
 }

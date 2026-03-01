@@ -11,7 +11,6 @@ disable-model-invocation: true
 > **Requires:** Claude Code Agent Teams feature.
 
 Production readiness review with 4 specialists: test health auditor, error handling auditor, security auditor, and edge case hunter.
-Team definition: `.claude/agents/qa-hardening-team.md`
 
 **Arguments:** $ARGUMENTS
 
@@ -24,31 +23,38 @@ Team definition: `.claude/agents/qa-hardening-team.md`
 
 2. **Determine context**: The area to review, specific concerns, or scope of analysis. If no context is obvious, ask the user what they'd like hardened.
 
-3. **Create the team**:
+3. **Launch the team**: Call the Mira `launch` MCP tool to get agent specs:
    ```
-   TeamCreate(team_name="qa-hardening-{timestamp}")
+   launch(team="qa-hardening-team", scope=user_context, members="hana,kali" or omit for all)
+   ```
+   The `members` parameter is only needed if the user passed `--members`. The `scope` parameter should describe the review focus.
+
+4. **Create the team**:
+   ```
+   TeamCreate(team_name=result.data.suggested_team_id)
    ```
 
-4. **Create tasks FIRST**: For each agent being spawned, create with `TaskCreate` before spawning agents.
+5. **Create and assign tasks**: For each agent in `result.data.agents`:
+   ```
+   TaskCreate(subject=agent.task_subject, description=agent.task_description)
+   TaskUpdate(taskId=id, owner=agent.name, status="in_progress")
+   ```
 
-5. **Spawn agents**: For each member (or filtered subset), use the `Task` tool:
+6. **Spawn agents**: For each agent in `result.data.agents`, use the `Task` tool:
    ```
    Task(
      subagent_type="general-purpose",
-     name=member_name,
-     model="sonnet",
-     team_name="qa-hardening-{timestamp}",
-     prompt=member_prompt + "\n\n## Context\n\n" + user_context,
+     name=agent.name,
+     model=agent.model,
+     team_name=result.data.suggested_team_id,
+     prompt=agent.prompt + "\n\n## Context\n\n" + user_context,
      run_in_background=true
    )
    ```
    Spawn all agents in parallel (multiple Task calls in one message).
+
    IMPORTANT: Do NOT use `mode="bypassPermissions"` -- these are read-only discovery agents.
    IMPORTANT: Always pass model="sonnet" to the Task tool. This ensures read-only agents use a cost-efficient model.
-
-   **Member prompts**: Each agent's prompt should include their personality, weakness, focus areas, and allowed tools from the agent file. Instruct them to analyze the context and report findings via SendMessage to the team lead.
-
-6. **Assign tasks**: Use `TaskUpdate` to assign each task to its corresponding agent.
 
 7. **Wait for findings**: All agents will send their findings via SendMessage when complete.
 
@@ -65,7 +71,7 @@ Team definition: `.claude/agents/qa-hardening-team.md`
 
 ## Want findings implemented?
 
-After presenting the hardening backlog, ask the user if they want fixes implemented. If yes, spawn implementation agents following the implement-team coordination pattern (`.claude/agents/implement-team.md`): Kai plans the work breakdown, parallel agents execute with file ownership, Rio verifies.
+After presenting the hardening backlog, ask the user if they want fixes implemented. If yes, use `launch(team="implement-team", scope=approved_items)` to get implementation agent specs, then spawn Kai for planning, parallel fixers for execution, and Rio for verification.
 
 ## Examples
 

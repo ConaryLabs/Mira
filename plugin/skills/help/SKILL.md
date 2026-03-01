@@ -36,7 +36,7 @@ description: This skill should be used when the user asks "help", "what commands
 
 Beyond slash commands, Mira provides MCP tools that Claude uses automatically:
 
-`code`, `diff`, `project`, `session`, `insights`, `goal`, `index`
+`code`, `diff`, `project`, `session`, `insights`, `goal`, `index`, `launch`
 
 These power semantic search, call graph analysis, persistent memory, and more — no slash command needed.
 

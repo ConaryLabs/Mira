@@ -28,6 +28,7 @@ Each file defines the data types for one tool's responses:
 | `documentation` | `DocOutput` | documentation |
 | `diff` | `DiffOutput` | diff |
 | `team` | `TeamOutput` | team |
+| `launch` | `LaunchOutput` | launch |
 | `tasks` | `TasksOutput` | tasks |
 
 ## Architecture Notes

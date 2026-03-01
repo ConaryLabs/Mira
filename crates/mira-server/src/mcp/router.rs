@@ -125,6 +125,21 @@ impl MiraServer {
         tool_result(tools::handle_session(self, req.into()).await)
     }
 
+    #[tool(
+        description = "Context-aware team launcher. Parses .claude/agents/{team}.md, enriches with project context, returns ready-to-spawn agent specs.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::LaunchOutput>()
+            .expect("LaunchOutput schema")
+    )]
+    async fn launch(
+        &self,
+        Parameters(req): Parameters<LaunchRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tool_result(
+            tools::handle_launch(self, req.team, req.scope, req.members, req.context_budget)
+                .await,
+        )
+    }
+
     // documentation, team tools removed from MCP surface.
     // Still accessible via `mira tool <name> '<json>'` CLI.
 }

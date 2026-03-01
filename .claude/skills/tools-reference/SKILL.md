@@ -7,7 +7,7 @@ description: Reference for all Mira MCP tool signatures, parameters, and workflo
 
 # Mira Consolidated Tools Reference
 
-Mira exposes 7 MCP tools to Claude Code. Additional actions are available via the `mira tool` CLI.
+Mira exposes 8 MCP tools to Claude Code. Additional actions are available via the `mira tool` CLI.
 
 ## `project` — Project/Session Management
 
@@ -70,6 +70,17 @@ index(action="project", skip_embed=true)    # Fast re-index without embeddings
 index(action="file", path="src/main.rs")
 index(action="status")                      # Show index statistics
 ```
+
+## `launch` — Context-Aware Team Launcher
+
+```
+launch(team="expert-review-team")                            # Parse agent file, enrich with project context
+launch(team="expert-review-team", members="nadia,jiro")      # Filter to specific members
+launch(team="qa-hardening-team", scope="src/tools/")         # Scope code context to a path
+launch(team="refactor-team", context_budget=8000)            # Custom context budget (default: 4000)
+```
+
+Returns `LaunchData` with pre-assembled agent specs (name, role, model, prompt, task_subject, task_description), shared project context, and suggested team ID. Does not spawn agents -- Claude orchestrates with TeamCreate/TaskCreate/Task.
 
 ## CLI-Only Actions
 

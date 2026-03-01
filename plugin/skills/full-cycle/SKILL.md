@@ -10,7 +10,6 @@ argument-hint: "[focus area or --discovery-only]"
 > **Requires:** Claude Code Agent Teams feature.
 
 End-to-end expert review with automatic implementation and QA verification.
-Team definitions: `.claude/agents/expert-review-team.md`, `.claude/agents/implement-team.md`, `.claude/agents/qa-hardening-team.md`
 
 **Arguments:** $ARGUMENTS
 
@@ -28,45 +27,46 @@ Team definitions: `.claude/agents/expert-review-team.md`, `.claude/agents/implem
 
 ### Phase 1: Discovery
 
-Uses the **expert-review-team** (`.claude/agents/expert-review-team.md`).
-
-3. **Create the team**:
+3. **Launch discovery team**: Call the Mira `launch` MCP tool to get agent specs:
    ```
-   TeamCreate(team_name="full-cycle-{timestamp}")
+   launch(team="expert-review-team", scope=user_context, members="nadia,sable" or omit for all)
+   ```
+   The `members` parameter is only needed if the user passed `--members`.
+
+4. **Create the team**:
+   ```
+   TeamCreate(team_name=result.data.suggested_team_id)
    ```
 
-4. **Spawn discovery experts** (Nadia, Jiro, Sable, Lena). Use `Task` tool for each:
+5. **Create and assign discovery tasks**: For each agent in `result.data.agents`:
+   ```
+   TaskCreate(subject=agent.task_subject, description=agent.task_description)
+   TaskUpdate(taskId=id, owner=agent.name, status="in_progress")
+   ```
+
+6. **Spawn discovery experts**: For each agent in `result.data.agents`, use the `Task` tool:
    ```
    Task(
      subagent_type="general-purpose",
-     name=member_name,
-     model="sonnet",
-     team_name="full-cycle-{timestamp}",
-     prompt=member_prompt + "\n\n## Context\n\n" + user_context,
+     name=agent.name,
+     model=agent.model,
+     team_name=result.data.suggested_team_id,
+     prompt=agent.prompt + "\n\n## Context\n\n" + user_context,
      run_in_background=true
    )
    ```
-   Spawn all 4 discovery experts in parallel (multiple Task calls in one message).
+   Spawn all discovery experts in parallel (multiple Task calls in one message).
+
    IMPORTANT: Do NOT use `mode="bypassPermissions"` for discovery agents -- they are read-only explorers.
    IMPORTANT: Always pass model="sonnet" to the Task tool. This ensures read-only agents use a cost-efficient model.
 
-   **Member prompts**: Each agent's prompt should include their personality, weakness, focus areas, and allowed tools from the expert-review-team agent file. Instruct them to analyze the context and report findings via SendMessage to the team lead.
-
-5. **Create and assign discovery tasks**: For each expert:
-   ```
-   TaskCreate(subject=task.subject, description=task.description)
-   TaskUpdate(taskId=id, owner=member_name, status="in_progress")
-   ```
-
-6. **Wait for findings**: All 4 discovery experts will send findings via SendMessage. Wait for all to finish, then shut them down.
+7. **Wait for findings**: All discovery experts will send findings via SendMessage. Wait for all to finish, then shut them down.
 
 ---
 
 ### Phase 2: Synthesis + Implementation
 
-Uses the **implement-team** coordination pattern (`.claude/agents/implement-team.md`).
-
-7. **Synthesize findings** into a unified report:
+8. **Synthesize findings** into a unified report:
    - **Consensus**: Points multiple experts agree on
    - **Key findings per expert**: Top findings from each specialist
    - **Tensions**: Where experts disagree -- present both sides with evidence
@@ -74,27 +74,32 @@ Uses the **implement-team** coordination pattern (`.claude/agents/implement-team
 
    IMPORTANT: Preserve genuine disagreements. Do NOT force consensus.
 
-8. **Present synthesis to user** and WAIT for their approval before proceeding to implementation. Do not auto-proceed.
+9. **Present synthesis to user** and WAIT for their approval before proceeding to implementation. Do not auto-proceed.
 
-9. **Spawn Kai (implementation planner)** to analyze the approved findings and produce a work breakdown:
-   ```
-   Task(
-     subagent_type="general-purpose",
-     name="kai",
-     model="sonnet",
-     team_name="full-cycle-{timestamp}",
-     prompt=kai_prompt + "\n\n## Approved Findings\n\n" + approved_items,
-     run_in_background=true
-   )
-   ```
-   Kai groups fixes by file ownership, identifies dependencies, and sets max 3-5 fixes per agent.
+10. **Launch implementation team**: Call `launch` to get implementation agent specs:
+    ```
+    launch(team="implement-team", scope=approved_items)
+    ```
 
-10. **Spawn implementation agents** based on Kai's work breakdown:
+11. **Spawn Kai (implementation planner)** from the launch results:
+    ```
+    Task(
+      subagent_type="general-purpose",
+      name="kai",
+      model=kai_agent.model,
+      team_name=result.data.suggested_team_id,
+      prompt=kai_agent.prompt + "\n\n## Approved Findings\n\n" + approved_items,
+      run_in_background=true
+    )
+    ```
+    Kai groups fixes by file ownership, identifies dependencies, and sets max 3-5 fixes per agent.
+
+12. **Spawn implementation agents** based on Kai's work breakdown:
     ```
     Task(
       subagent_type="general-purpose",
       name="fixer-{group-name}",
-      team_name="full-cycle-{timestamp}",
+      team_name=result.data.suggested_team_id,
       prompt=implementation_prompt + task_descriptions,
       run_in_background=true,
       mode="bypassPermissions"
@@ -103,54 +108,57 @@ Uses the **implement-team** coordination pattern (`.claude/agents/implement-team
     Follow the implement-team coordination rules: strict file ownership, max 3-5 fixes per agent, schema changes first, verify with `cargo test --no-run` (NEVER --release).
     Spawn all implementation agents in parallel. Monitor build diagnostics and send hints if needed.
 
-11. **Spawn Rio (integration verifier)** after implementation agents complete:
+13. **Spawn Rio (integration verifier)** from the launch results after implementation agents complete:
     ```
     Task(
       subagent_type="general-purpose",
       name="rio",
-      team_name="full-cycle-{timestamp}",
-      prompt=rio_prompt + "\n\n## Changes Made\n\n" + summary_of_changes,
+      model=rio_agent.model,
+      team_name=result.data.suggested_team_id,
+      prompt=rio_agent.prompt + "\n\n## Changes Made\n\n" + summary_of_changes,
       run_in_background=true,
       mode="bypassPermissions"
     )
     ```
     Rio runs compilation checks, linters, tests, and fixes cross-agent issues.
 
-12. **Wait for implementation**: All agents report completion via SendMessage. Shut them down.
+14. **Wait for implementation**: All agents report completion via SendMessage. Shut them down.
 
 ---
 
 ### Phase 3: QA Verification
 
-Uses the **qa-hardening-team** (`.claude/agents/qa-hardening-team.md`).
+15. **Launch QA team**: Call `launch` to get QA agent specs:
+    ```
+    launch(team="qa-hardening-team", scope=summary_of_changes)
+    ```
 
-13. **Spawn QA agents** (Hana, Orin, Kali, Zara) with context about what was changed:
+16. **Spawn QA agents**: For each agent in the QA launch results:
     ```
     Task(
       subagent_type="general-purpose",
-      name=member_name,
-      model="sonnet",
-      team_name="full-cycle-{timestamp}",
-      prompt=member_prompt + "\n\n## Changes Made\n\n" + summary_of_changes,
-      run_in_background=true,
-      mode="bypassPermissions"
+      name=agent.name,
+      model=agent.model,
+      team_name=result.data.suggested_team_id,
+      prompt=agent.prompt + "\n\n## Changes Made\n\n" + summary_of_changes,
+      run_in_background=true
     )
     ```
+    IMPORTANT: Do NOT use `mode="bypassPermissions"` for QA agents -- they are read-only.
+    IMPORTANT: Always pass model="sonnet" to the Task tool. This ensures read-only agents use a cost-efficient model.
 
-    **Member prompts**: Each agent's prompt should include their personality, weakness, focus areas, and allowed tools from the qa-hardening-team agent file.
+17. **Create and assign QA tasks** for each auditor.
 
-14. **Create and assign QA tasks** for each auditor.
-
-15. **Wait for QA results**: If issues found, either fix directly or spawn additional fixers.
+18. **Wait for QA results**: If issues found, either fix directly or spawn additional fixers.
 
 ---
 
 ### Phase 4: Finalize
 
-16. **Verify** final build: `cargo clippy --all-targets --all-features -- -D warnings` + `cargo fmt --all -- --check` + `cargo test` (NEVER --release).
-17. **Shut down** all remaining agents.
-18. **Report** final summary to user with all changes made.
-19. **Cleanup**: `TeamDelete`
+19. **Verify** final build: `cargo clippy --all-targets --all-features -- -D warnings` + `cargo fmt --all -- --check` + `cargo test` (NEVER --release).
+20. **Shut down** all remaining agents.
+21. **Report** final summary to user with all changes made.
+22. **Cleanup**: `TeamDelete`
 
 ### Handling Stalled Agents
 

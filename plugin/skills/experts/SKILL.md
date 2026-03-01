@@ -10,7 +10,6 @@ argument-hint: "[context or focus area]"
 > **Requires:** Claude Code Agent Teams feature.
 
 Get expert opinions on code, architecture, security, or plans using a team of 4 AI specialists.
-Team definition: `.claude/agents/expert-review-team.md`
 
 **Arguments:** $ARGUMENTS
 
@@ -23,25 +22,31 @@ Team definition: `.claude/agents/expert-review-team.md`
 
 2. **Determine context**: The user's question, the code they want reviewed, or the plan they want analyzed. If no context is obvious, ask the user what they'd like experts to review.
 
-3. **Create the team**:
+3. **Launch the team**: Call the Mira `launch` MCP tool to get agent specs:
    ```
-   TeamCreate(team_name="expert-review-{timestamp}")
+   launch(team="expert-review-team", scope=user_context, members="nadia,jiro" or omit for all)
+   ```
+   The `members` parameter is only needed if the user passed `--members`. The `scope` parameter should describe the review focus.
+
+4. **Create the team**:
+   ```
+   TeamCreate(team_name=result.data.suggested_team_id)
    ```
 
-4. **Create and assign tasks**: For each expert being spawned:
+5. **Create and assign tasks**: For each agent in `result.data.agents`:
    ```
-   TaskCreate(subject=task.subject, description=task.description)
-   TaskUpdate(taskId=id, owner=member_name, status="in_progress")
+   TaskCreate(subject=agent.task_subject, description=agent.task_description)
+   TaskUpdate(taskId=id, owner=agent.name, status="in_progress")
    ```
 
-5. **Spawn experts**: For each member (or filtered subset), use the `Task` tool:
+6. **Spawn experts**: For each agent in `result.data.agents`, use the `Task` tool:
    ```
    Task(
      subagent_type="general-purpose",
-     name=member_name,
-     model="sonnet",
-     team_name="expert-review-{timestamp}",
-     prompt=member_prompt + "\n\n## Context\n\n" + user_context,
+     name=agent.name,
+     model=agent.model,
+     team_name=result.data.suggested_team_id,
+     prompt=agent.prompt + "\n\n## Context\n\n" + user_context,
      run_in_background=true
    )
    ```
@@ -50,11 +55,9 @@ Team definition: `.claude/agents/expert-review-team.md`
    IMPORTANT: Do NOT use mode="bypassPermissions" -- these are read-only discovery agents.
    IMPORTANT: Always pass model="sonnet" to the Task tool. This ensures read-only agents use a cost-efficient model.
 
-   **Member prompts**: Each agent's prompt should include their personality, weakness, focus areas, and allowed tools from the agent file. Instruct them to analyze the context and report findings via SendMessage to the team lead.
+7. **Wait for findings**: Teammates will send their findings via SendMessage when complete. Wait for all to finish.
 
-6. **Wait for findings**: Teammates will send their findings via SendMessage when complete. Wait for all to finish.
-
-7. **Synthesize findings**: Combine all expert findings into a unified report:
+8. **Synthesize findings**: Combine all expert findings into a unified report:
    - **Consensus**: Points multiple experts agree on
    - **Key findings per expert**: Top findings from each specialist
    - **Tensions**: Where experts disagree -- present both sides with evidence
@@ -62,7 +65,7 @@ Team definition: `.claude/agents/expert-review-team.md`
 
    IMPORTANT: Preserve genuine disagreements. Do NOT force consensus. Present conditional recommendations: "If your priority is X, then..." / "If your priority is Y, then..."
 
-8. **Cleanup**: Send `shutdown_request` to each teammate, then call `TeamDelete`.
+9. **Cleanup**: Send `shutdown_request` to each teammate, then call `TeamDelete`.
 
 ## Examples
 

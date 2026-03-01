@@ -13,6 +13,7 @@ mod documentation;
 mod goal;
 mod index;
 mod insights;
+pub mod launch;
 mod project;
 mod session;
 mod tasks;
@@ -25,6 +26,7 @@ pub use documentation::*;
 pub use goal::*;
 pub use index::*;
 pub use insights::*;
+pub use launch::*;
 pub use project::*;
 pub use session::*;
 pub use tasks::*;
@@ -128,5 +130,9 @@ mod tests {
     fn cli_only_schemas_are_valid() {
         assert!(schema_for_output::<DocOutput>().is_ok(), "DocOutput");
         assert!(schema_for_output::<TeamOutput>().is_ok(), "TeamOutput");
+        assert!(
+            schema_for_output::<LaunchOutput>().is_ok(),
+            "LaunchOutput"
+        );
     }
 }

@@ -340,7 +340,7 @@ All Mira state lives locally unless you explicitly opt into external providers:
 
 ### MCP Server and Tools
 
-Mira exposes **7 MCP tools** (`project`, `code`, `goal`, `index`, `session`, `insights`, `diff`), consolidated from ~20 standalone tools in v0.4.x through action-based unification.
+Mira exposes **8 MCP tools** (`project`, `code`, `goal`, `index`, `session`, `insights`, `diff`, `launch`), consolidated from ~20 standalone tools in v0.4.x through action-based unification.
 Tools return structured JSON via MCP `outputSchema`, enabling programmatic consumption.
 The server implements MCP Elicitation (interactive setup) and MCP Tasks (async long-running operations).
 
