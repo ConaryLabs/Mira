@@ -140,4 +140,3 @@ Analyze git changes semantically with impact and risk assessment.
 ## See Also
 
 - [index](./index.md) - Build the code index that powers search and call graph
-- [memory](./memory.md) - Search memories by meaning

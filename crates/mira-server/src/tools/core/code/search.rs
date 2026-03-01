@@ -371,7 +371,15 @@ pub async fn find_function_callers<C: ToolContext>(
     }
     let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
     let results = query_callers(ctx, &function_name, limit).await?;
-    find_function_crossref(ctx, function_name, "callers", "callers", CrossRefType::Caller, results).await
+    find_function_crossref(
+        ctx,
+        function_name,
+        "callers",
+        "callers",
+        CrossRefType::Caller,
+        results,
+    )
+    .await
 }
 
 /// Find functions called by a specific function
@@ -387,7 +395,15 @@ pub async fn find_function_callees<C: ToolContext>(
     }
     let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
     let results = query_callees(ctx, &function_name, limit).await?;
-    find_function_crossref(ctx, function_name, "callees", "callees", CrossRefType::Callee, results).await
+    find_function_crossref(
+        ctx,
+        function_name,
+        "callees",
+        "callees",
+        CrossRefType::Callee,
+        results,
+    )
+    .await
 }
 
 /// Get symbols from a file

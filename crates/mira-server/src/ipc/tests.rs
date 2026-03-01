@@ -22,7 +22,13 @@ async fn create_test_server(pool: Arc<DatabasePool>) -> MiraServer {
             .await
             .expect("failed to open code pool"),
     ));
-    MiraServer::from_api_keys(MainPool::new(pool), code_pool, None, &ApiKeys::default(), false)
+    MiraServer::from_api_keys(
+        MainPool::new(pool),
+        code_pool,
+        None,
+        &ApiKeys::default(),
+        false,
+    )
 }
 
 /// Spawn a handler on an in-memory duplex stream. Returns the client half
@@ -301,7 +307,13 @@ async fn create_test_server_with_code(
     pool: Arc<DatabasePool>,
     code_pool: Arc<DatabasePool>,
 ) -> MiraServer {
-    MiraServer::from_api_keys(MainPool::new(pool), CodePool::new(code_pool), None, &ApiKeys::default(), false)
+    MiraServer::from_api_keys(
+        MainPool::new(pool),
+        CodePool::new(code_pool),
+        None,
+        &ApiKeys::default(),
+        false,
+    )
 }
 
 /// Seed the code database with test modules and symbols.

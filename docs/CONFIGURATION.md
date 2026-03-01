@@ -74,7 +74,7 @@ Project `.env` files are NOT loaded for security reasons (a malicious repo could
 | `CLAUDE.local.md` | Local-only instructions (gitignored) |
 | `.miraignore` | Files to exclude from indexing |
 
-See [CLAUDE_TEMPLATE.md](CLAUDE_TEMPLATE.md) for manual setup instructions. (`mira init` is planned but not yet implemented.)
+See [CLAUDE_TEMPLATE.md](CLAUDE_TEMPLATE.md) for manual setup instructions.
 
 ---
 
@@ -321,13 +321,10 @@ fixtures
 
 ### What It Does
 
-1. Prompts for LLM provider (DeepSeek) with live API key validation
-2. Prompts for embeddings provider (OpenAI) with validation
-3. Optionally configures Brave Search
-4. Auto-detects Ollama and lists available models for background tasks
-5. Merges new keys with existing `~/.mira/.env` (never overwrites unrelated keys)
-6. Sets `background_provider = "ollama"` in `~/.mira/config.toml` if Ollama is selected
-7. Backs up existing `.env` before writing
+1. Prompts for embeddings provider (OpenAI) with live API key validation
+2. Optionally configures Brave Search
+3. Merges new keys with existing `~/.mira/.env` (never overwrites unrelated keys)
+4. Backs up existing `.env` before writing
 
 ### Non-Interactive Details
 
@@ -346,8 +343,8 @@ mira setup          # Interactive wizard handles everything
 Or manually:
 
 ```bash
-# ~/.mira/.env
-DEEPSEEK_API_KEY=sk-...
+# ~/.mira/.env (optional — enables semantic search)
+OPENAI_API_KEY=sk-...
 
 # Add to project's .mcp.json
 {

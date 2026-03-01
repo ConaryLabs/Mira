@@ -4,75 +4,11 @@ Mira is an intelligent "second brain" for Claude Code, designed to persist conte
 
 ---
 
-## 1. Memory System
+## 1. Observations System
 
-The Memory System is the foundation of Mira's persistence. It stores facts, decisions, and context that outlive a single chat session.
+> **Note:** The Memory System described here was removed in v0.9.1. Persistent facts are now stored via the observations system (`system_observations` table), which records structured observations from hooks and tool usage. Session recap still surfaces relevant context automatically.
 
-### Memory Fact
-
-The basic unit of storage is a `MemoryFact`. Each fact has:
-
-| Field | Description |
-|-------|-------------|
-| **content** | The textual information (e.g., "The project uses Postgres 14") |
-| **fact_type** | Categorizes the memory (see below) |
-| **confidence** | A score (0.0 - 1.0) indicating reliability |
-| **scope** | Where the memory applies: `project`, `personal`, or `team` |
-| **status** | Lifecycle state: `candidate` or `confirmed` |
-| **category** | Optional grouping (e.g., "coding", "architecture") |
-| **user_id** | User identity for personal-scoped memories |
-| **team_id** | Team reference for team-scoped memories |
-| **session_count** | Number of sessions where this memory was accessed |
-
-### Fact Types
-
-| Type | Purpose |
-|------|---------|
-| `general` | Standard facts about the codebase or project |
-| `preference` | User preferences (e.g., "Use async-trait for traits") |
-| `decision` | Architectural or design decisions |
-| `context` | Background information about the project |
-| `pattern` | Recurring patterns observed in the codebase |
-| `persona` | User persona or role information |
-
-### Evidence-Based Confidence
-
-Memories follow a lifecycle based on evidence:
-
-```
-New Memory → Candidate
-                ↓
-        Used across 3+ sessions
-                ↓
-         Confirmed (confidence + 0.2, capped at 1.0)
-```
-
-1. **Candidate**: New memories start here with 0.8 confidence
-2. **Confirmed**: If a memory is accessed across 3+ distinct sessions, it's promoted with boosted confidence
-
-This ensures only useful, recurring information becomes permanent.
-
-### Scopes
-
-| Scope | Visibility |
-|-------|------------|
-| `project` | Only visible within the current project (default) |
-| `personal` | Visible across all your projects (requires user identity) |
-| `team` | Shared with team members (requires team membership) |
-
-**Note:** Personal scope requires a user identity (from git config, `MIRA_USER_ID`, or system username). Team scope requires team membership.
-
-### Branch-Aware Context
-
-Memories are boosted based on branch relevance during recall:
-
-| Branch Match | Boost |
-|--------------|-------|
-| Same branch as current | 15% priority boost (distance × 0.85) |
-| Main/master branch | 5% priority boost (distance × 0.95) |
-| Different branch | No boost (still accessible) |
-
-This ensures branch-specific knowledge is prioritized while maintaining cross-branch access.
+The legacy Memory System stored facts, decisions, and context as `MemoryFact` records with confidence scores, scopes (`project`, `personal`, `team`), and evidence-based promotion. That model has been replaced by the observations system, which is lighter-weight and managed automatically by hooks rather than requiring explicit `memory(action="store")` calls.
 
 ---
 
@@ -231,42 +167,15 @@ Hooks are automatically configured by the installer in `~/.claude/settings.json`
 
 ---
 
-## 6. Proactive Intelligence
+## 6. Background Analysis
 
-Mira proactively analyzes behavior to predict and inject helpful context before you ask.
+> **Note:** The Proactive Intelligence system described here was removed in v0.9.1. The `proactive` insight source no longer exists. Background analysis continues via the **pondering** system, which analyzes tool history and generates insights surfaced through `insights(action="insights")` with `insight_source="pondering"`.
 
-### Behavior Tracking
+The legacy Proactive Intelligence system tracked behavior patterns (file sequences, tool chains, query patterns) and generated pre-computed suggestions injected by the `UserPromptSubmit` hook. This has been replaced by:
 
-The system tracks:
-- **User queries**: Questions and search patterns
-- **File sequences**: Common file access patterns
-- **Tool chains**: Frequently used tool combinations
-
-### Pattern Mining
-
-Patterns are mined in two tiers:
-
-| Tier | Method | Frequency | Purpose |
-|------|--------|-----------|---------|
-| **SQL Mining** | Database analysis | Every ~15 minutes | Fast, local pattern detection |
-
-### Automatic Context Injection
-
-When you submit a prompt, the `UserPromptSubmit` hook:
-
-1. Performs semantic search for relevant memories
-2. Checks for pre-generated suggestions matching your context
-3. Runs on-the-fly pattern matching
-4. Injects combined context into your session
-
-This happens transparently - relevant context appears without explicit `recall()` calls.
-
-### Proactive Suggestions
-
-The system generates suggestions based on:
-- Recurring file access patterns
-- Common tool sequences
-- Previously useful context retrievals
+- **Pondering**: Active reasoning loops that analyze tool history and generate insights on-demand
+- **Doc gap detection**: Background scanning for missing or stale documentation (`insight_source="doc_gap"`)
+- **Automatic context injection**: The `UserPromptSubmit` hook still performs semantic search and injects relevant context, but no longer uses pre-generated proactive suggestions
 
 ---
 
@@ -335,7 +244,7 @@ goal(action="add_milestone", goal_id=1, milestone_title="Design API", weight=2)
 goal(action="add_milestone", goal_id=1, milestone_title="Implement endpoints", weight=5)
 goal(action="add_milestone", goal_id=1, milestone_title="Write tests", weight=3)
 goal(action="complete_milestone", milestone_id=1)  # Auto-updates goal progress
-goal(action="progress", goal_id=1)  # Shows weighted progress percentage
+goal(action="update", goal_id=1, progress_percent=75)  # Manual progress override
 ```
 
 Progress is calculated from weighted milestones: completing a weight-5 milestone contributes more than a weight-1 milestone.
@@ -396,7 +305,6 @@ Mira exposes read-only data via the MCP Resource protocol. These are data access
 | Resource URI | Type | Description |
 |--------------|------|-------------|
 | `mira://goals` | Static | List of all active goals with progress percentages |
-| `mira://memories/recent` | Static | Most recent 20 memory facts (project-scoped) |
 | `mira://goals/{id}` | Template | Individual goal with its milestones |
 
-Resources are read-only and scoped to the active project. They complement the `goal` and `memory` tools — use resources for passive data display (e.g., in a dashboard or sidebar) and tools for interactive operations.
+Resources are read-only and scoped to the active project. They complement the `goal` tool — use resources for passive data display (e.g., in a dashboard or sidebar) and tools for interactive operations.

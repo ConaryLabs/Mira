@@ -22,10 +22,7 @@ use tracing::{info, warn};
 /// this is the first run with the sharded layout. We don't copy data
 /// (re-indexing is cheap and safer) - we just drop the old tables from the
 /// main DB to reclaim space.
-async fn migrate_code_tables_if_needed(
-    main_pool: &MainPool,
-    _code_pool: &CodePool,
-) {
+async fn migrate_code_tables_if_needed(main_pool: &MainPool, _code_pool: &CodePool) {
     let has_old_code_tables = main_pool
         .interact(|conn| {
             let exists: bool = conn

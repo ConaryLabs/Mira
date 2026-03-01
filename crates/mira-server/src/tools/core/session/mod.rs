@@ -277,7 +277,6 @@ mod tests {
     use crate::mcp::requests::{SessionAction, SessionRequest};
     use crate::mcp::responses::SessionData;
     use crate::tools::core::test_utils::MockToolContext;
-    use std::sync::Arc;
 
     /// Helper: build a SessionRequest for a given action with all other fields None.
     fn make_request(action: SessionAction) -> SessionRequest {

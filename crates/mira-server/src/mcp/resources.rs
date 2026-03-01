@@ -239,7 +239,9 @@ mod tests {
     /// Helper: create a MiraServer with in-memory DBs and an active project.
     async fn server_with_project() -> (MiraServer, i64) {
         let pool = MainPool::new(Arc::new(DatabasePool::open_in_memory().await.unwrap()));
-        let code_pool = CodePool::new(Arc::new(DatabasePool::open_code_db_in_memory().await.unwrap()));
+        let code_pool = CodePool::new(Arc::new(
+            DatabasePool::open_code_db_in_memory().await.unwrap(),
+        ));
         let server = MiraServer::new(pool.clone(), code_pool, None);
 
         let project_id = pool

@@ -55,9 +55,13 @@ pub async fn index<C: ToolContext>(
                 } else {
                     ctx.embeddings().cloned()
                 };
-                let stats =
-                    indexer::index_project(path, ctx.code_pool().inner().clone(), embeddings, project_id)
-                        .await?;
+                let stats = indexer::index_project(
+                    path,
+                    ctx.code_pool().inner().clone(),
+                    embeddings,
+                    project_id,
+                )
+                .await?;
                 if let Some(cache) = ctx.fuzzy_cache() {
                     cache.invalidate_code(project_id).await;
                 }

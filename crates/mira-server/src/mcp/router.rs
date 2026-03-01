@@ -135,8 +135,7 @@ impl MiraServer {
         Parameters(req): Parameters<LaunchRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         tool_result(
-            tools::handle_launch(self, req.team, req.scope, req.members, req.context_budget)
-                .await,
+            tools::handle_launch(self, req.team, req.scope, req.members, req.context_budget).await,
         )
     }
 

@@ -81,13 +81,13 @@ List recent LLM usage records grouped by role.
 
 ### insights (CLI-only)
 
-Query unified insights digest (pondering, proactive, doc gaps).
+Query unified insights digest (pondering, doc gaps).
 
 > **Note:** Also available as a standalone MCP tool. See [insights](./insights.md).
 
 **Parameters:**
 - `action` (string, required) - `"insights"`
-- `insight_source` (string, optional) - Filter by source: `pondering`, `proactive`, `doc_gap`
+- `insight_source` (string, optional) - Filter by source: `pondering`, `doc_gap`
 - `min_confidence` (float, optional) - Minimum confidence threshold (0.0-1.0, default: 0.5)
 - `since_days` (integer, optional) - Look back period in days (default: 30)
 - `limit` (integer, optional) - Max results
@@ -206,6 +206,5 @@ Run data cleanup to remove old records based on retention policy.
 ## See Also
 
 - [project](./project.md) - Initialize session with project context
-- [memory](./memory.md) - Memories shown in recap
 - [insights](./insights.md) - Background analysis digest (standalone MCP tool)
 - [tasks](./tasks.md) - Background task management (separate tool)

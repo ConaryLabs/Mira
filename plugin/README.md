@@ -4,10 +4,10 @@ Claude Code is powerful but amnesiac. Mira gives it persistent memory, semantic 
 
 ## Features
 
-- **Persistent Memory**: Remember decisions, preferences, and context across sessions
+- **Persistent Context**: Remember decisions, preferences, and observations across sessions
 - **Semantic Code Search**: Find code by meaning, not just text
 - **Goal Tracking**: Track multi-session objectives with milestones
-- **Proactive Context**: Automatic context injection based on your prompts
+- **Background Analysis**: Automatic insights from pondering and doc gap detection
 
 ## Installation
 
@@ -30,10 +30,9 @@ After the first launch, configure providers:
 mira setup  # Interactive wizard with API key validation and Ollama detection
 ```
 
-Or manually add API keys to `~/.mira/.env`:
+Or manually add an API key to `~/.mira/.env`:
 
 ```bash
-DEEPSEEK_API_KEY=your-key-here  # https://platform.deepseek.com/api_keys
 OPENAI_API_KEY=your-key-here    # https://platform.openai.com/api-keys
 ```
 

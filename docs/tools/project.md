@@ -76,4 +76,3 @@ Show the currently active project.
 
 - [session](./session.md) - Session management and recap
 - [index](./index.md) - Codebase indexing (uses module summaries from project start)
-- [memory](./memory.md) - Memories scoped to project

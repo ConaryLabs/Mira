@@ -514,11 +514,15 @@ mod tests {
     fn test_memory_key_exists() {
         let (conn, pid) = setup_conn_with_project();
 
-        assert!(!observations::observation_key_exists_sync(&conn, pid, "some_key"));
+        assert!(!observations::observation_key_exists_sync(
+            &conn, pid, "some_key"
+        ));
 
         insert_system_marker_sync(&conn, pid, "some_key", "value", "test").unwrap();
 
-        assert!(observations::observation_key_exists_sync(&conn, pid, "some_key"));
+        assert!(observations::observation_key_exists_sync(
+            &conn, pid, "some_key"
+        ));
     }
 
     #[test]
@@ -547,8 +551,16 @@ mod tests {
 
         mark_health_scanned_sync(&conn, pid).unwrap();
 
-        assert!(!observations::observation_key_exists_sync(&conn, pid, "health_scan_needed"));
-        assert!(!observations::observation_key_exists_sync(&conn, pid, "health_fast_scan_done"));
+        assert!(!observations::observation_key_exists_sync(
+            &conn,
+            pid,
+            "health_scan_needed"
+        ));
+        assert!(!observations::observation_key_exists_sync(
+            &conn,
+            pid,
+            "health_fast_scan_done"
+        ));
         // Scan time marker should exist
         let info = observations::get_observation_info_sync(&conn, pid, "health_scan_time");
         assert!(info.is_some());
@@ -593,7 +605,13 @@ mod tests {
             .unwrap();
         }
 
-        observations::delete_observations_by_categories_sync(&conn, pid, "health", &["complexity", "dead_code"]).unwrap();
+        observations::delete_observations_by_categories_sync(
+            &conn,
+            pid,
+            "health",
+            &["complexity", "dead_code"],
+        )
+        .unwrap();
 
         let count: i64 = conn
             .query_row(

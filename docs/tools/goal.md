@@ -20,8 +20,8 @@ Manage goals and milestones. Goals persist across sessions for tracking multi-se
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| action | String | Yes | `create`, `bulk_create`, `list`, `get`, `update`, `delete`, `add_milestone`, `complete_milestone`, `delete_milestone`, `progress`, or `sessions` |
-| goal_id | Integer | Conditional | Goal ID (required for `get`, `update`, `delete`, `add_milestone`, `progress`) |
+| action | String | Yes | `create`, `bulk_create`, `list`, `get`, `update`, `delete`, `add_milestone`, `complete_milestone`, `delete_milestone`, or `sessions` |
+| goal_id | Integer | Conditional | Goal ID (required for `get`, `update`, `delete`, `add_milestone`) |
 | title | String | Conditional | Goal title (required for `create`) |
 | description | String | No | Goal description |
 | status | String | No | `planning`, `in_progress`, `blocked`, `completed`, or `abandoned` |
@@ -63,8 +63,11 @@ Manage goals and milestones. Goals persist across sessions for tracking multi-se
 
 ### `update` — Update a goal
 
+Use `update` to change goal fields including manual progress override via `progress_percent`.
+
 ```json
 { "action": "update", "goal_id": 1, "status": "in_progress" }
+{ "action": "update", "goal_id": 1, "progress_percent": 75 }
 ```
 
 ### `delete` — Delete a goal
@@ -91,12 +94,6 @@ Automatically updates goal progress based on weighted milestones.
 
 ```json
 { "action": "delete_milestone", "milestone_id": 1 }
-```
-
-### `progress` — Update goal progress
-
-```json
-{ "action": "progress", "goal_id": 1, "progress_percent": 75 }
 ```
 
 ### `sessions` — List sessions that worked on a goal

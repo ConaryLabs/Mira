@@ -49,10 +49,7 @@ pub fn parse_file(content: &str, language: &str) -> Result<FileParseResult> {
     let (symbols, imports, calls) = lang_parser.parse(&mut parser, content)?;
 
     // Convert to simplified types
-    let parsed_symbols: Vec<ParsedSymbol> = symbols
-        .into_iter()
-        .map(ParsedSymbol::from)
-        .collect();
+    let parsed_symbols: Vec<ParsedSymbol> = symbols.into_iter().map(ParsedSymbol::from).collect();
 
     let parsed_imports: Vec<ParsedImport> = imports
         .into_iter()

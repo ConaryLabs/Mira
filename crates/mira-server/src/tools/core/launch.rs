@@ -6,8 +6,8 @@ use std::path::Path;
 use crate::db::{Goal, get_active_goals_sync};
 use crate::error::MiraError;
 use crate::hooks::pre_tool::unix_now;
-use crate::mcp::responses::launch::{AgentSpec, LaunchData, LaunchOutput};
 use crate::mcp::responses::Json;
+use crate::mcp::responses::launch::{AgentSpec, LaunchData, LaunchOutput};
 use crate::tools::core::project::detect_project_types;
 use crate::tools::core::{ToolContext, get_project_info};
 
@@ -44,9 +44,9 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
     let mut agents = Vec::new();
 
     // Parse YAML frontmatter
-    let body = if content.starts_with("---") {
-        if let Some(end) = content[3..].find("---") {
-            let frontmatter = &content[3..3 + end];
+    let body = if let Some(after_open) = content.strip_prefix("---") {
+        if let Some(end) = after_open.find("---") {
+            let frontmatter = &after_open[..end];
             for line in frontmatter.lines() {
                 let line = line.trim();
                 if let Some(val) = line.strip_prefix("name:") {
@@ -55,7 +55,7 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
                     description = val.trim().to_string();
                 }
             }
-            &content[3 + end + 3..]
+            &after_open[end + 3..]
         } else {
             content
         }
@@ -77,13 +77,18 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
             }
 
             // Parse "### Name -- Role"
-            let heading = &line[4..];
-            let is_dynamic = heading.contains("(dynamic)")
-                || heading.contains("(Dynamic)");
+            let heading = line.strip_prefix("### ").unwrap_or("");
+            let is_dynamic = heading.contains("(dynamic)") || heading.contains("(Dynamic)");
             let (agent_name, role) = if let Some(sep) = heading.find(" -- ") {
-                (heading[..sep].trim().to_string(), heading[sep + 4..].trim().to_string())
+                (
+                    heading[..sep].trim().to_string(),
+                    heading[sep + 4..].trim().to_string(),
+                )
             } else if let Some(sep) = heading.find(" - ") {
-                (heading[..sep].trim().to_string(), heading[sep + 3..].trim().to_string())
+                (
+                    heading[..sep].trim().to_string(),
+                    heading[sep + 3..].trim().to_string(),
+                )
             } else {
                 (heading.trim().to_string(), String::new())
             };
@@ -125,23 +130,43 @@ fn parse_agent_file(content: &str) -> Result<ParsedTeam, MiraError> {
             if line.starts_with("**Personality:**") {
                 flush_field(agent, current_field, &current_text);
                 current_field = Some("personality");
-                current_text = line.strip_prefix("**Personality:**").unwrap_or("").trim().to_string();
+                current_text = line
+                    .strip_prefix("**Personality:**")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if line.starts_with("**Weakness:**") {
                 flush_field(agent, current_field, &current_text);
                 current_field = Some("weakness");
-                current_text = line.strip_prefix("**Weakness:**").unwrap_or("").trim().to_string();
+                current_text = line
+                    .strip_prefix("**Weakness:**")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if line.starts_with("**Focus:**") {
                 flush_field(agent, current_field, &current_text);
                 current_field = Some("focus");
-                current_text = line.strip_prefix("**Focus:**").unwrap_or("").trim().to_string();
+                current_text = line
+                    .strip_prefix("**Focus:**")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if line.starts_with("**Tools:**") {
                 flush_field(agent, current_field, &current_text);
                 current_field = Some("tools");
-                current_text = line.strip_prefix("**Tools:**").unwrap_or("").trim().to_string();
+                current_text = line
+                    .strip_prefix("**Tools:**")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if line.starts_with("**Role:**") {
                 flush_field(agent, current_field, &current_text);
                 current_field = Some("tools");
-                current_text = line.strip_prefix("**Role:**").unwrap_or("").trim().to_string();
+                current_text = line
+                    .strip_prefix("**Role:**")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
             } else if current_field.is_some() && !line.trim().is_empty() {
                 // Continuation line for current field
                 if !current_text.is_empty() {
@@ -219,45 +244,44 @@ async fn build_project_context<C: ToolContext>(
             .pool()
             .run(move |conn| get_active_goals_sync(conn, Some(pid), 3))
             .await;
-        if let Ok(goals) = goals {
-            if !goals.is_empty() {
-                let mut goal_lines = Vec::new();
-                for g in &goals {
-                    let progress = if g.progress_percent > 0 {
-                        format!(" ({}%)", g.progress_percent)
-                    } else {
-                        String::new()
-                    };
-                    goal_lines.push(format!(
-                        "- [{}] {}{}: {}",
-                        g.priority,
-                        g.title,
-                        progress,
-                        g.description.as_deref().unwrap_or(""),
-                    ));
-                }
-                parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
+        if let Ok(goals) = goals
+            && !goals.is_empty()
+        {
+            let mut goal_lines = Vec::new();
+            for g in &goals {
+                let progress = if g.progress_percent > 0 {
+                    format!(" ({}%)", g.progress_percent)
+                } else {
+                    String::new()
+                };
+                goal_lines.push(format!(
+                    "- [{}] {}{}: {}",
+                    g.priority,
+                    g.title,
+                    progress,
+                    g.description.as_deref().unwrap_or(""),
+                ));
             }
+            parts.push(format!("Active goals:\n{}", goal_lines.join("\n")));
         }
     }
 
     // Code bundle for scope
-    if let Some(scope) = scope {
-        if !scope.is_empty() {
-            let bundle_result = crate::tools::core::code::generate_bundle(
-                ctx,
-                scope.to_string(),
-                Some(context_budget),
-                Some("overview".to_string()),
-            )
-            .await;
-            if let Ok(output) = bundle_result {
-                if let Some(crate::mcp::responses::CodeData::Bundle(bundle)) = output.0.data {
-                    if !bundle.content.is_empty() {
-                        parts.push(format!("Relevant code:\n{}", bundle.content));
-                    }
-                }
-            }
+    if let Some(scope) = scope
+        && !scope.is_empty()
+    {
+        let bundle_result = crate::tools::core::code::generate_bundle(
+            ctx,
+            scope.to_string(),
+            Some(context_budget),
+            Some("overview".to_string()),
+        )
+        .await;
+        if let Ok(output) = bundle_result
+            && let Some(crate::mcp::responses::CodeData::Bundle(bundle)) = output.0.data
+            && !bundle.content.is_empty()
+        {
+            parts.push(format!("Relevant code:\n{}", bundle.content));
         }
     }
 
@@ -308,8 +332,26 @@ pub async fn handle_launch<C: ToolContext>(
     members: Option<String>,
     context_budget: Option<i64>,
 ) -> Result<Json<LaunchOutput>, MiraError> {
+    // Validate team parameter before using it in path construction
+    if team.is_empty()
+        || !team
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(MiraError::InvalidInput(
+            "team name must be non-empty and contain only alphanumeric characters, hyphens, or underscores".to_string(),
+        ));
+    }
+
     let pi = get_project_info(ctx).await;
-    let project_path = pi.path.as_deref().unwrap_or(".");
+    let project_path = match pi.path.as_deref() {
+        Some(p) if !p.is_empty() && p != "." => p,
+        _ => {
+            return Err(MiraError::InvalidInput(
+                "No project path available; launch requires a known project directory".to_string(),
+            ));
+        }
+    };
 
     // Resolve agent file path
     let agent_file = Path::new(project_path)
@@ -318,13 +360,14 @@ pub async fn handle_launch<C: ToolContext>(
         .join(format!("{}.md", team));
 
     // Security: ensure resolved path stays within project
-    let canonical_project = std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.into());
-    if let Ok(canonical_agent) = std::fs::canonicalize(&agent_file) {
-        if !canonical_agent.starts_with(&canonical_project) {
-            return Err(MiraError::InvalidInput(
-                "Agent file path escapes project directory".to_string(),
-            ));
-        }
+    let canonical_project =
+        std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.into());
+    if let Ok(canonical_agent) = std::fs::canonicalize(&agent_file)
+        && !canonical_agent.starts_with(&canonical_project)
+    {
+        return Err(MiraError::InvalidInput(
+            "Agent file path escapes project directory".to_string(),
+        ));
     }
 
     let content = std::fs::read_to_string(&agent_file).map_err(|e| {
@@ -342,18 +385,12 @@ pub async fn handle_launch<C: ToolContext>(
     let parsed = parse_agent_file(&content)?;
 
     // Filter to non-dynamic agents
-    let mut agents: Vec<&ParsedAgent> = parsed
-        .agents
-        .iter()
-        .filter(|a| !a.is_dynamic)
-        .collect();
+    let mut agents: Vec<&ParsedAgent> = parsed.agents.iter().filter(|a| !a.is_dynamic).collect();
 
     // Apply member filter
     if let Some(ref filter) = members {
-        let filter_names: Vec<String> = filter
-            .split(',')
-            .map(|s| s.trim().to_lowercase())
-            .collect();
+        let filter_names: Vec<String> =
+            filter.split(',').map(|s| s.trim().to_lowercase()).collect();
         agents.retain(|a| filter_names.contains(&a.name));
 
         if agents.is_empty() {
@@ -371,7 +408,7 @@ pub async fn handle_launch<C: ToolContext>(
     }
 
     // Build project context
-    let budget = context_budget.unwrap_or(4000).max(500).min(20000);
+    let budget = context_budget.unwrap_or(4000).clamp(500, 20000);
     let project_context =
         build_project_context(ctx, project_path, pi.id, scope.as_deref(), budget).await;
 
@@ -404,6 +441,12 @@ pub async fn handle_launch<C: ToolContext>(
             }
         })
         .collect();
+
+    if agent_specs.is_empty() {
+        return Err(MiraError::InvalidInput(
+            "No agents to launch; all agents were filtered out or the team file has no agent definitions".to_string(),
+        ));
+    }
 
     let suggested_team_id = format!("{}-{}", parsed.name, unix_now());
 
@@ -524,7 +567,9 @@ description: Parallel implementation team.
         assert!(is_read_only("Read-only + test execution"));
         assert!(is_read_only(""));
         assert!(!is_read_only("Full tools (can edit files)"));
-        assert!(!is_read_only("Full tools -- can edit files to fix integration issues"));
+        assert!(!is_read_only(
+            "Full tools -- can edit files to fix integration issues"
+        ));
     }
 
     #[test]
@@ -536,7 +581,8 @@ description: Parallel implementation team.
 
     #[test]
     fn parse_missing_fields_lenient() {
-        let content = "---\nname: minimal-team\n---\n### Solo -- Lone Wolf\n**Focus:** Everything.\n";
+        let content =
+            "---\nname: minimal-team\n---\n### Solo -- Lone Wolf\n**Focus:** Everything.\n";
         let team = parse_agent_file(content).unwrap();
         assert_eq!(team.agents.len(), 1);
         assert_eq!(team.agents[0].name, "solo");

@@ -480,11 +480,7 @@ mod tests {
         let outside = dir.path().join("outside");
         fs::create_dir(&outside).unwrap();
         fs::write(outside.join("secret.rs"), "fn secret() {}").unwrap();
-        std::os::unix::fs::symlink(
-            outside.join("secret.rs"),
-            project.join("linked.rs"),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.rs"), project.join("linked.rs")).unwrap();
 
         // Default: follow_links=false -- symlinked file should be skipped
         let walker = FileWalker::new(&project)

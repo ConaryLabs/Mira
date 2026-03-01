@@ -243,6 +243,14 @@ async fn action_create<C: ToolContext>(
 ) -> Result<Json<GoalOutput>, MiraError> {
     validate_status(&status)?;
     validate_priority(&priority)?;
+    if let Some(p) = progress_percent
+        && !(0..=100).contains(&p)
+    {
+        return Err(MiraError::InvalidInput(format!(
+            "progress_percent must be 0-100, got {}",
+            p
+        )));
+    }
 
     let title_for_result = title.clone();
 
@@ -364,7 +372,7 @@ async fn action_list<C: ToolContext>(
     include_finished: bool,
     limit: i64,
 ) -> Result<Json<GoalOutput>, MiraError> {
-    let limit_usize = limit.max(0) as usize;
+    let limit_usize = if limit < 0 { 10 } else { limit as usize };
     let incl = include_finished;
     // Get true total count before applying limit
     let total_count = {
@@ -481,7 +489,11 @@ async fn action_list<C: ToolContext>(
             }
         })
         .collect();
-    let total = if total_count > 0 { total_count } else { items.len() };
+    let total = if total_count > 0 {
+        total_count
+    } else {
+        items.len()
+    };
     Ok(Json(GoalOutput {
         action: "list".into(),
         message: response,
@@ -504,20 +516,39 @@ async fn action_update<C: ToolContext>(
 ) -> Result<Json<GoalOutput>, MiraError> {
     validate_status(&status)?;
     validate_priority(&priority)?;
+    if let Some(p) = progress_percent
+        && !(0..=100).contains(&p)
+    {
+        return Err(MiraError::InvalidInput(format!(
+            "progress_percent must be 0-100, got {}",
+            p
+        )));
+    }
 
     get_authorized_goal(ctx, goal_id).await?;
 
     let mut changed = Vec::new();
-    if title.is_some() { changed.push("title"); }
-    if description.is_some() { changed.push("description"); }
-    if status.is_some() { changed.push("status"); }
-    if priority.is_some() { changed.push("priority"); }
-    if progress_percent.is_some() { changed.push("progress"); }
-    let fields = if changed.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", changed.join(", "))
-    };
+    if title.is_some() {
+        changed.push("title");
+    }
+    if description.is_some() {
+        changed.push("description");
+    }
+    if status.is_some() {
+        changed.push("status");
+    }
+    if priority.is_some() {
+        changed.push("priority");
+    }
+    if progress_percent.is_some() {
+        changed.push("progress");
+    }
+    if changed.is_empty() {
+        return Err(MiraError::InvalidInput(
+            "No fields to update: provide at least one of title, description, status, priority, or progress_percent".to_string(),
+        ));
+    }
+    let fields = format!(" ({})", changed.join(", "));
 
     ctx.pool()
         .run(move |conn| {
@@ -539,7 +570,10 @@ async fn action_update<C: ToolContext>(
     Ok(Json(GoalOutput {
         action: "update".into(),
         message: format!("Updated goal {}{}", goal_id, fields),
-        data: Some(GoalData::Modified(GoalModifiedData { goal_id, action: "updated".into() })),
+        data: Some(GoalData::Modified(GoalModifiedData {
+            goal_id,
+            action: "updated".into(),
+        })),
     }))
 }
 
@@ -557,7 +591,10 @@ async fn action_delete<C: ToolContext>(
     Ok(Json(GoalOutput {
         action: "delete".into(),
         message: format!("Deleted goal {}", goal_id),
-        data: Some(GoalData::Modified(GoalModifiedData { goal_id, action: "deleted".into() })),
+        data: Some(GoalData::Modified(GoalModifiedData {
+            goal_id,
+            action: "deleted".into(),
+        })),
     }))
 }
 
@@ -601,7 +638,11 @@ async fn milestone_mutate<C: ToolContext>(
     milestone_id: i64,
     action_name: &str,
     verb_past: &str,
-    db_op: impl FnOnce(i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<i64>, MiraError>> + Send>> + Send,
+    db_op: impl FnOnce(
+        i64,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<i64>, MiraError>> + Send>,
+    > + Send,
     interaction_type: Option<&str>,
 ) -> Result<Json<GoalOutput>, MiraError> {
     verify_milestone_project(ctx, milestone_id).await?;
@@ -681,10 +722,7 @@ async fn action_delete_milestone<C: ToolContext>(
         "Deleted",
         |mid| {
             let pool = pool.clone();
-            Box::pin(async move {
-                pool.run(move |conn| delete_milestone_sync(conn, mid))
-                    .await
-            })
+            Box::pin(async move { pool.run(move |conn| delete_milestone_sync(conn, mid)).await })
         },
         None,
     )

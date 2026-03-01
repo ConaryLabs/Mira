@@ -31,7 +31,7 @@ pub fn detect(project_path: &Path) -> Vec<Module> {
     {
         let path = entry.path();
 
-        if !path.is_file() || !path.extension().is_some_and(|e| e == "py") {
+        if !(path.is_file() && path.extension().is_some_and(|e| e == "py")) {
             continue;
         }
 

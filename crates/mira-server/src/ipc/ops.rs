@@ -27,7 +27,8 @@ pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value
         Ok(json!({"project_id": id, "path": path}))
     } else {
         // No explicit cwd — use per-session/global file resolution
-        let (id, path, _name) = crate::hooks::resolve_project(server.pool.inner(), session_id).await;
+        let (id, path, _name) =
+            crate::hooks::resolve_project(server.pool.inner(), session_id).await;
         match (id, path) {
             (Some(id), Some(path)) => Ok(json!({"project_id": id, "path": path})),
             _ => anyhow::bail!(
@@ -691,9 +692,12 @@ pub async fn get_startup_context(server: &MiraServer, params: Value) -> Result<V
         .get("session_id")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty());
-    let context =
-        crate::hooks::session::build_startup_context(cwd, Some(server.pool.inner().clone()), session_id)
-            .await;
+    let context = crate::hooks::session::build_startup_context(
+        cwd,
+        Some(server.pool.inner().clone()),
+        session_id,
+    )
+    .await;
     Ok(json!({"context": context}))
 }
 
@@ -701,9 +705,12 @@ pub async fn get_startup_context(server: &MiraServer, params: Value) -> Result<V
 pub async fn get_resume_context(server: &MiraServer, params: Value) -> Result<Value> {
     let cwd = params.get("cwd").and_then(|v| v.as_str());
     let session_id = params.get("session_id").and_then(|v| v.as_str());
-    let context =
-        crate::hooks::session::build_resume_context(cwd, session_id, Some(server.pool.inner().clone()))
-            .await;
+    let context = crate::hooks::session::build_resume_context(
+        cwd,
+        session_id,
+        Some(server.pool.inner().clone()),
+    )
+    .await;
     Ok(json!({"context": context}))
 }
 
@@ -913,9 +920,11 @@ pub async fn get_user_prompt_context(server: &MiraServer, params: Value) -> Resu
         .unwrap_or("");
 
     // Resolve project
-    let (project_id, project_path, _project_name) =
-        crate::hooks::resolve_project(server.pool.inner(), Some(session_id).filter(|s| !s.is_empty()))
-            .await;
+    let (project_id, project_path, _project_name) = crate::hooks::resolve_project(
+        server.pool.inner(),
+        Some(session_id).filter(|s| !s.is_empty()),
+    )
+    .await;
 
     // Create ContextInjectionManager from server's shared resources
     let fuzzy = if server.fuzzy_enabled {

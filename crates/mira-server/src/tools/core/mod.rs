@@ -125,7 +125,9 @@ pub struct ProjectInfo {
 }
 
 /// Require an active project, returning its ID or a user-friendly error.
-pub async fn require_project_id<C: ToolContext + ?Sized>(ctx: &C) -> Result<i64, crate::error::MiraError> {
+pub async fn require_project_id<C: ToolContext + ?Sized>(
+    ctx: &C,
+) -> Result<i64, crate::error::MiraError> {
     ctx.project_id()
         .await
         .ok_or(crate::error::MiraError::ProjectNotSet)

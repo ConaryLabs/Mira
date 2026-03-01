@@ -8,10 +8,10 @@ mod cargo;
 
 use crate::db::pool::DatabasePool;
 use crate::db::{
-    StoreObservationParams, clear_old_health_issues_sync,
-    delete_observations_by_categories_sync, get_indexed_project_ids_sync,
-    get_project_paths_by_ids_sync, get_unused_functions_sync, is_time_older_than_sync,
-    mark_health_scanned_sync, observation_key_exists_sync, store_observation_sync,
+    StoreObservationParams, clear_old_health_issues_sync, delete_observations_by_categories_sync,
+    get_indexed_project_ids_sync, get_project_paths_by_ids_sync, get_unused_functions_sync,
+    is_time_older_than_sync, mark_health_scanned_sync, observation_key_exists_sync,
+    store_observation_sync,
 };
 use crate::utils::ResultExt;
 use std::path::Path;
@@ -73,7 +73,13 @@ pub async fn process_health_fast_scans(
     // Clear relevant categories
     main_pool
         .run(move |conn| {
-            delete_observations_by_categories_sync(conn, project_id, "health", &["warning", "unused"]).map(|_| ())
+            delete_observations_by_categories_sync(
+                conn,
+                project_id,
+                "health",
+                &["warning", "unused"],
+            )
+            .map(|_| ())
         })
         .await?;
 

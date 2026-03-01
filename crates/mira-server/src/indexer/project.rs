@@ -192,11 +192,8 @@ async fn process_parsed_files(
         stats.files += 1;
 
         // Convert symbols to ParsedSymbol for semantic chunking
-        let parsed_symbols: Vec<ParsedSymbol> = parsed
-            .symbols
-            .iter()
-            .map(ParsedSymbol::from)
-            .collect();
+        let parsed_symbols: Vec<ParsedSymbol> =
+            parsed.symbols.iter().map(ParsedSymbol::from).collect();
 
         let symbol_count = parsed.symbols.len();
 

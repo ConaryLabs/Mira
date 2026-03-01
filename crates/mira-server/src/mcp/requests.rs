@@ -319,15 +319,17 @@ pub struct TeamRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct LaunchRequest {
-    #[schemars(description = "Agent team file name (e.g. \"expert-review-team\"). Resolves to .claude/agents/{team}.md")]
+    #[schemars(
+        description = "Agent team file name (e.g. \"expert-review-team\"). Resolves to .claude/agents/{team}.md"
+    )]
     pub team: String,
     #[schemars(description = "Scope for context enrichment: file path, module path, or concept.")]
     pub scope: Option<String>,
-    #[schemars(description = "Filter to specific members by first name, comma-separated (e.g. \"nadia,jiro\")")]
-    pub members: Option<String>,
     #[schemars(
-        description = "Context budget in characters (default: 4000, min: 500, max: 20000)"
+        description = "Filter to specific members by first name, comma-separated (e.g. \"nadia,jiro\")"
     )]
+    pub members: Option<String>,
+    #[schemars(description = "Context budget in characters (default: 4000, min: 500, max: 20000)")]
     pub context_budget: Option<i64>,
 }
 

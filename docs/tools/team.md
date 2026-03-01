@@ -57,4 +57,5 @@ Extract key findings and decisions from team work into team-scoped memories for 
 
 ## See Also
 
-- [memory](./memory.md) - Team-scoped memories via `scope="team"`
+- [session](./session.md) - Session recap and context
+- [goal](./goal.md) - Cross-session goal tracking

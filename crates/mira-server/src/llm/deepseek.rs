@@ -68,12 +68,13 @@ impl DeepSeekClient {
             max_tokens: Some(Self::max_tokens_for_model(&self.model)),
         };
 
-        let result = execute_openai_compat_chat(config, messages, tools, |req_id, body| async move {
-            self.http
-                .execute_with_retry(&req_id, DEEPSEEK_API_URL, &self.api_key, body)
-                .await
-        })
-        .await?;
+        let result =
+            execute_openai_compat_chat(config, messages, tools, |req_id, body| async move {
+                self.http
+                    .execute_with_retry(&req_id, DEEPSEEK_API_URL, &self.api_key, body)
+                    .await
+            })
+            .await?;
 
         // DeepSeek-specific: log usage stats with cache metrics
         if let Some(ref u) = result.usage {

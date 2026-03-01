@@ -253,12 +253,18 @@ pub(crate) async fn build_resume_context(
                     file_names.len() - 5
                 )
             };
-            context_parts.push(format!("[Mira/resume] Files modified last session: {}", files_str));
+            context_parts.push(format!(
+                "[Mira/resume] Files modified last session: {}",
+                files_str
+            ));
         }
 
         // Add session summary if available
         if let Some(ref summary) = prev_session.summary {
-            context_parts.push(format!("[Mira/resume] Previous session summary: {}", summary));
+            context_parts.push(format!(
+                "[Mira/resume] Previous session summary: {}",
+                summary
+            ));
         }
 
         // Check for a stored session snapshot (structured metadata from stop hook)
@@ -277,7 +283,10 @@ pub(crate) async fn build_resume_context(
             // Build "You were working on X" from snapshot data
             if let Some(working_on) = build_working_on_summary(&snap) {
                 // Insert at the beginning for prominence
-                context_parts.insert(0, format!("[Mira/resume] You were working on: {}", working_on));
+                context_parts.insert(
+                    0,
+                    format!("[Mira/resume] You were working on: {}", working_on),
+                );
             }
 
             // Surface pre-compaction context right after "working on" for prominence.
@@ -505,7 +514,10 @@ pub(crate) fn build_compaction_summary(snapshot: &serde_json::Value) -> Option<S
         return None;
     }
 
-    Some(format!("[Mira/context] Pre-compaction context:\n{}", parts.join("\n")))
+    Some(format!(
+        "[Mira/context] Pre-compaction context:\n{}",
+        parts.join("\n")
+    ))
 }
 
 /// Infer a human-readable activity description from the most-used tools

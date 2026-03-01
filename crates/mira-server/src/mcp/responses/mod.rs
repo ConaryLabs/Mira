@@ -124,10 +124,7 @@ mod tests {
         );
         assert!(schema_for_output::<DiffOutput>().is_ok(), "DiffOutput");
         assert!(schema_for_output::<TasksOutput>().is_ok(), "TasksOutput");
-        assert!(
-            schema_for_output::<LaunchOutput>().is_ok(),
-            "LaunchOutput"
-        );
+        assert!(schema_for_output::<LaunchOutput>().is_ok(), "LaunchOutput");
     }
 
     #[test]

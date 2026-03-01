@@ -97,7 +97,12 @@ pub fn walk(
 /// Go visibility: uppercase initial = public, lowercase = private.
 fn go_visibility(name: &str) -> Option<String> {
     Some(
-        if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+        if name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+        {
             "public".to_string()
         } else {
             "private".to_string()

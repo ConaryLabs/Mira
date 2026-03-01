@@ -411,8 +411,9 @@ pub fn validate_transcript_path(path_str: &str) -> Option<PathBuf> {
     {
         return Some(canonical);
     }
-    // Also allow /tmp which Claude Code may use
-    if canonical.starts_with("/tmp") {
+    // Also allow /tmp (and /private/tmp on macOS) which Claude Code may use
+    let tmp_canonical = std::fs::canonicalize("/tmp").unwrap_or_else(|_| PathBuf::from("/tmp"));
+    if canonical.starts_with(&tmp_canonical) {
         return Some(canonical);
     }
     tracing::warn!(
