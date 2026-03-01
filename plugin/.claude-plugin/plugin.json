@@ -1,7 +1,7 @@
 {
   "name": "mira",
   "description": "Persistent context, semantic code intelligence, and agent team coordination for Claude Code.",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "author": {
     "name": "Peter Permenter"
   },
