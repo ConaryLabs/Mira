@@ -793,6 +793,325 @@ async fn test_save_compaction_context_preserves_other_snapshot_fields() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// get_project_map tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Seed code_symbols with files across multiple directories for project map tests.
+async fn seed_project_map_symbols(code_pool: &DatabasePool, project_id: i64) {
+    code_pool
+        .interact(move |conn| {
+            let files = [
+                ("src/commands/install.rs", "install_package", "function", 10),
+                ("src/commands/remove.rs", "remove_package", "function", 20),
+                ("src/repository/gpg.rs", "verify_signature", "function", 5),
+                ("src/repository/mirror.rs", "select_mirror", "function", 15),
+                ("src/solver/mod.rs", "resolve_deps", "function", 1),
+                ("src/solver/sat.rs", "sat_solve", "function", 30),
+                ("tests/integration.rs", "test_install", "function", 1),
+            ];
+            for (file_path, name, sym_type, start_line) in &files {
+                conn.execute(
+                    "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, signature)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        project_id,
+                        file_path,
+                        name,
+                        sym_type,
+                        start_line,
+                        format!("fn {name}()")
+                    ],
+                )?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .expect("failed to seed project map symbols");
+}
+
+#[tokio::test]
+async fn test_get_project_map_returns_dirs() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let code_pool = Arc::new(
+        DatabasePool::open_code_db_in_memory()
+            .await
+            .expect("failed to open code pool"),
+    );
+    seed_project_map_symbols(&code_pool, project_id).await;
+
+    let (mut reader, mut writer, handle) = spawn_duplex_handler_with_code(pool, code_pool).await;
+
+    let req = IpcRequest {
+        op: "get_project_map".into(),
+        id: "pmap-1".into(),
+        params: json!({
+            "project_id": project_id,
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(resp.ok, "get_project_map should succeed: {:?}", resp.error);
+
+    let result = resp.result.as_ref().unwrap();
+    assert!(
+        !result["empty"].as_bool().unwrap_or(true),
+        "should not be empty"
+    );
+
+    let content = result["content"].as_str().unwrap();
+    assert!(
+        content.contains("[Mira/context] Project:"),
+        "content should contain project header, got: {content}"
+    );
+    assert!(
+        content.contains("src/"),
+        "content should contain src/ directory, got: {content}"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_get_project_map_empty_when_no_index() {
+    let (pool, _project_id) = setup_test_pool_with_project().await;
+    let code_pool = Arc::new(
+        DatabasePool::open_code_db_in_memory()
+            .await
+            .expect("failed to open code pool"),
+    );
+
+    let (mut reader, mut writer, handle) = spawn_duplex_handler_with_code(pool, code_pool).await;
+
+    // Use a project_id that has no indexed files
+    let req = IpcRequest {
+        op: "get_project_map".into(),
+        id: "pmap-empty".into(),
+        params: json!({
+            "project_id": 99999,
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(
+        resp.ok,
+        "get_project_map with no data should succeed: {:?}",
+        resp.error
+    );
+
+    let result = resp.result.as_ref().unwrap();
+    assert!(
+        result["empty"].as_bool().unwrap_or(false),
+        "should be empty for project with no indexed files"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_get_project_map_missing_project_id() {
+    let (pool, _project_id) = setup_test_pool_with_project().await;
+    let (mut reader, mut writer, handle) = spawn_duplex_handler(pool).await;
+
+    let req = IpcRequest {
+        op: "get_project_map".into(),
+        id: "pmap-bad".into(),
+        params: json!({}),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(!resp.ok, "should fail without project_id");
+    assert!(
+        resp.error
+            .as_ref()
+            .map(|e| e.contains("project_id"))
+            .unwrap_or(false),
+        "error should mention project_id, got: {:?}",
+        resp.error
+    );
+
+    handle.abort();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// search_for_subagent tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Seed code_chunks and code_fts for search tests.
+async fn seed_search_index(code_pool: &DatabasePool, project_id: i64) {
+    code_pool
+        .interact(move |conn| {
+            let chunks = [
+                (
+                    "src/auth/login.rs",
+                    "pub fn authenticate_user(username: &str, password: &str) -> Result<Token>",
+                    10,
+                ),
+                (
+                    "src/auth/token.rs",
+                    "pub fn validate_token(token: &str) -> Result<Claims>",
+                    25,
+                ),
+                (
+                    "src/db/pool.rs",
+                    "pub fn open_database(path: &str) -> Result<Connection>",
+                    1,
+                ),
+            ];
+            for (file_path, content, start_line) in &chunks {
+                conn.execute(
+                    "INSERT INTO code_chunks (project_id, file_path, chunk_content, start_line)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![project_id, file_path, content, start_line],
+                )?;
+                let rowid = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO code_fts (rowid, file_path, chunk_content, project_id, start_line)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![rowid, file_path, content, project_id, start_line],
+                )?;
+            }
+            // Also seed code_symbols for symbol-based search
+            conn.execute(
+                "INSERT INTO code_symbols (project_id, file_path, name, symbol_type, start_line, signature)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    project_id,
+                    "src/auth/login.rs",
+                    "authenticate_user",
+                    "function",
+                    10,
+                    "pub fn authenticate_user(username: &str, password: &str) -> Result<Token>"
+                ],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .expect("failed to seed search index");
+}
+
+#[tokio::test]
+async fn test_search_for_subagent_finds_results() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let code_pool = Arc::new(
+        DatabasePool::open_code_db_in_memory()
+            .await
+            .expect("failed to open code pool"),
+    );
+    seed_search_index(&code_pool, project_id).await;
+
+    let (mut reader, mut writer, handle) = spawn_duplex_handler_with_code(pool, code_pool).await;
+
+    let req = IpcRequest {
+        op: "search_for_subagent".into(),
+        id: "search-1".into(),
+        params: json!({
+            "project_id": project_id,
+            "query": "authenticate user login",
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(
+        resp.ok,
+        "search_for_subagent should succeed: {:?}",
+        resp.error
+    );
+
+    let result = resp.result.as_ref().unwrap();
+    assert!(
+        !result["empty"].as_bool().unwrap_or(true),
+        "should not be empty"
+    );
+
+    let content = result["content"].as_str().unwrap();
+    assert!(
+        content.contains("Relevant code"),
+        "content should contain 'Relevant code', got: {content}"
+    );
+    assert!(
+        content.contains("src/auth/login.rs"),
+        "content should contain matched file path, got: {content}"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_search_for_subagent_empty_for_no_matches() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let code_pool = Arc::new(
+        DatabasePool::open_code_db_in_memory()
+            .await
+            .expect("failed to open code pool"),
+    );
+    // Empty code index -- no chunks, no symbols
+
+    let (mut reader, mut writer, handle) = spawn_duplex_handler_with_code(pool, code_pool).await;
+
+    let req = IpcRequest {
+        op: "search_for_subagent".into(),
+        id: "search-empty".into(),
+        params: json!({
+            "project_id": project_id,
+            "query": "xyzzy_nonexistent_function_name",
+        }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(
+        resp.ok,
+        "search_for_subagent with no matches should succeed: {:?}",
+        resp.error
+    );
+
+    let result = resp.result.as_ref().unwrap();
+    assert!(
+        result["empty"].as_bool().unwrap_or(false),
+        "should be empty when nothing matches"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_search_for_subagent_missing_params() {
+    let (pool, _project_id) = setup_test_pool_with_project().await;
+    let (mut reader, mut writer, handle) = spawn_duplex_handler(pool).await;
+
+    // Missing project_id
+    let req = IpcRequest {
+        op: "search_for_subagent".into(),
+        id: "search-bad-1".into(),
+        params: json!({"query": "test"}),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(!resp.ok, "should fail without project_id");
+    assert!(
+        resp.error
+            .as_ref()
+            .map(|e| e.contains("project_id"))
+            .unwrap_or(false),
+        "error should mention project_id, got: {:?}",
+        resp.error
+    );
+
+    // Missing query
+    let req2 = IpcRequest {
+        op: "search_for_subagent".into(),
+        id: "search-bad-2".into(),
+        params: json!({"project_id": 1}),
+    };
+    let resp2 = send_request(&mut reader, &mut writer, &req2).await;
+    assert!(!resp2.ok, "should fail without query");
+    assert!(
+        resp2
+            .error
+            .as_ref()
+            .map(|e| e.contains("query"))
+            .unwrap_or(false),
+        "error should mention query, got: {:?}",
+        resp2.error
+    );
+
+    handle.abort();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Unix socket integration tests (Unix only — tests real transport)
 // ═══════════════════════════════════════════════════════════════════════════════
 
