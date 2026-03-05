@@ -20,6 +20,8 @@ fn op_timeout(op: &str) -> Duration {
         | "get_resume_context" => Duration::from_secs(30),
         "get_active_goals" | "snapshot_tasks" => Duration::from_secs(10),
         "generate_bundle" => Duration::from_secs(4),
+        "get_project_map" => Duration::from_secs(2),
+        "search_for_subagent" => Duration::from_secs(3),
         _ => Duration::from_secs(5),
     }
 }
@@ -160,6 +162,8 @@ async fn dispatch(
         "snapshot_tasks" => super::ops::snapshot_tasks(server, params).await,
         "deactivate_team_session" => super::ops::deactivate_team_session(server, params).await,
         "generate_bundle" => super::ops::generate_bundle(server, params).await,
+        "get_project_map" => super::ops::get_project_map(server, params).await,
+        "search_for_subagent" => super::ops::search_for_subagent(server, params).await,
         // Phase 4: UserPromptSubmit
         "get_user_prompt_context" => super::ops::get_user_prompt_context(server, params).await,
         _ => anyhow::bail!("unknown op: {op}"),

@@ -146,6 +146,64 @@ impl super::HookClient {
             .map(String::from)
     }
 
+    /// Get a compact project map for subagent orientation.
+    /// Returns None if not in IPC mode or project has no indexed files.
+    pub async fn get_project_map(&mut self, project_id: i64, budget: usize) -> Option<String> {
+        if !self.is_ipc() {
+            return None;
+        }
+        let params = json!({
+            "project_id": project_id,
+            "budget": budget,
+        });
+        let result = self.call("get_project_map", params).await.ok()?;
+        if result
+            .get("empty")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+        {
+            return None;
+        }
+        result
+            .get("content")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    }
+
+    /// Search code index using a task description, returning compact hints.
+    /// Returns None if not in IPC mode or search returns no results.
+    pub async fn search_for_subagent(
+        &mut self,
+        project_id: i64,
+        query: &str,
+        limit: usize,
+        budget: usize,
+    ) -> Option<String> {
+        if !self.is_ipc() {
+            return None;
+        }
+        let params = json!({
+            "project_id": project_id,
+            "query": query,
+            "limit": limit,
+            "budget": budget,
+        });
+        let result = self.call("search_for_subagent", params).await.ok()?;
+        if result
+            .get("empty")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+        {
+            return None;
+        }
+        result
+            .get("content")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    }
+
     /// Save compaction context to session_snapshots. Fire-and-forget.
     pub async fn save_compaction_context(&mut self, session_id: &str, context: serde_json::Value) {
         if self.is_ipc() {

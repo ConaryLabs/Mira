@@ -888,6 +888,158 @@ pub async fn generate_bundle(server: &MiraServer, params: Value) -> Result<Value
     }))
 }
 
+/// Get a compact project map showing top-level directories and file counts.
+/// Used by SubagentStart to give narrow subagents project orientation.
+pub async fn get_project_map(server: &MiraServer, params: Value) -> Result<Value> {
+    let project_id = params
+        .get("project_id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
+    let budget = params
+        .get("budget")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(500) as usize;
+
+    // Get project name from main DB
+    let project_name: Option<String> = server
+        .pool
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(
+                conn.query_row(
+                    "SELECT name FROM projects WHERE id = ?",
+                    rusqlite::params![project_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .ok()
+                .flatten(),
+            )
+        })
+        .await?;
+
+    // Get top-level directories with file counts from code DB
+    let dirs: Vec<(String, i64)> = server
+        .code_pool
+        .run(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT
+                     CASE
+                         WHEN INSTR(file_path, '/') > 0
+                             THEN SUBSTR(file_path, 1, INSTR(file_path, '/'))
+                         ELSE file_path
+                     END AS dir,
+                     COUNT(DISTINCT file_path) AS file_count
+                 FROM code_symbols
+                 WHERE project_id = ?
+                 GROUP BY dir
+                 ORDER BY file_count DESC
+                 LIMIT 15",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![project_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .filter_map(|r| r.ok())
+                .collect::<Vec<_>>();
+            Ok::<_, rusqlite::Error>(rows)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if dirs.is_empty() {
+        return Ok(json!({"content": "", "empty": true}));
+    }
+
+    let name = project_name.unwrap_or_else(|| "Unknown".to_string());
+    let dir_parts: Vec<String> = dirs
+        .iter()
+        .map(|(d, c)| format!("{d} ({c})"))
+        .collect();
+    let mut content = format!(
+        "[Mira/context] Project: {} ({})",
+        name,
+        dir_parts.join(", ")
+    );
+
+    if content.len() > budget {
+        content.truncate(budget.saturating_sub(3));
+        content.push_str("...");
+    }
+
+    Ok(json!({"content": content, "empty": false}))
+}
+
+/// Search code index using task description, returning compact file:symbol hints.
+/// Used by SubagentStart to give narrow subagents relevant starting points.
+pub async fn search_for_subagent(server: &MiraServer, params: Value) -> Result<Value> {
+    let project_id = params
+        .get("project_id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
+    let query = params
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing required param: query"))?
+        .to_string();
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5) as usize;
+    let budget = params
+        .get("budget")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1000) as usize;
+
+    // Get project path from main DB
+    let project_path: Option<String> = server
+        .pool
+        .interact(move |conn| {
+            Ok::<_, anyhow::Error>(
+                conn.query_row(
+                    "SELECT path FROM projects WHERE id = ?",
+                    rusqlite::params![project_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok(),
+            )
+        })
+        .await?;
+
+    let result = crate::search::hybrid_search(
+        server.code_pool.inner(),
+        server.embeddings.as_ref(),
+        Some(&server.fuzzy_cache),
+        &query,
+        Some(project_id),
+        project_path.as_deref(),
+        limit,
+    )
+    .await?;
+
+    if result.results.is_empty() {
+        return Ok(json!({"content": "", "empty": true}));
+    }
+
+    let mut lines = vec!["Relevant code for this task:".to_string()];
+    for r in &result.results {
+        // Extract first meaningful line from content as symbol hint
+        let symbol = r
+            .content
+            .lines()
+            .next()
+            .unwrap_or(&r.file_path)
+            .trim();
+        lines.push(format!("- {}: {}", r.file_path, symbol));
+    }
+    let mut content = lines.join("\n");
+
+    if content.len() > budget {
+        content.truncate(budget.saturating_sub(3));
+        content.push_str("...");
+    }
+
+    Ok(json!({"content": content, "empty": false}))
+}
+
 /// Deactivate a team session (set status='stopped').
 pub async fn deactivate_team_session(server: &MiraServer, params: Value) -> Result<Value> {
     let session_id = params
