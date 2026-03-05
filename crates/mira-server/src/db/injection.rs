@@ -16,6 +16,8 @@ pub struct InjectionRecord {
     pub latency_ms: Option<u64>,
     pub was_deduped: bool,
     pub was_cached: bool,
+    pub content: Option<String>,
+    pub categories: Vec<String>,
 }
 
 /// Fire-and-forget injection recording. Opens a direct connection to the DB,
@@ -44,12 +46,21 @@ pub fn insert_injection_sync(conn: &Connection, record: &InjectionRecord) -> Res
     } else {
         Some(record.sources_dropped.join(","))
     };
+    let content = record.content.as_deref().map(|c| {
+        crate::utils::truncate_at_boundary(c, 2000).to_string()
+    });
+    let categories = if record.categories.is_empty() {
+        None
+    } else {
+        Some(record.categories.join(","))
+    };
 
     conn.execute(
         "INSERT INTO context_injections (
             hook_name, session_id, project_id, chars_injected,
-            sources_kept, sources_dropped, latency_ms, was_deduped, was_cached
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            sources_kept, sources_dropped, latency_ms, was_deduped, was_cached,
+            content, categories
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             record.hook_name,
             record.session_id,
@@ -60,6 +71,8 @@ pub fn insert_injection_sync(conn: &Connection, record: &InjectionRecord) -> Res
             record.latency_ms.map(|ms| ms as i64),
             record.was_deduped as i32,
             record.was_cached as i32,
+            content,
+            categories,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -195,6 +208,8 @@ mod tests {
             latency_ms: Some(12),
             was_deduped: false,
             was_cached: false,
+            content: None,
+            categories: vec![],
         }
     }
 
@@ -219,6 +234,8 @@ mod tests {
             latency_ms: None,
             was_deduped: false,
             was_cached: false,
+            content: None,
+            categories: vec![],
         };
         let id = insert_injection_sync(&conn, &record).unwrap();
         assert!(id > 0);
@@ -295,5 +312,50 @@ mod tests {
         let conn = setup_db();
         let count = count_tracked_sessions(&conn, None).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_insert_with_content_and_categories() {
+        let conn = setup_db();
+        let mut record = make_record("UserPromptSubmit", Some("session-1"));
+        record.content = Some("goals context here".to_string());
+        record.categories = vec!["goals".to_string(), "file_hints".to_string()];
+        let id = insert_injection_sync(&conn, &record).unwrap();
+        assert!(id > 0);
+
+        let stored: String = conn
+            .query_row(
+                "SELECT content FROM context_injections WHERE id = ?",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "goals context here");
+
+        let cats: String = conn
+            .query_row(
+                "SELECT categories FROM context_injections WHERE id = ?",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cats, "goals,file_hints");
+    }
+
+    #[test]
+    fn test_content_truncated_at_limit() {
+        let conn = setup_db();
+        let mut record = make_record("SessionStart", Some("session-1"));
+        record.content = Some("x".repeat(3000));
+        let id = insert_injection_sync(&conn, &record).unwrap();
+
+        let stored: String = conn
+            .query_row(
+                "SELECT content FROM context_injections WHERE id = ?",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stored.len() <= 2000);
     }
 }

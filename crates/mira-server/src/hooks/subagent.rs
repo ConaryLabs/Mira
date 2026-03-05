@@ -231,6 +231,8 @@ pub async fn run_start() -> Result<()> {
                 latency_ms: None,
                 was_deduped: false,
                 was_cached: false,
+                content: None,
+                categories: vec![],
             },
         );
 

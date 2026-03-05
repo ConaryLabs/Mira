@@ -22,11 +22,25 @@ pub fn migrate_context_injections_table(conn: &Connection) -> Result<()> {
             latency_ms INTEGER,
             was_deduped INTEGER NOT NULL DEFAULT 0,
             was_cached INTEGER NOT NULL DEFAULT 0,
+            content TEXT,
+            categories TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_ctx_inj_session ON context_injections(session_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ctx_inj_hook ON context_injections(hook_name, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ctx_inj_project ON context_injections(project_id, created_at DESC);
     "#,
-    )
+    )?;
+
+    // ALTER TABLE fallback for existing databases (silently ignored if columns already exist)
+    let _ = conn.execute(
+        "ALTER TABLE context_injections ADD COLUMN content TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE context_injections ADD COLUMN categories TEXT",
+        [],
+    );
+
+    Ok(())
 }

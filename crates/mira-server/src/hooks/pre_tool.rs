@@ -343,6 +343,8 @@ pub async fn run() -> Result<()> {
                     latency_ms: None,
                     was_deduped: false,
                     was_cached: false,
+                    content: None,
+                    categories: vec![],
                 },
             );
             let output = serde_json::json!({
@@ -493,6 +495,8 @@ async fn handle_edit_write_patterns(
                 latency_ms: None,
                 was_deduped: false,
                 was_cached: false,
+                content: None,
+                categories: vec![],
             },
         );
         serde_json::json!({

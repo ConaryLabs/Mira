@@ -378,6 +378,8 @@ pub async fn run() -> Result<()> {
                 latency_ms: Some(inject_start.elapsed().as_millis() as u64),
                 was_deduped: false,
                 was_cached: false,
+                content: None,
+                categories: vec![],
             },
         );
 
