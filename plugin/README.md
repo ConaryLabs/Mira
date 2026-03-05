@@ -79,7 +79,7 @@ claude --plugin-dir /path/to/Mira/plugin
 
 ## MCP Tools
 
-The plugin bundles the Mira MCP server with 8 MCP tools:
+The plugin bundles the Mira MCP server with 7 MCP tools:
 
 | Tool | Actions | Purpose |
 |------|---------|---------|
@@ -90,7 +90,7 @@ The plugin bundles the Mira MCP server with 8 MCP tools:
 | `insights` | insights, dismiss_insight | Background analysis digest and health dashboard |
 | `goal` | create, list, update, add_milestone, complete_milestone, ... | Cross-session goal tracking |
 | `index` | project, file, status | Code indexing |
-| `recipe` | list, get | Agentic team workflow recipes |
+| `launch` | *(single purpose)* | Launch agent teams from `.claude/agents/` definitions |
 
 Additional actions (documentation, team, and advanced session/code/index actions) are available via `mira tool <name> '<json>'` CLI.
 

@@ -79,8 +79,8 @@ After presenting the hardening backlog, ask the user if they want fixes implemen
 /mira:qa-hardening
 -> Prompts for what to review, then spawns all 4 agents
 
-/mira:qa-hardening Review the recipe system
--> All 4 agents review the recipe code for production readiness
+/mira:qa-hardening Review the authentication module
+-> All 4 agents review the auth code for production readiness
 
 /mira:qa-hardening --members kali,orin
 -> Only spawns Kali (security) and Orin (error-handling)
