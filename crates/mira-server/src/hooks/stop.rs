@@ -29,12 +29,23 @@ impl StopInput {
     }
 }
 
-/// Clear the global session ID file so the status line doesn't show stale data between sessions.
-fn clear_global_session_file() {
+/// Clear session identity so the status line doesn't show stale data between sessions.
+/// Clears both the file (`~/.mira/claude-session-id`) and the DB `active_session_id`.
+fn clear_session_identity() {
+    // Clear file
     let path = crate::hooks::session::session_file_path();
     if path.exists() {
         if let Err(e) = std::fs::write(&path, "") {
             tracing::debug!("Failed to clear session ID file: {e}");
+        }
+    }
+    // Clear DB fallback
+    if let Some(home) = dirs::home_dir() {
+        let db_path = home.join(".mira/mira.db");
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+            if let Err(e) = crate::db::delete_server_state_sync(&conn, "active_session_id") {
+                tracing::debug!("Failed to clear active_session_id from DB: {e}");
+            }
         }
     }
 }
@@ -124,8 +135,8 @@ pub async fn run() -> Result<()> {
     // Snapshot native Claude Code tasks
     snapshot_tasks(&mut client, project_id, &stop_input.session_id, false).await;
 
-    // Clear global session ID file so the status line doesn't show stale assists
-    clear_global_session_file();
+    // Clear session identity so the status line doesn't show stale assists
+    clear_session_identity();
 
     write_hook_output(&output);
     Ok(())
@@ -188,8 +199,8 @@ pub async fn run_session_end() -> Result<()> {
         crate::hooks::session::cleanup_per_session_dir(session_id);
     }
 
-    // Clear global session ID file so the status line doesn't show stale assists
-    clear_global_session_file();
+    // Clear session identity so the status line doesn't show stale assists
+    clear_session_identity();
 
     write_hook_output(&serde_json::json!({}));
     Ok(())
