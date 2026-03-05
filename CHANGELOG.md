@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.6] - 2026-03-05
+
+### Added
+- **Injection content tracking** -- `context_injections` table now captures `content` and `categories` columns, enabling post-hoc analysis of what each hook actually injected.
+- **Injection category capture in all hooks** -- Every injection hook now records content body and category tags alongside existing stats.
+- **Stderr activity summaries** -- All injection hooks append human-readable activity summaries to stderr, showing injection counts and char totals.
+- **`[Mira/activity]` tag** -- Injected context lines are tagged with `[Mira/activity]` for easy filtering in session logs.
+- **Value heuristic correlation queries** -- Status dashboard queries correlate injection activity with session outcomes to surface value signals.
+- **Enhanced status dashboard** -- `/mira:status` now includes injection activity stats, value signal percentages, and an activity dashboard reference.
+
+### Changed
+- **Status line redesign** -- Status line output uses value-focused metrics with dim prefix styling, replacing the previous verbose format.
+- **Recipe references removed** -- Stale recipe references cleaned from README, skills, and settings following the recipe system removal in 0.9.5.
+
+### Fixed
+- **Content truncation allocation** -- Avoided unnecessary `String` allocation in content truncation path; added UTF-8 boundary safety test.
+- **SubagentStart stderr char count** -- Char count now included in SubagentStart stderr output for consistency with other hooks.
+- **Value signal rounding** -- Percentages in value signals dashboard are now rounded to avoid fractional display.
+
+### Removed
+- **`PermissionRequest` hook reference** -- Removed from README; this hook was never implemented.
+
+---
+
 ## [0.9.5] - 2026-02-28
 
 ### Added
