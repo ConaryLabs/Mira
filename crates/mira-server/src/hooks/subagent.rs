@@ -96,9 +96,8 @@ impl SubagentStopInput {
 /// Run SubagentStart hook
 ///
 /// Injects relevant Mira context when a subagent spawns:
-/// 1. Active goals related to current work
-/// 2. Recent decisions about relevant code areas (via embeddings or keyword fallback)
-/// 3. Key memories that might help the subagent
+/// - Full subagents (Plan, general-purpose): goals + code bundle
+/// - Narrow subagents (Explore, code-reviewer): project map + search hints
 pub async fn run_start() -> Result<()> {
     let _timer = HookTimer::start("SubagentStart");
     let input = read_hook_input().context("Failed to parse hook input from stdin")?;
@@ -137,68 +136,74 @@ pub async fn run_start() -> Result<()> {
     let narrow = is_narrow_subagent(&start_input.subagent_type);
     let context_cap = MAX_CONTEXT_CHARS_FULL;
 
-    // Get active goals -- skip for narrow/exploratory subagents (goals are
-    // strategic context, not useful for focused search/review tasks).
-    // Also skip if SessionStart already injected goals this session to avoid duplication.
-    let goals_already_shown =
-        crate::hooks::session::were_goals_shown(Some(&start_input.session_id));
-    if !narrow && !goals_already_shown {
-        let goal_lines = client.get_active_goals(project_id, 3).await;
-        if !goal_lines.is_empty() {
-            let label = if project_label.is_empty() {
-                "[Mira/goals]".to_string()
-            } else {
-                format!("[Mira/goals ({})]", project_label)
-            };
-            context_parts.push(format!(
-                "{} Active goals:\n{}",
-                label,
-                goal_lines.join("\n")
-            ));
-        }
-    }
+    let mut sources_kept = Vec::new();
 
-    // Auto-bundle: inject code context based on the task description.
-    // Extract file path scopes from the prompt, then generate a lightweight bundle.
-    // Falls back to keyword-based scopes when no file paths are found.
-    let mut bundle_injected = false;
-    if !narrow && let Some(ref task_desc) = start_input.task_description {
-        let mut scopes = extract_scopes_from_prompt(task_desc);
+    if narrow {
+        // Narrow subagents get project map + search hints for orientation
+        // instead of goals + bundle (which require specific file paths).
 
-        // Semantic fallback: if no file paths found, extract keywords and use
-        // them as scope patterns (matched via LIKE against module paths in the index)
-        if scopes.is_empty() {
-            scopes = extract_keyword_scopes(task_desc);
+        // 1. Always try project map (compact directory overview)
+        if let Some(map) = client.get_project_map(project_id, 500).await {
+            context_parts.push(map);
+            sources_kept.push("project_map".to_string());
         }
 
-        for scope in scopes.iter().take(2) {
-            if let Some(bundle) = client
-                .generate_bundle(project_id, scope, BUNDLE_BUDGET, "overview")
+        // 2. Try search hints from task description
+        if let Some(ref task_desc) = start_input.task_description {
+            if let Some(hints) = client
+                .search_for_subagent(project_id, task_desc, 5, 1000)
                 .await
             {
-                context_parts.push(bundle);
-                bundle_injected = true;
-                break; // One bundle is enough
+                context_parts.push(hints);
+                sources_kept.push("search_hints".to_string());
             }
         }
-    }
+    } else {
+        // Full subagents get goals + code bundle
 
-    // Track whether goals were actually injected into context_parts.
-    // Narrow subagents skip goals entirely, and even full subagents may have
-    // no active goals -- only log "goals" when content was actually added.
-    let goals_injected = !narrow
-        && context_parts
-            .first()
-            .map(|p| p.contains("[Mira/goals"))
-            .unwrap_or(false);
+        // Get active goals (skip if SessionStart already showed them)
+        let goals_already_shown =
+            crate::hooks::session::were_goals_shown(Some(&start_input.session_id));
+        if !goals_already_shown {
+            let goal_lines = client.get_active_goals(project_id, 3).await;
+            if !goal_lines.is_empty() {
+                let label = if project_label.is_empty() {
+                    "[Mira/goals]".to_string()
+                } else {
+                    format!("[Mira/goals ({})]", project_label)
+                };
+                context_parts.push(format!(
+                    "{} Active goals:\n{}",
+                    label,
+                    goal_lines.join("\n")
+                ));
+                sources_kept.push("goals".to_string());
+            }
+        }
 
-    // Build output, truncating to stay under token budget
-    let mut sources_kept = Vec::new();
-    if goals_injected {
-        sources_kept.push("goals".to_string());
-    }
-    if bundle_injected {
-        sources_kept.push("bundle".to_string());
+        // Auto-bundle: inject code context based on the task description.
+        // Extract file path scopes from the prompt, then generate a lightweight bundle.
+        // Falls back to keyword-based scopes when no file paths are found.
+        if let Some(ref task_desc) = start_input.task_description {
+            let mut scopes = extract_scopes_from_prompt(task_desc);
+
+            // Semantic fallback: if no file paths found, extract keywords and use
+            // them as scope patterns (matched via LIKE against module paths in the index)
+            if scopes.is_empty() {
+                scopes = extract_keyword_scopes(task_desc);
+            }
+
+            for scope in scopes.iter().take(2) {
+                if let Some(bundle) = client
+                    .generate_bundle(project_id, scope, BUNDLE_BUDGET, "overview")
+                    .await
+                {
+                    context_parts.push(bundle);
+                    sources_kept.push("bundle".to_string());
+                    break; // One bundle is enough
+                }
+            }
+        }
     }
 
     let output = if context_parts.is_empty() {
