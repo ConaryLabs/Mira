@@ -46,9 +46,10 @@ pub fn insert_injection_sync(conn: &Connection, record: &InjectionRecord) -> Res
     } else {
         Some(record.sources_dropped.join(","))
     };
-    let content = record.content.as_deref().map(|c| {
-        crate::utils::truncate_at_boundary(c, 2000).to_string()
-    });
+    let content = record
+        .content
+        .as_deref()
+        .map(|c| crate::utils::truncate_at_boundary(c, 2000));
     let categories = if record.categories.is_empty() {
         None
     } else {
@@ -357,5 +358,25 @@ mod tests {
             )
             .unwrap();
         assert!(stored.len() <= 2000);
+    }
+
+    #[test]
+    fn test_content_truncated_utf8_safe() {
+        let conn = setup_db();
+        let mut record = make_record("SessionStart", Some("session-1"));
+        // Each char is 2 bytes; 1100 chars = 2200 bytes, exceeds 2000 byte limit
+        record.content = Some("\u{00e9}".repeat(1100));
+        let id = insert_injection_sync(&conn, &record).unwrap();
+
+        let stored: String = conn
+            .query_row(
+                "SELECT content FROM context_injections WHERE id = ?",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stored.len() <= 2000);
+        // Verify it's valid UTF-8 (would panic on invalid)
+        assert!(stored.chars().all(|c| c == '\u{00e9}'));
     }
 }
