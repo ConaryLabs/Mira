@@ -247,10 +247,8 @@ pub fn compute_value_heuristics_sync(
     session_id: Option<&str>,
     project_id: Option<i64>,
 ) -> Result<ValueHeuristics> {
-    let mut h = ValueHeuristics::default();
-
     // 1. File reread hints count
-    h.file_reread_hints = conn.query_row(
+    let file_reread_hints = conn.query_row(
         "SELECT COUNT(*) FROM context_injections
          WHERE hook_name = 'PreToolUse' AND categories LIKE '%reread%'
          AND (?1 IS NULL OR session_id = ?1)
@@ -260,7 +258,7 @@ pub fn compute_value_heuristics_sync(
     )? as u64;
 
     // 2. Subagent context loads vs total
-    h.subagent_context_loads = conn.query_row(
+    let subagent_context_loads = conn.query_row(
         "SELECT COUNT(*) FROM context_injections
          WHERE hook_name = 'SubagentStart' AND chars_injected > 0
          AND (?1 IS NULL OR session_id = ?1)
@@ -269,7 +267,7 @@ pub fn compute_value_heuristics_sync(
         |row| row.get::<_, i64>(0),
     )? as u64;
 
-    h.subagent_total = conn.query_row(
+    let subagent_total = conn.query_row(
         "SELECT COUNT(*) FROM context_injections
          WHERE hook_name = 'SubagentStart'
          AND (?1 IS NULL OR session_id = ?1)
@@ -279,7 +277,7 @@ pub fn compute_value_heuristics_sync(
     )? as u64;
 
     // 3. Goal awareness: sessions with goal injection that also had goal tool calls
-    h.goal_injected_sessions = conn.query_row(
+    let goal_injected_sessions = conn.query_row(
         "SELECT COUNT(DISTINCT session_id) FROM context_injections
          WHERE categories LIKE '%goals%' AND chars_injected > 0
          AND (?1 IS NULL OR session_id = ?1)
@@ -298,8 +296,9 @@ pub fn compute_value_heuristics_sync(
         )
         .unwrap_or(false);
 
+    let mut goal_aware_sessions = 0u64;
     if has_tool_history {
-        h.goal_aware_sessions = conn.query_row(
+        goal_aware_sessions = conn.query_row(
             "SELECT COUNT(DISTINCT ci.session_id) FROM context_injections ci
              INNER JOIN tool_history th ON th.session_id = ci.session_id AND th.tool_name = 'goal'
              WHERE ci.categories LIKE '%goals%' AND ci.chars_injected > 0
@@ -310,7 +309,13 @@ pub fn compute_value_heuristics_sync(
         )? as u64;
     }
 
-    Ok(h)
+    Ok(ValueHeuristics {
+        file_reread_hints,
+        subagent_context_loads,
+        subagent_total,
+        goal_injected_sessions,
+        goal_aware_sessions,
+    })
 }
 
 #[cfg(test)]

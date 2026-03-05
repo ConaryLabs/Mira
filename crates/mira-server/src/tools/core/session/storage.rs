@@ -228,45 +228,45 @@ pub(super) async fn storage_status<C: ToolContext>(
     if has_session_activity || has_cumulative_activity {
         report.push_str("\n### Activity\n");
 
-        if let Some(ref stats) = session_stats {
-            if stats.total_injections > 0 {
-                report.push_str("**This session:**\n");
+        if let Some(ref stats) = session_stats
+            && stats.total_injections > 0
+        {
+            report.push_str("**This session:**\n");
+            report.push_str(&format!(
+                "- Context delivered: {} injections ({})\n",
+                stats.total_injections,
+                format_chars_as_kb(stats.total_chars)
+            ));
+            if stats.total_deduped > 0 {
                 report.push_str(&format!(
-                    "- Context delivered: {} injections ({})\n",
-                    stats.total_injections,
-                    format_chars_as_kb(stats.total_chars)
+                    "- Deduped (suppressed): {}\n",
+                    stats.total_deduped
                 ));
-                if stats.total_deduped > 0 {
-                    report.push_str(&format!(
-                        "- Deduped (suppressed): {}\n",
-                        stats.total_deduped
-                    ));
-                }
-                if let Some(ref cats) = session_categories {
-                    if !cats.is_empty() {
-                        let mut sorted: Vec<_> = cats.iter().collect();
-                        sorted.sort_by(|a, b| b.1.cmp(a.1));
-                        let parts: Vec<String> =
-                            sorted.iter().map(|(k, v)| format!("{} ({})", k, v)).collect();
-                        report.push_str(&format!("- Sources: {}\n", parts.join(", ")));
-                    }
-                }
+            }
+            if let Some(ref cats) = session_categories
+                && !cats.is_empty()
+            {
+                let mut sorted: Vec<_> = cats.iter().collect();
+                sorted.sort_by(|a, b| b.1.cmp(a.1));
+                let parts: Vec<String> =
+                    sorted.iter().map(|(k, v)| format!("{} ({})", k, v)).collect();
+                report.push_str(&format!("- Sources: {}\n", parts.join(", ")));
             }
         }
 
-        if let Some(ref stats) = cumulative_stats {
-            if stats.total_injections > 0 {
-                report.push_str("**All time:**\n");
-                report.push_str(&format!(
-                    "- Context delivered: {} injections ({})\n",
-                    stats.total_injections,
-                    format_chars_as_kb(stats.total_chars)
-                ));
-                if let Some(tracked) = tracked_sessions {
-                    report.push_str(&format!("- Sessions tracked: {}\n", tracked));
-                }
-                report.push_str(&format!("- Goals tracked: {}\n", goals));
+        if let Some(ref stats) = cumulative_stats
+            && stats.total_injections > 0
+        {
+            report.push_str("**All time:**\n");
+            report.push_str(&format!(
+                "- Context delivered: {} injections ({})\n",
+                stats.total_injections,
+                format_chars_as_kb(stats.total_chars)
+            ));
+            if let Some(tracked) = tracked_sessions {
+                report.push_str(&format!("- Sessions tracked: {}\n", tracked));
             }
+            report.push_str(&format!("- Goals tracked: {}\n", goals));
         }
     }
 
