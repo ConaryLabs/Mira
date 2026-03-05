@@ -107,6 +107,13 @@ pub(super) async fn storage_status<C: ToolContext>(
             let tracked_sessions =
                 crate::db::injection::count_tracked_sessions(conn, project_id).ok();
 
+            // Value heuristics
+            let session_heuristics = session_id_clone.as_deref().and_then(|sid| {
+                crate::db::injection::compute_value_heuristics_sync(conn, Some(sid), None).ok()
+            });
+            let cumulative_heuristics =
+                crate::db::injection::compute_value_heuristics_sync(conn, None, project_id).ok();
+
             Ok::<_, String>((
                 sessions,
                 tool_history,
@@ -119,6 +126,8 @@ pub(super) async fn storage_status<C: ToolContext>(
                 session_categories,
                 cumulative_stats,
                 tracked_sessions,
+                session_heuristics,
+                cumulative_heuristics,
             ))
         })
         .await?;
@@ -135,6 +144,8 @@ pub(super) async fn storage_status<C: ToolContext>(
         session_categories,
         cumulative_stats,
         tracked_sessions,
+        session_heuristics,
+        cumulative_heuristics,
     ) = counts_and_activity;
 
     // Load retention config and count candidates
@@ -255,6 +266,70 @@ pub(super) async fn storage_status<C: ToolContext>(
                     report.push_str(&format!("- Sessions tracked: {}\n", tracked));
                 }
                 report.push_str(&format!("- Goals tracked: {}\n", goals));
+            }
+        }
+    }
+
+    // Value signals section
+    let show_value_signals = |h: &crate::db::injection::ValueHeuristics| -> Vec<String> {
+        let mut lines = Vec::new();
+        if h.file_reread_hints > 0 {
+            lines.push(format!(
+                "  Stale file re-reads prevented: ~{}",
+                h.file_reread_hints
+            ));
+        }
+        if h.subagent_total > 0 {
+            let pct = (h.subagent_context_loads as f64 / h.subagent_total as f64 * 100.0) as u64;
+            lines.push(format!(
+                "  Subagent context hits: {}% had pre-loaded context ({}/{})",
+                pct, h.subagent_context_loads, h.subagent_total
+            ));
+        }
+        if h.goal_injected_sessions > 0 {
+            let pct = if h.goal_aware_sessions > 0 {
+                (h.goal_aware_sessions as f64 / h.goal_injected_sessions as f64 * 100.0) as u64
+            } else {
+                0
+            };
+            if h.goal_aware_sessions > 0 {
+                lines.push(format!(
+                    "  Goal awareness: {}% of goal-injected sessions used goals ({}/{})",
+                    pct, h.goal_aware_sessions, h.goal_injected_sessions
+                ));
+            } else {
+                lines.push(format!(
+                    "  Goal-injected sessions: {}",
+                    h.goal_injected_sessions
+                ));
+            }
+        }
+        lines
+    };
+
+    let session_lines = session_heuristics
+        .as_ref()
+        .map(show_value_signals)
+        .unwrap_or_default();
+    let cumulative_lines = cumulative_heuristics
+        .as_ref()
+        .map(show_value_signals)
+        .unwrap_or_default();
+
+    if !session_lines.is_empty() || !cumulative_lines.is_empty() {
+        report.push_str("\n### Value Signals\n");
+        if !session_lines.is_empty() {
+            report.push_str("**This session:**\n");
+            for line in &session_lines {
+                report.push_str(line);
+                report.push('\n');
+            }
+        }
+        if !cumulative_lines.is_empty() {
+            report.push_str("**All time:**\n");
+            for line in &cumulative_lines {
+                report.push_str(line);
+                report.push('\n');
             }
         }
     }

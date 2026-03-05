@@ -226,6 +226,93 @@ pub fn get_category_breakdown_sync(
     Ok(counts)
 }
 
+/// Value heuristics -- correlation metrics showing whether injections are useful.
+#[derive(Debug, Default)]
+pub struct ValueHeuristics {
+    /// PreToolUse injections with reread advisory category
+    pub file_reread_hints: u64,
+    /// SubagentStart injections (subagents that got pre-loaded context)
+    pub subagent_context_loads: u64,
+    /// Total SubagentStart hooks (including ones with no injection)
+    pub subagent_total: u64,
+    /// Sessions that had goal injection AND subsequent goal tool calls
+    pub goal_aware_sessions: u64,
+    /// Sessions that had goal injection
+    pub goal_injected_sessions: u64,
+}
+
+/// Compute value heuristics -- correlation queries that show injection usefulness.
+pub fn compute_value_heuristics_sync(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project_id: Option<i64>,
+) -> Result<ValueHeuristics> {
+    let mut h = ValueHeuristics::default();
+
+    // 1. File reread hints count
+    h.file_reread_hints = conn.query_row(
+        "SELECT COUNT(*) FROM context_injections
+         WHERE hook_name = 'PreToolUse' AND categories LIKE '%reread%'
+         AND (?1 IS NULL OR session_id = ?1)
+         AND (?2 IS NULL OR project_id = ?2)",
+        params![session_id, project_id],
+        |row| row.get::<_, i64>(0),
+    )? as u64;
+
+    // 2. Subagent context loads vs total
+    h.subagent_context_loads = conn.query_row(
+        "SELECT COUNT(*) FROM context_injections
+         WHERE hook_name = 'SubagentStart' AND chars_injected > 0
+         AND (?1 IS NULL OR session_id = ?1)
+         AND (?2 IS NULL OR project_id = ?2)",
+        params![session_id, project_id],
+        |row| row.get::<_, i64>(0),
+    )? as u64;
+
+    h.subagent_total = conn.query_row(
+        "SELECT COUNT(*) FROM context_injections
+         WHERE hook_name = 'SubagentStart'
+         AND (?1 IS NULL OR session_id = ?1)
+         AND (?2 IS NULL OR project_id = ?2)",
+        params![session_id, project_id],
+        |row| row.get::<_, i64>(0),
+    )? as u64;
+
+    // 3. Goal awareness: sessions with goal injection that also had goal tool calls
+    h.goal_injected_sessions = conn.query_row(
+        "SELECT COUNT(DISTINCT session_id) FROM context_injections
+         WHERE categories LIKE '%goals%' AND chars_injected > 0
+         AND (?1 IS NULL OR session_id = ?1)
+         AND (?2 IS NULL OR project_id = ?2)",
+        params![session_id, project_id],
+        |row| row.get::<_, i64>(0),
+    )? as u64;
+
+    // For goal_aware_sessions, join with tool_history -- but tool_history may not exist
+    // in all contexts. Check if the table exists first.
+    let has_tool_history: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_history'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if has_tool_history {
+        h.goal_aware_sessions = conn.query_row(
+            "SELECT COUNT(DISTINCT ci.session_id) FROM context_injections ci
+             INNER JOIN tool_history th ON th.session_id = ci.session_id AND th.tool_name = 'goal'
+             WHERE ci.categories LIKE '%goals%' AND ci.chars_injected > 0
+             AND (?1 IS NULL OR ci.session_id = ?1)
+             AND (?2 IS NULL OR ci.project_id = ?2)",
+            params![session_id, project_id],
+            |row| row.get::<_, i64>(0),
+        )? as u64;
+    }
+
+    Ok(h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,5 +545,67 @@ mod tests {
         let breakdown = get_category_breakdown_sync(&conn, None, Some(1)).unwrap();
         assert_eq!(breakdown.get("goals"), Some(&1));
         assert_eq!(breakdown.get("tasks"), None);
+    }
+
+    #[test]
+    fn test_stale_reread_correlation() {
+        let conn = setup_db();
+        let mut record = make_record("PreToolUse", Some("s1"));
+        record.categories = vec!["reread advisory".into()];
+        record.content = Some("[Mira/efficiency] You already read tasks.rs".into());
+        insert_injection_sync(&conn, &record).unwrap();
+
+        let stats = compute_value_heuristics_sync(&conn, Some("s1"), None).unwrap();
+        assert!(stats.file_reread_hints > 0);
+    }
+
+    #[test]
+    fn test_subagent_context_heuristics() {
+        let conn = setup_db();
+
+        // Subagent with context
+        let mut r1 = make_record("SubagentStart", Some("s1"));
+        r1.chars_injected = 1200;
+        insert_injection_sync(&conn, &r1).unwrap();
+
+        // Subagent without context
+        let mut r2 = make_record("SubagentStart", Some("s1"));
+        r2.chars_injected = 0;
+        insert_injection_sync(&conn, &r2).unwrap();
+
+        let stats = compute_value_heuristics_sync(&conn, Some("s1"), None).unwrap();
+        assert_eq!(stats.subagent_context_loads, 1);
+        assert_eq!(stats.subagent_total, 2);
+    }
+
+    #[test]
+    fn test_goal_injected_sessions_heuristic() {
+        let conn = setup_db();
+
+        let mut r1 = make_record("UserPromptSubmit", Some("s1"));
+        r1.categories = vec!["goals".into()];
+        r1.chars_injected = 300;
+        insert_injection_sync(&conn, &r1).unwrap();
+
+        let mut r2 = make_record("UserPromptSubmit", Some("s2"));
+        r2.categories = vec!["goals".into()];
+        r2.chars_injected = 500;
+        insert_injection_sync(&conn, &r2).unwrap();
+
+        let stats = compute_value_heuristics_sync(&conn, None, None).unwrap();
+        assert_eq!(stats.goal_injected_sessions, 2);
+        // No tool_history table in test DB, so goal_aware_sessions stays 0
+        assert_eq!(stats.goal_aware_sessions, 0);
+    }
+
+    #[test]
+    fn test_value_heuristics_empty() {
+        let conn = setup_db();
+        let stats = compute_value_heuristics_sync(&conn, Some("nonexistent"), None).unwrap();
+        assert_eq!(stats.file_reread_hints, 0);
+        assert_eq!(stats.subagent_context_loads, 0);
+        assert_eq!(stats.subagent_total, 0);
+        assert_eq!(stats.goal_injected_sessions, 0);
+        assert_eq!(stats.goal_aware_sessions, 0);
     }
 }
