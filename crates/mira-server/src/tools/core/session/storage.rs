@@ -96,7 +96,7 @@ pub(super) async fn storage_status<C: ToolContext>(
 
             // Injection activity stats
             let session_stats = session_id_clone.as_deref().and_then(|sid| {
-                crate::db::injection::get_injection_stats_for_session(conn, sid).ok()
+                crate::db::injection::get_injection_stats_for_session(conn, sid, project_id).ok()
             });
             let session_categories = session_id_clone.as_deref().and_then(|sid| {
                 crate::db::injection::get_category_breakdown_sync(conn, Some(sid), None).ok()

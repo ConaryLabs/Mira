@@ -153,6 +153,7 @@ pub fn run(
                     let stats = match mira::db::injection::get_injection_stats_for_session(
                         &conn,
                         &session_id,
+                        None,
                     ) {
                         Ok(s) => s,
                         Err(e) => {

@@ -200,6 +200,8 @@ async fn init_server_context() -> Result<ServerContext> {
                 let path_str = path_to_string(&cwd);
                 if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None)
                 {
+                    // Persist CWD-based project so hooks and DB fallback stay in sync
+                    let _ = mira::db::save_active_project_sync(conn, &path_str);
                     return Ok(Some(ProjectContext {
                         id,
                         path: path_str,
@@ -281,9 +283,83 @@ fn check_dev_mode_collision() {
     }
 }
 
+/// Kill stale `mira serve` processes that hold database locks and would block
+/// our startup.  Only targets processes whose binary path matches ours (avoids
+/// killing unrelated programs) and that are NOT our own PID.
+fn kill_stale_mira_processes() {
+    #[cfg(unix)]
+    {
+        use std::fs;
+
+        let my_pid = std::process::id();
+        let my_exe = fs::read_link("/proc/self/exe").ok();
+
+        let Ok(entries) = fs::read_dir("/proc") else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let pid_str = entry.file_name();
+            let Some(pid_str) = pid_str.to_str() else {
+                continue;
+            };
+            let Ok(pid) = pid_str.parse::<u32>() else {
+                continue;
+            };
+            if pid == my_pid {
+                continue;
+            }
+
+            // Check if the process is a mira binary
+            let exe_path = match fs::read_link(format!("/proc/{pid}/exe")) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            // Must be the same binary (or a symlink to it) as us
+            if let Some(ref my) = my_exe {
+                if exe_path != *my
+                    && fs::read_link(&exe_path).ok().as_ref() != Some(my)
+                    && my_exe.as_ref().and_then(|p| fs::read_link(p).ok()) != Some(exe_path.clone())
+                {
+                    // Also check if both resolve to the same real path
+                    let real_exe = fs::canonicalize(&exe_path).ok();
+                    let real_my = my.canonicalize().ok();
+                    if real_exe != real_my || real_exe.is_none() {
+                        continue;
+                    }
+                }
+            }
+
+            // Check cmdline for "serve"
+            let cmdline = match fs::read_to_string(format!("/proc/{pid}/cmdline")) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let args: Vec<&str> = cmdline.split('\0').collect();
+            if !args.iter().any(|a| *a == "serve") {
+                continue;
+            }
+
+            eprintln!(
+                "[mira] Killing stale mira serve process (PID {pid}) that may hold database locks"
+            );
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+        }
+
+        // Brief pause for processes to exit and release locks
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 /// Run the MCP server with stdio transport
 pub async fn run_mcp_server() -> Result<()> {
+    kill_stale_mira_processes();
+
     let ctx = init_server_context().await?;
+
     let mut server = ctx.server;
     let _pool = ctx.pool;
     let _env_config = ctx.env_config;

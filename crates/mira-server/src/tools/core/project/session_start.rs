@@ -88,7 +88,7 @@ async fn load_recent_sessions<C: ToolContext>(
             let mut result = Vec::new();
             for sess in sessions.into_iter().filter(|s| s.id != sid_owned).take(3) {
                 let (tool_count, tools) =
-                    get_session_stats_sync(conn, &sess.id).unwrap_or((0, vec![]));
+                    get_session_stats_sync(conn, &sess.id, Some(project_id)).unwrap_or((0, vec![]));
                 result.push((sess.id, sess.last_activity, sess.summary, tool_count, tools));
             }
             Ok::<_, String>(result)

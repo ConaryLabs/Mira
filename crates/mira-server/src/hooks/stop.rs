@@ -87,7 +87,7 @@ pub async fn run() -> Result<()> {
         let sid = stop_input.session_id.clone();
         if let Ok(stats) = pool
             .interact(move |conn| {
-                crate::db::injection::get_injection_stats_for_session(conn, &sid)
+                crate::db::injection::get_injection_stats_for_session(conn, &sid, None)
                     .map_err(|e| anyhow::anyhow!(e))
             })
             .await
@@ -228,7 +228,7 @@ pub(crate) fn build_session_summary(
     // Get stats from both sources and pick the richer one.
     // Compare total event counts (including file_access for behavior) to match
     // the background worker's line-count comparison in session_summaries.rs.
-    let (tool_count, top_tools) = match crate::db::get_session_stats_sync(conn, session_id) {
+    let (tool_count, top_tools) = match crate::db::get_session_stats_sync(conn, session_id, None) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("Session stats query failed for {}: {}", session_id, e);
@@ -343,7 +343,7 @@ fn read_existing_compaction(
 pub(crate) fn save_session_snapshot(conn: &rusqlite::Connection, session_id: &str) -> Result<()> {
     // Get tool count and top tools
     let (tool_count, top_tools) =
-        crate::db::get_session_stats_sync(conn, session_id).unwrap_or((0, Vec::new()));
+        crate::db::get_session_stats_sync(conn, session_id, None).unwrap_or((0, Vec::new()));
 
     if tool_count == 0 {
         // Fallback: check behavior log for native Claude Code tool usage

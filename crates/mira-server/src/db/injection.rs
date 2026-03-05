@@ -28,6 +28,12 @@ pub struct InjectionRecord {
 pub fn record_injection_fire_and_forget(db_path: &std::path::Path, record: &InjectionRecord) {
     match Connection::open(db_path) {
         Ok(conn) => {
+            // Ensure columns added by newer migrations exist (hooks don't run full migrations)
+            let _ = conn.execute("ALTER TABLE context_injections ADD COLUMN content TEXT", []);
+            let _ = conn.execute(
+                "ALTER TABLE context_injections ADD COLUMN categories TEXT",
+                [],
+            );
             if let Err(e) = insert_injection_sync(&conn, record) {
                 tracing::debug!("record injection: {e}");
             }
@@ -92,10 +98,12 @@ pub struct InjectionStats {
     pub avg_latency_ms: Option<f64>,
 }
 
-/// Query injection stats for a session
+/// Query injection stats for a session.
+/// When `project_id` is provided, only includes injections for that project.
 pub fn get_injection_stats_for_session(
     conn: &Connection,
     session_id: &str,
+    project_id: Option<i64>,
 ) -> Result<InjectionStats> {
     let mut stmt = conn.prepare(
         "SELECT
@@ -106,10 +114,10 @@ pub fn get_injection_stats_for_session(
             COALESCE(AVG(chars_injected), 0) as avg_chars,
             AVG(latency_ms) as avg_latency_ms
         FROM context_injections
-        WHERE session_id = ?",
+        WHERE session_id = ?1 AND (?2 IS NULL OR project_id = ?2)",
     )?;
 
-    let stats = stmt.query_row(params![session_id], |row| {
+    let stats = stmt.query_row(params![session_id, project_id], |row| {
         Ok(InjectionStats {
             total_injections: row.get::<_, i64>(0)? as u64,
             total_chars: row.get::<_, i64>(1)? as u64,
@@ -384,7 +392,7 @@ mod tests {
         deduped.chars_injected = 0;
         insert_injection_sync(&conn, &deduped).unwrap();
 
-        let stats = get_injection_stats_for_session(&conn, "s1").unwrap();
+        let stats = get_injection_stats_for_session(&conn, "s1", None).unwrap();
         assert_eq!(stats.total_injections, 3);
         assert_eq!(stats.total_chars, 1000); // 500 + 500 + 0
         assert_eq!(stats.total_deduped, 1);
@@ -394,7 +402,7 @@ mod tests {
     #[test]
     fn test_session_stats_empty() {
         let conn = setup_db();
-        let stats = get_injection_stats_for_session(&conn, "nonexistent").unwrap();
+        let stats = get_injection_stats_for_session(&conn, "nonexistent", None).unwrap();
         assert_eq!(stats.total_injections, 0);
         assert_eq!(stats.total_chars, 0);
     }

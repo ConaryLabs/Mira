@@ -612,6 +612,7 @@ pub async fn register_session(server: &MiraServer, params: Value) -> Result<Valu
                 Some(&source),
                 None,
             )?;
+            crate::db::set_server_state_sync(conn, "active_session_id", &session_id)?;
             conn.execute(
                 "INSERT INTO session_behavior_log (session_id, event_type, event_data) \
                  VALUES (?1, 'session_start', ?2)",
@@ -750,7 +751,8 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
                     tracing::warn!("[mira] Session snapshot failed: {}", e);
                 }
                 // Best-effort: close may fail if session was already closed
-                if let Err(e) = crate::db::close_session_sync(conn, &session_id, summary.as_deref())
+                if let Err(e) =
+                    crate::db::close_session_sync(conn, &session_id, summary.as_deref(), None)
                 {
                     tracing::warn!("[mira] Failed to close session: {e}");
                 }

@@ -110,6 +110,7 @@ const BENIGN_ERRORS: &[(&str, &str)] = &[
     ("glob", "no files found"),
     ("grep", "no matches"),
     ("grep", "no results"),
+    ("task", "does not exist"),
 ];
 
 /// Check if an error pattern is benign (expected normal behavior).

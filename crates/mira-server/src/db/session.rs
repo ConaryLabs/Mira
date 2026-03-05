@@ -310,11 +310,27 @@ pub fn build_session_recap_sync(conn: &Connection, project_id: Option<i64>) -> S
     recap_parts.join("\n\n")
 }
 
-/// Get tool call count and unique tools for a session - sync version
+/// Get tool call count and unique tools for a session - sync version.
+/// When `project_id` is provided, validates the session belongs to that project.
 pub fn get_session_stats_sync(
     conn: &Connection,
     session_id: &str,
+    project_id: Option<i64>,
 ) -> rusqlite::Result<(usize, Vec<String>)> {
+    // Verify session belongs to project (defense-in-depth)
+    if let Some(pid) = project_id {
+        let belongs: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = ? AND project_id = ?",
+                params![session_id, pid],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !belongs {
+            return Ok((0, vec![]));
+        }
+    }
+
     // Get count
     let count: usize = conn.query_row(
         "SELECT COUNT(*) FROM tool_history WHERE session_id = ?",
@@ -338,16 +354,18 @@ pub fn get_session_stats_sync(
     Ok((count, tools))
 }
 
-/// Close a session by setting its status to completed and optionally adding a summary
+/// Close a session by setting its status to completed and optionally adding a summary.
+/// When `project_id` is provided, only closes the session if it belongs to that project.
 pub fn close_session_sync(
     conn: &Connection,
     session_id: &str,
     summary: Option<&str>,
+    project_id: Option<i64>,
 ) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE sessions SET status = 'completed', summary = COALESCE(?2, summary), last_activity = datetime('now')
-         WHERE id = ?1",
-        params![session_id, summary],
+         WHERE id = ?1 AND (?3 IS NULL OR project_id = ?3)",
+        params![session_id, summary, project_id],
     )?;
     Ok(())
 }
@@ -373,11 +391,27 @@ pub fn get_stale_sessions_sync(
     rows.collect()
 }
 
-/// Get tool history summary for a session (for LLM summarization)
+/// Get tool history summary for a session (for LLM summarization).
+/// When `project_id` is provided, validates the session belongs to that project.
 pub fn get_session_tool_summary_sync(
     conn: &Connection,
     session_id: &str,
+    project_id: Option<i64>,
 ) -> rusqlite::Result<String> {
+    // Verify session belongs to project (defense-in-depth)
+    if let Some(pid) = project_id {
+        let belongs: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = ? AND project_id = ?",
+                params![session_id, pid],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !belongs {
+            return Ok(String::new());
+        }
+    }
+
     let mut stmt = conn.prepare(
         "SELECT tool_name, arguments, result_summary, success
          FROM tool_history
@@ -436,10 +470,26 @@ pub fn get_sessions_needing_summary_sync(
 
 /// Get session tool summary from behavior log (fallback when tool_history is empty).
 /// Returns formatted text similar to get_session_tool_summary_sync.
+/// When `project_id` is provided, validates the session belongs to that project.
 pub fn get_session_behavior_summary_sync(
     conn: &Connection,
     session_id: &str,
+    project_id: Option<i64>,
 ) -> rusqlite::Result<String> {
+    // Verify session belongs to project (defense-in-depth)
+    if let Some(pid) = project_id {
+        let belongs: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sessions WHERE id = ? AND project_id = ?",
+                params![session_id, pid],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !belongs {
+            return Ok(String::new());
+        }
+    }
+
     let mut stmt = conn.prepare(
         "SELECT event_type, event_data
          FROM session_behavior_log
@@ -488,15 +538,17 @@ pub fn get_session_behavior_summary_sync(
     Ok(entries.join("\n"))
 }
 
-/// Update session summary (for background worker)
+/// Update session summary (for background worker).
+/// When `project_id` is provided, only updates if the session belongs to that project.
 pub fn update_session_summary_sync(
     conn: &Connection,
     session_id: &str,
     summary: &str,
+    project_id: Option<i64>,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "UPDATE sessions SET summary = ? WHERE id = ?",
-        params![summary, session_id],
+        "UPDATE sessions SET summary = ? WHERE id = ?2 AND (?3 IS NULL OR project_id = ?3)",
+        params![summary, session_id, project_id],
     )?;
     Ok(())
 }

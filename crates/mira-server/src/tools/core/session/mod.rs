@@ -207,8 +207,9 @@ async fn get_injection_report<C: ToolContext>(
 
             if let Some(sid) = &session_id {
                 // Session-specific report
-                let stats = crate::db::injection::get_injection_stats_for_session(conn, sid)
-                    .map_err(|e| e.to_string())?;
+                let stats =
+                    crate::db::injection::get_injection_stats_for_session(conn, sid, project_id)
+                        .map_err(|e| e.to_string())?;
 
                 if stats.total_injections == 0 {
                     return Ok::<_, String>("No injection data for this session.".to_string());

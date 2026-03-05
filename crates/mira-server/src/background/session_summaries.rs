@@ -54,11 +54,18 @@ async fn close_stale_sessions(pool: &Arc<DatabasePool>) -> Result<usize, String>
             None
         };
 
-        // Close the session
+        // Close the session (scoped to project for defense-in-depth)
         let session_id_clone = session_id.clone();
         let summary_clone = summary.clone();
         if let Err(e) = pool
-            .run(move |conn| close_session_sync(conn, &session_id_clone, summary_clone.as_deref()))
+            .run(move |conn| {
+                close_session_sync(
+                    conn,
+                    &session_id_clone,
+                    summary_clone.as_deref(),
+                    project_id,
+                )
+            })
             .await
         {
             tracing::debug!("Failed to close session (full id: {}): {}", session_id, e);
@@ -109,7 +116,7 @@ async fn generate_missing_summaries(pool: &Arc<DatabasePool>) -> Result<usize, S
             let summary_clone = summary.clone();
             if let Err(e) = pool
                 .run(move |conn| {
-                    update_session_summary_sync(conn, &session_id_clone, &summary_clone)
+                    update_session_summary_sync(conn, &session_id_clone, &summary_clone, project_id)
                 })
                 .await
             {
@@ -137,24 +144,26 @@ async fn generate_missing_summaries(pool: &Arc<DatabasePool>) -> Result<usize, S
 async fn generate_session_summary(
     pool: &Arc<DatabasePool>,
     session_id: &str,
-    _project_id: Option<i64>,
+    project_id: Option<i64>,
 ) -> Option<String> {
     // Get both sources and use whichever is richer.
     // This avoids the case where a session qualifies via behavior_log (>= 3 events)
     // but gets summarized from sparse tool_history because it was checked first.
     let session_id_clone = session_id.to_string();
+    let pid = project_id;
     let tool_summary = pool
         .interact(move |conn| {
-            get_session_tool_summary_sync(conn, &session_id_clone)
+            get_session_tool_summary_sync(conn, &session_id_clone, pid)
                 .map_err(|e| anyhow::anyhow!("Failed to get tool summary: {}", e))
         })
         .await
         .ok()?;
 
     let session_id_clone2 = session_id.to_string();
+    let pid2 = project_id;
     let behavior_summary = pool
         .interact(move |conn| {
-            get_session_behavior_summary_sync(conn, &session_id_clone2)
+            get_session_behavior_summary_sync(conn, &session_id_clone2, pid2)
                 .map_err(|e| anyhow::anyhow!("Failed to get behavior summary: {}", e))
         })
         .await
@@ -340,11 +349,18 @@ pub async fn close_session_now(
         }
     };
 
-    // Close the session
+    // Close the session (scoped to project for defense-in-depth)
     let session_id_clone = session_id.to_string();
     let summary_clone = summary.clone();
-    pool.run(move |conn| close_session_sync(conn, &session_id_clone, summary_clone.as_deref()))
-        .await?;
+    pool.run(move |conn| {
+        close_session_sync(
+            conn,
+            &session_id_clone,
+            summary_clone.as_deref(),
+            project_id,
+        )
+    })
+    .await?;
 
     Ok(summary)
 }

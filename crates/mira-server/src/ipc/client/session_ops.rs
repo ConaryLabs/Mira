@@ -196,7 +196,7 @@ impl super::HookClient {
                         tracing::warn!("[mira] Session snapshot failed: {}", e);
                     }
                     if let Err(e) =
-                        crate::db::close_session_sync(conn, &session_id, summary.as_deref())
+                        crate::db::close_session_sync(conn, &session_id, summary.as_deref(), None)
                     {
                         tracing::warn!("[mira] Failed to close session: {e}");
                     }

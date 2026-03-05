@@ -70,7 +70,7 @@ pub fn setup_test_connection() -> rusqlite::Connection {
 pub fn seed_session(conn: &Connection, session_id: &str, project_id: i64, status: &str) {
     super::create_session_sync(conn, session_id, Some(project_id)).unwrap();
     if status == "completed" {
-        super::close_session_sync(conn, session_id, None).unwrap();
+        super::close_session_sync(conn, session_id, None, Some(project_id)).unwrap();
     }
 }
 

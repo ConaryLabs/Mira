@@ -58,7 +58,7 @@ impl CorrelatedSession {
         session_id: &str,
     ) -> anyhow::Result<Self> {
         let summary = parser::parse_session_file(jsonl_path)?;
-        let stats = injection::get_injection_stats_for_session(conn, session_id)?;
+        let stats = injection::get_injection_stats_for_session(conn, session_id, None)?;
         let cal = super::calibration::calibrate_from_summary(&summary);
         Ok(Self::build(session_id, &summary, &stats, &cal))
     }

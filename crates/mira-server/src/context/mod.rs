@@ -221,7 +221,7 @@ impl ContextInjectionManager {
         let pool = self.pool.clone();
         pool.interact(move |conn| {
             // Get last active project path from server state
-            let path = get_server_state_sync(conn, "active_project_path")
+            let path = get_server_state_sync(conn, "active_project")
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
 
             if let Some(path) = path {

@@ -542,8 +542,12 @@ mod tests {
     async fn test_get_session_stats_empty() {
         let pool = setup_test_pool().await;
 
-        let (count, tools) = db!(pool, |conn| get_session_stats_sync(conn, "empty-session")
-            .map_err(Into::into));
+        let (count, tools) = db!(pool, |conn| get_session_stats_sync(
+            conn,
+            "empty-session",
+            None
+        )
+        .map_err(Into::into));
         assert_eq!(count, 0);
         assert_eq!(tools.len(), 0);
     }
@@ -595,8 +599,12 @@ mod tests {
         )
         .map_err(Into::into));
 
-        let (count, tools) = db!(pool, |conn| get_session_stats_sync(conn, "stats-session")
-            .map_err(Into::into));
+        let (count, tools) = db!(pool, |conn| get_session_stats_sync(
+            conn,
+            "stats-session",
+            None
+        )
+        .map_err(Into::into));
         assert_eq!(count, 6);
         assert_eq!(tools.len(), 3);
         // remember should be first (most used)
@@ -633,7 +641,8 @@ mod tests {
 
         let (_count, tools) = db!(pool, |conn| get_session_stats_sync(
             conn,
-            "top-five-session"
+            "top-five-session",
+            None
         )
         .map_err(Into::into));
         // Should only return top 5
@@ -786,8 +795,12 @@ mod tests {
         .map_err(Into::into));
 
         // Check stats
-        let (count, tools) = db!(pool, |conn| get_session_stats_sync(conn, "lifecycle-test")
-            .map_err(Into::into));
+        let (count, tools) = db!(pool, |conn| get_session_stats_sync(
+            conn,
+            "lifecycle-test",
+            None
+        )
+        .map_err(Into::into));
         assert_eq!(count, 2);
         assert_eq!(tools.len(), 2);
 

@@ -1,19 +1,19 @@
 {
-  "version": "0.9.6",
+  "version": "0.9.7",
   "name": "mira",
   "owner": {
     "name": "Conary Labs",
     "email": "peter@conary.io"
   },
   "metadata": {
-    "description": "Persistent context, semantic code intelligence, and team recipes for Claude Code"
+    "description": "Semantic memory, code intelligence, and persistent context for Claude Code"
   },
   "plugins": [
     {
       "name": "mira",
       "source": "./plugin",
-      "description": "Persistent context, semantic code intelligence, and team recipes for Claude Code.",
-      "version": "0.9.6",
+      "description": "Semantic memory, code intelligence, and persistent context for Claude Code. Cross-session goals, reactive hook context, agent team coordination, and background code analysis.",
+      "version": "0.9.7",
       "author": {
         "name": "Peter Permenter"
       },
@@ -27,7 +27,7 @@
         "goals",
         "mcp",
         "persistent-context",
-        "code-review",
+        "agent-teams",
         "session-history"
       ]
     }

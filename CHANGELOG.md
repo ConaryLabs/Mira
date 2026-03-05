@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.7] - 2026-03-05
+
+### Fixed
+- **Cross-project data leak in recaps** -- `active_project` DB key was never updated on MCP server startup when project was resolved from CWD, causing hooks and context injection to fall back to stale project data from previous sessions.
+- **Orphaned `active_project_path` key** -- Context injection module read a different server_state key (`active_project_path`) than what `save_active_project_sync` writes (`active_project`), causing project mismatch in reactive context.
+
+### Changed
+- **Project-scoped session operations** -- `close_session_sync`, `get_session_stats_sync`, `get_session_tool_summary_sync`, `get_session_behavior_summary_sync`, and `update_session_summary_sync` now accept an optional `project_id` parameter for defense-in-depth validation that sessions belong to the expected project.
+- **Project-scoped injection stats** -- `get_injection_stats_for_session` now accepts optional `project_id` to filter injection metrics by project.
+- **Background session summaries** -- Session summary generation and stale session cleanup now pass `project_id` through all DB operations for tighter project isolation.
+
+---
+
 ## [0.9.6] - 2026-03-05
 
 ### Added

@@ -83,8 +83,21 @@ fn query_pending(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
-/// Get the active session ID from server_state.
-fn query_active_session(conn: &Connection) -> Option<String> {
+/// Get the active session ID.
+/// Prefers the file written directly by the SessionStart hook (no IPC needed),
+/// falls back to server_state in the database.
+fn get_active_session_id(conn: &Connection) -> Option<String> {
+    // Primary: read from hook-written file (always available, no MCP dependency)
+    if let Some(home) = dirs::home_dir() {
+        let path = home.join(".mira/claude-session-id");
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+    // Fallback: database server_state
     conn.query_row(
         "SELECT value FROM server_state WHERE key = 'active_session_id'",
         [],
@@ -93,9 +106,8 @@ fn query_active_session(conn: &Connection) -> Option<String> {
     .ok()
 }
 
-/// Count non-deduped context injections (assists).
-/// If session_id is Some, scopes to that session; otherwise uses project_id.
-fn query_assists(conn: &Connection, session_id: Option<&str>, project_id: i64) -> i64 {
+/// Count non-deduped context injections (assists) for the active session.
+fn query_assists(conn: &Connection, session_id: Option<&str>) -> i64 {
     if let Some(sid) = session_id {
         conn.query_row(
             "SELECT COUNT(*) FROM context_injections \
@@ -105,23 +117,14 @@ fn query_assists(conn: &Connection, session_id: Option<&str>, project_id: i64) -
         )
         .unwrap_or(0)
     } else {
-        conn.query_row(
-            "SELECT COUNT(*) FROM context_injections \
-             WHERE project_id = ?1 AND was_deduped = 0",
-            [project_id],
-            |r| r.get(0),
-        )
-        .unwrap_or(0)
+        // No active session — don't show stale cross-session stats
+        0
     }
 }
 
-/// Query subagent context hit rate.
+/// Query subagent context hit rate for the active session.
 /// Returns (loads_with_context, total_subagent_starts).
-fn query_subagent_stats(
-    conn: &Connection,
-    session_id: Option<&str>,
-    project_id: i64,
-) -> (i64, i64) {
+fn query_subagent_stats(conn: &Connection, session_id: Option<&str>) -> (i64, i64) {
     if let Some(sid) = session_id {
         let loads = conn
             .query_row(
@@ -141,23 +144,8 @@ fn query_subagent_stats(
             .unwrap_or(0);
         (loads, total)
     } else {
-        let loads = conn
-            .query_row(
-                "SELECT COUNT(*) FROM context_injections \
-                 WHERE hook_name = 'SubagentStart' AND chars_injected > 0 AND project_id = ?1",
-                [project_id],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap_or(0);
-        let total = conn
-            .query_row(
-                "SELECT COUNT(*) FROM context_injections \
-                 WHERE hook_name = 'SubagentStart' AND project_id = ?1",
-                [project_id],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap_or(0);
-        (loads, total)
+        // No active session — don't show stale cross-session stats
+        (0, 0)
     }
 }
 
@@ -221,12 +209,12 @@ pub fn run() -> Result<()> {
     };
 
     // Get active session for session-scoped queries
-    let session_id = query_active_session(&main_conn);
+    let session_id = get_active_session_id(&main_conn);
     let sid_ref = session_id.as_deref();
 
     // Query value metrics from main DB
-    let assists = query_assists(&main_conn, sid_ref, project_id);
-    let (subagent_loads, subagent_total) = query_subagent_stats(&main_conn, sid_ref, project_id);
+    let assists = query_assists(&main_conn, sid_ref);
+    let (subagent_loads, subagent_total) = query_subagent_stats(&main_conn, sid_ref);
     let goals = query_goals(&main_conn, project_id);
     let alerts = query_alerts(&main_conn, project_id);
 
