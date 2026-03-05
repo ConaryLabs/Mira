@@ -29,6 +29,16 @@ impl StopInput {
     }
 }
 
+/// Clear the global session ID file so the status line doesn't show stale data between sessions.
+fn clear_global_session_file() {
+    let path = crate::hooks::session::session_file_path();
+    if path.exists() {
+        if let Err(e) = std::fs::write(&path, "") {
+            tracing::debug!("Failed to clear session ID file: {e}");
+        }
+    }
+}
+
 /// Run Stop hook
 ///
 /// This hook fires when Claude finishes responding. We can:
@@ -114,6 +124,9 @@ pub async fn run() -> Result<()> {
     // Snapshot native Claude Code tasks
     snapshot_tasks(&mut client, project_id, &stop_input.session_id, false).await;
 
+    // Clear global session ID file so the status line doesn't show stale assists
+    clear_global_session_file();
+
     write_hook_output(&output);
     Ok(())
 }
@@ -174,6 +187,9 @@ pub async fn run_session_end() -> Result<()> {
     if !session_id.is_empty() {
         crate::hooks::session::cleanup_per_session_dir(session_id);
     }
+
+    // Clear global session ID file so the status line doesn't show stale assists
+    clear_global_session_file();
 
     write_hook_output(&serde_json::json!({}));
     Ok(())
