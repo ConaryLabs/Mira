@@ -895,10 +895,7 @@ pub async fn get_project_map(server: &MiraServer, params: Value) -> Result<Value
         .get("project_id")
         .and_then(|v| v.as_i64())
         .ok_or_else(|| anyhow::anyhow!("missing required param: project_id"))?;
-    let budget = params
-        .get("budget")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(500) as usize;
+    let budget = params.get("budget").and_then(|v| v.as_u64()).unwrap_or(500) as usize;
 
     // Get project name from main DB
     let project_name: Option<String> = server
@@ -950,10 +947,7 @@ pub async fn get_project_map(server: &MiraServer, params: Value) -> Result<Value
     }
 
     let name = project_name.unwrap_or_else(|| "Unknown".to_string());
-    let dir_parts: Vec<String> = dirs
-        .iter()
-        .map(|(d, c)| format!("{d} ({c})"))
-        .collect();
+    let dir_parts: Vec<String> = dirs.iter().map(|(d, c)| format!("{d} ({c})")).collect();
     let mut content = format!(
         "[Mira/context] Project: {} ({})",
         name,
@@ -980,10 +974,7 @@ pub async fn search_for_subagent(server: &MiraServer, params: Value) -> Result<V
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing required param: query"))?
         .to_string();
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
     let budget = params
         .get("budget")
         .and_then(|v| v.as_u64())
@@ -1022,12 +1013,7 @@ pub async fn search_for_subagent(server: &MiraServer, params: Value) -> Result<V
     let mut lines = vec!["Relevant code for this task:".to_string()];
     for r in &result.results {
         // Extract first meaningful line from content as symbol hint
-        let symbol = r
-            .content
-            .lines()
-            .next()
-            .unwrap_or(&r.file_path)
-            .trim();
+        let symbol = r.content.lines().next().unwrap_or(&r.file_path).trim();
         lines.push(format!("- {}: {}", r.file_path, symbol));
     }
     let mut content = lines.join("\n");
