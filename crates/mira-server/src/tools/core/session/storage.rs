@@ -280,7 +280,8 @@ pub(super) async fn storage_status<C: ToolContext>(
             ));
         }
         if h.subagent_total > 0 {
-            let pct = (h.subagent_context_loads as f64 / h.subagent_total as f64 * 100.0) as u64;
+            let pct =
+                (h.subagent_context_loads as f64 / h.subagent_total as f64 * 100.0).round() as u64;
             lines.push(format!(
                 "  Subagent context hits: {}% had pre-loaded context ({}/{})",
                 pct, h.subagent_context_loads, h.subagent_total
@@ -288,7 +289,8 @@ pub(super) async fn storage_status<C: ToolContext>(
         }
         if h.goal_injected_sessions > 0 {
             let pct = if h.goal_aware_sessions > 0 {
-                (h.goal_aware_sessions as f64 / h.goal_injected_sessions as f64 * 100.0) as u64
+                (h.goal_aware_sessions as f64 / h.goal_injected_sessions as f64 * 100.0).round()
+                    as u64
             } else {
                 0
             };
