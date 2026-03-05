@@ -359,8 +359,8 @@ pub async fn run() -> Result<()> {
                     latency_ms: None,
                     was_deduped: false,
                     was_cached: false,
-                    content: None,
-                    categories: vec![],
+                    content: Some(context.clone()),
+                    categories: hint_types.iter().map(|s| s.to_string()).collect(),
                 },
             );
             let output = serde_json::json!({
@@ -520,8 +520,8 @@ async fn handle_edit_write_patterns(
                 latency_ms: None,
                 was_deduped: false,
                 was_cached: false,
-                content: None,
-                categories: vec![],
+                content: Some(context.clone()),
+                categories: vec!["change_patterns".to_string()],
             },
         );
         serde_json::json!({

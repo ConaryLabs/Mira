@@ -437,8 +437,8 @@ async fn assemble_output_from_ipc(
                 latency_ms: Some(inject_start.elapsed().as_millis() as u64),
                 was_deduped: false,
                 was_cached: ctx.reactive_from_cache,
-                content: None,
-                categories: vec![],
+                content: Some(final_context.clone()),
+                categories: budget_result.kept_sources.clone(),
             },
         )
         .await;
@@ -616,8 +616,8 @@ async fn run_direct(
                 latency_ms: Some(inject_start.elapsed().as_millis() as u64),
                 was_deduped: false,
                 was_cached: result.from_cache,
-                content: None,
-                categories: vec![],
+                content: Some(final_context.clone()),
+                categories: budget_result.kept_sources.clone(),
             },
         )
         .await;

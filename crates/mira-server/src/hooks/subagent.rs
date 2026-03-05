@@ -237,13 +237,13 @@ pub async fn run_start() -> Result<()> {
                 session_id: Some(start_input.session_id.clone()),
                 project_id: Some(project_id),
                 chars_injected: context.len(),
-                sources_kept,
+                sources_kept: sources_kept.clone(),
                 sources_dropped: vec![],
                 latency_ms: None,
                 was_deduped: false,
                 was_cached: false,
-                content: None,
-                categories: vec![],
+                content: Some(context.clone()),
+                categories: sources_kept,
             },
         );
 
