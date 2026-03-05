@@ -1,6 +1,8 @@
 // crates/mira-server/src/db/injection.rs
 // Database operations for context injection tracking
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use rusqlite::{Connection, params};
 
@@ -186,6 +188,42 @@ pub fn count_tracked_sessions(conn: &Connection, project_id: Option<i64>) -> Res
     let mut stmt = conn.prepare(&sql)?;
     let count: i64 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
     Ok(count as u64)
+}
+
+/// Get a breakdown of injection categories (how many times each category was injected).
+pub fn get_category_breakdown_sync(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project_id: Option<i64>,
+) -> Result<HashMap<String, usize>> {
+    let mut sql = String::from(
+        "SELECT categories FROM context_injections WHERE categories IS NOT NULL AND categories != ''",
+    );
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(sid) = session_id {
+        sql.push_str(" AND session_id = ?");
+        params_vec.push(Box::new(sid.to_string()));
+    }
+    if let Some(pid) = project_id {
+        sql.push_str(" AND project_id = ?");
+        params_vec.push(Box::new(pid));
+    }
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))?;
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for row in rows.flatten() {
+        for cat in row.split(',') {
+            let cat = cat.trim();
+            if !cat.is_empty() {
+                *counts.entry(cat.to_string()).or_default() += 1;
+            }
+        }
+    }
+    Ok(counts)
 }
 
 #[cfg(test)]
@@ -378,5 +416,47 @@ mod tests {
         assert!(stored.len() <= 2000);
         // Verify it's valid UTF-8 (would panic on invalid)
         assert!(stored.chars().all(|c| c == '\u{00e9}'));
+    }
+
+    #[test]
+    fn test_get_injection_categories_breakdown() {
+        let conn = setup_db();
+        let mut r1 = make_record("UserPromptSubmit", Some("s1"));
+        r1.categories = vec!["goals".into(), "reactive".into()];
+        insert_injection_sync(&conn, &r1).unwrap();
+
+        let mut r2 = make_record("SubagentStart", Some("s1"));
+        r2.categories = vec!["goals".into()];
+        insert_injection_sync(&conn, &r2).unwrap();
+
+        let breakdown = get_category_breakdown_sync(&conn, Some("s1"), None).unwrap();
+        assert_eq!(breakdown.get("goals"), Some(&2));
+        assert_eq!(breakdown.get("reactive"), Some(&1));
+    }
+
+    #[test]
+    fn test_category_breakdown_empty() {
+        let conn = setup_db();
+        let breakdown = get_category_breakdown_sync(&conn, Some("nonexistent"), None).unwrap();
+        assert!(breakdown.is_empty());
+    }
+
+    #[test]
+    fn test_category_breakdown_filtered_by_project() {
+        let conn = setup_db();
+        crate::db::get_or_create_project_sync(&conn, "/other", Some("other")).unwrap();
+
+        let mut r1 = make_record("UserPromptSubmit", Some("s1"));
+        r1.categories = vec!["goals".into()];
+        insert_injection_sync(&conn, &r1).unwrap();
+
+        let mut r2 = make_record("UserPromptSubmit", Some("s2"));
+        r2.project_id = Some(2);
+        r2.categories = vec!["goals".into(), "tasks".into()];
+        insert_injection_sync(&conn, &r2).unwrap();
+
+        let breakdown = get_category_breakdown_sync(&conn, None, Some(1)).unwrap();
+        assert_eq!(breakdown.get("goals"), Some(&1));
+        assert_eq!(breakdown.get("tasks"), None);
     }
 }

@@ -55,7 +55,13 @@ pub(super) fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Show database storage status, row counts, and retention policy.
+/// Format characters as human-readable KB/MB.
+fn format_chars_as_kb(chars: u64) -> String {
+    // Approximate: 1 char ~= 1 byte for ASCII-heavy content
+    format_bytes(chars)
+}
+
+/// Show database storage status, row counts, retention policy, and injection activity.
 pub(super) async fn storage_status<C: ToolContext>(
     ctx: &C,
 ) -> Result<Json<SessionOutput>, MiraError> {
@@ -71,8 +77,13 @@ pub(super) async fn storage_status<C: ToolContext>(
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Query row counts from main DB
-    let counts = ctx
+    // Gather session_id and project_id for injection stats
+    let session_id = ctx.get_session_id().await;
+    let project_id = ctx.project_id().await;
+
+    // Query row counts and injection stats from main DB
+    let session_id_clone = session_id.clone();
+    let counts_and_activity = ctx
         .pool()
         .run(move |conn| {
             let sessions = count_table(conn, AllowedTable::Sessions);
@@ -83,6 +94,19 @@ pub(super) async fn storage_status<C: ToolContext>(
             let goals = count_table(conn, AllowedTable::Goals);
             let observations = count_table(conn, AllowedTable::SystemObservations);
 
+            // Injection activity stats
+            let session_stats = session_id_clone.as_deref().and_then(|sid| {
+                crate::db::injection::get_injection_stats_for_session(conn, sid).ok()
+            });
+            let session_categories = session_id_clone.as_deref().and_then(|sid| {
+                crate::db::injection::get_category_breakdown_sync(conn, Some(sid), None).ok()
+            });
+
+            let cumulative_stats =
+                crate::db::injection::get_injection_stats_cumulative(conn, project_id, None).ok();
+            let tracked_sessions =
+                crate::db::injection::count_tracked_sessions(conn, project_id).ok();
+
             Ok::<_, String>((
                 sessions,
                 tool_history,
@@ -91,11 +115,27 @@ pub(super) async fn storage_status<C: ToolContext>(
                 behavior,
                 goals,
                 observations,
+                session_stats,
+                session_categories,
+                cumulative_stats,
+                tracked_sessions,
             ))
         })
         .await?;
 
-    let (sessions, tool_history, llm_usage, embed_usage, behavior, goals, observations) = counts;
+    let (
+        sessions,
+        tool_history,
+        llm_usage,
+        embed_usage,
+        behavior,
+        goals,
+        observations,
+        session_stats,
+        session_categories,
+        cumulative_stats,
+        tracked_sessions,
+    ) = counts_and_activity;
 
     // Load retention config and count candidates
     let config = MiraConfig::load();
@@ -165,6 +205,59 @@ pub(super) async fn storage_status<C: ToolContext>(
 
     report.push_str("\n### Protected (never auto-deleted)\n");
     report.push_str("- Goals, Code index\n");
+
+    // Injection activity section
+    let has_session_activity = session_stats
+        .as_ref()
+        .is_some_and(|s| s.total_injections > 0);
+    let has_cumulative_activity = cumulative_stats
+        .as_ref()
+        .is_some_and(|s| s.total_injections > 0);
+
+    if has_session_activity || has_cumulative_activity {
+        report.push_str("\n### Activity\n");
+
+        if let Some(ref stats) = session_stats {
+            if stats.total_injections > 0 {
+                report.push_str("**This session:**\n");
+                report.push_str(&format!(
+                    "- Context delivered: {} injections ({})\n",
+                    stats.total_injections,
+                    format_chars_as_kb(stats.total_chars)
+                ));
+                if stats.total_deduped > 0 {
+                    report.push_str(&format!(
+                        "- Deduped (suppressed): {}\n",
+                        stats.total_deduped
+                    ));
+                }
+                if let Some(ref cats) = session_categories {
+                    if !cats.is_empty() {
+                        let mut sorted: Vec<_> = cats.iter().collect();
+                        sorted.sort_by(|a, b| b.1.cmp(a.1));
+                        let parts: Vec<String> =
+                            sorted.iter().map(|(k, v)| format!("{} ({})", k, v)).collect();
+                        report.push_str(&format!("- Sources: {}\n", parts.join(", ")));
+                    }
+                }
+            }
+        }
+
+        if let Some(ref stats) = cumulative_stats {
+            if stats.total_injections > 0 {
+                report.push_str("**All time:**\n");
+                report.push_str(&format!(
+                    "- Context delivered: {} injections ({})\n",
+                    stats.total_injections,
+                    format_chars_as_kb(stats.total_chars)
+                ));
+                if let Some(tracked) = tracked_sessions {
+                    report.push_str(&format!("- Sessions tracked: {}\n", tracked));
+                }
+                report.push_str(&format!("- Goals tracked: {}\n", goals));
+            }
+        }
+    }
 
     Ok(Json(SessionOutput {
         action: "storage_status".into(),
