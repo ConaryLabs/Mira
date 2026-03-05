@@ -111,7 +111,6 @@ The plugin uses Claude Code hooks for bidirectional communication:
 | `SessionEnd` | Snapshot tasks on user interrupt |
 | `SubagentStart` | Inject context when subagents spawn |
 | `SubagentStop` | Capture discoveries from subagent work |
-| `PermissionRequest` | Handle permission checks |
 | `PostToolUseFailure` | Track failures, recall memories after repeated failures |
 | `TaskCompleted` | Log task completions, auto-complete goal milestones |
 | `TeammateIdle` | Log teammate idle events for team tracking |
