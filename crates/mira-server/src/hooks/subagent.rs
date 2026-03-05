@@ -204,6 +204,15 @@ pub async fn run_start() -> Result<()> {
     let output = if context_parts.is_empty() {
         serde_json::json!({})
     } else {
+        crate::hooks::emit_activity(
+            "SubagentStart",
+            &format!(
+                "pre-loaded {} items for {} subagent",
+                context_parts.len(),
+                start_input.subagent_type,
+            ),
+        );
+
         let mut context = format!(
             "[Mira/context] Subagent context:\n\n{}",
             context_parts.join("\n\n")

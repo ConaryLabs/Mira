@@ -325,6 +325,22 @@ pub async fn run() -> Result<()> {
         }
 
         if !hints.is_empty() {
+            let hint_types: Vec<&str> = hints
+                .iter()
+                .map(|h| {
+                    if h.contains("[Mira/efficiency]") {
+                        "reread advisory"
+                    } else if h.contains("[Mira/symbols]") {
+                        "symbol hints"
+                    } else if h.contains("[Mira/patterns]") {
+                        "change patterns"
+                    } else {
+                        "hint"
+                    }
+                })
+                .collect();
+            crate::hooks::emit_activity("PreToolUse", &hint_types.join(", "));
+
             let context = hints.join("\n");
             let db_path = crate::hooks::get_db_path();
             crate::db::injection::record_injection_fire_and_forget(
@@ -478,6 +494,15 @@ async fn handle_edit_write_patterns(
     let output = if warnings.is_empty() {
         serde_json::json!({})
     } else {
+        let filename = std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(&file_path);
+        crate::hooks::emit_activity(
+            "PreToolUse",
+            &format!("change pattern warning for {}", filename),
+        );
+
         let context = format!("[Mira/patterns] \u{26a0} {}", warnings.join("; "),);
         crate::db::injection::record_injection_fire_and_forget(
             &db_path,

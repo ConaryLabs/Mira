@@ -414,6 +414,16 @@ async fn assemble_output_from_ipc(
             return Ok(());
         }
 
+        crate::hooks::emit_activity(
+            "UserPromptSubmit",
+            &format!(
+                "{} items ({} chars) -- {}",
+                budget_result.kept_sources.len(),
+                final_context.len(),
+                budget_result.kept_sources.join(", ")
+            ),
+        );
+
         // Record successful injection
         record_injection(
             None,
@@ -582,6 +592,16 @@ async fn run_direct(
             write_hook_output(&serde_json::json!({}));
             return Ok(());
         }
+
+        crate::hooks::emit_activity(
+            "UserPromptSubmit",
+            &format!(
+                "{} items ({} chars) -- {}",
+                budget_result.kept_sources.len(),
+                final_context.len(),
+                budget_result.kept_sources.join(", ")
+            ),
+        );
 
         // Record successful injection
         record_injection(

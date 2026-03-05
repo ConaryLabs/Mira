@@ -365,6 +365,12 @@ pub async fn run() -> Result<()> {
     };
 
     if let Some(ref ctx) = context {
+        let item_count = ctx.matches("[Mira/").count();
+        crate::hooks::emit_activity(
+            "SessionStart",
+            &format!("injected {} items ({} chars)", item_count, ctx.len()),
+        );
+
         let db_path = super::get_db_path();
         crate::db::injection::record_injection_fire_and_forget(
             &db_path,

@@ -229,6 +229,13 @@ pub fn read_hook_input() -> Result<serde_json::Value> {
     Ok(json)
 }
 
+/// Emit a one-line activity summary to stderr for user visibility.
+/// Format: `[Mira] {hook}: {summary}`
+/// Stderr is shown briefly in the Claude Code terminal.
+pub fn emit_activity(hook: &str, summary: &str) {
+    eprintln!("[Mira] {}: {}", hook, summary);
+}
+
 /// Write hook output to stdout
 pub fn write_hook_output(output: &serde_json::Value) {
     use std::io::Write;
