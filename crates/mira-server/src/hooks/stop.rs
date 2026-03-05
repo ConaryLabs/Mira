@@ -34,18 +34,18 @@ impl StopInput {
 fn clear_session_identity() {
     // Clear file
     let path = crate::hooks::session::session_file_path();
-    if path.exists() {
-        if let Err(e) = std::fs::write(&path, "") {
-            tracing::debug!("Failed to clear session ID file: {e}");
-        }
+    if path.exists()
+        && let Err(e) = std::fs::write(&path, "")
+    {
+        tracing::debug!("Failed to clear session ID file: {e}");
     }
     // Clear DB fallback
     if let Some(home) = dirs::home_dir() {
         let db_path = home.join(".mira/mira.db");
-        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-            if let Err(e) = crate::db::delete_server_state_sync(&conn, "active_session_id") {
-                tracing::debug!("Failed to clear active_session_id from DB: {e}");
-            }
+        if let Ok(conn) = rusqlite::Connection::open(&db_path)
+            && let Err(e) = crate::db::delete_server_state_sync(&conn, "active_session_id")
+        {
+            tracing::debug!("Failed to clear active_session_id from DB: {e}");
         }
     }
 }

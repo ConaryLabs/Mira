@@ -149,14 +149,13 @@ pub async fn run_start() -> Result<()> {
         }
 
         // 2. Try search hints from task description
-        if let Some(ref task_desc) = start_input.task_description {
-            if let Some(hints) = client
+        if let Some(ref task_desc) = start_input.task_description
+            && let Some(hints) = client
                 .search_for_subagent(project_id, task_desc, 5, 1000)
                 .await
-            {
-                context_parts.push(hints);
-                sources_kept.push("search_hints".to_string());
-            }
+        {
+            context_parts.push(hints);
+            sources_kept.push("search_hints".to_string());
         }
     } else {
         // Full subagents get goals + code bundle

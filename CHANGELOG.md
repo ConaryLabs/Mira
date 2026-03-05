@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.8] - 2026-03-05
+
+### Added
+- **Subagent project map injection** -- Narrow subagents (Explore, code-reviewer, etc.) now receive a compact project map showing top-level directories and file counts, via new `get_project_map` IPC operation.
+- **Subagent search hints injection** -- Narrow subagents now receive hybrid search results derived from their task description, via new `search_for_subagent` IPC operation. Provides relevant `file:symbol` starting points without requiring explicit file paths in the prompt.
+- **Two new IPC operations** -- `get_project_map` (2s timeout) and `search_for_subagent` (3s timeout) added to handler dispatch, ops module, and HookClient with budget-capped output.
+- **IPC tests for new operations** -- Tests covering `get_project_map` and `search_for_subagent` request/response behavior.
+
+### Changed
+- **SubagentStart context strategy split** -- Full subagents (Plan, general-purpose) continue receiving goals and code bundle. Narrow subagents now receive project map and search hints instead of receiving nothing when no file paths were present in the task description.
+
+### Fixed
+- **Stale assist count after session stop** -- Session ID file (`~/.mira/claude-session-id`) is now cleared on both Stop and SessionEnd hooks, preventing the status line from showing stale assist counts between sessions.
+- **Stale `active_session_id` in DB** -- `clear_session_identity` now also removes `active_session_id` from `server_state` in the database, closing the fallback path that could still return stale session data after the file was cleared.
+
+---
+
 ## [0.9.7] - 2026-03-05
 
 ### Fixed
