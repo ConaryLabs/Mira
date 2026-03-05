@@ -308,5 +308,4 @@ mod tests {
         assert_eq!(format_duration(86400), "1d ago");
         assert_eq!(format_duration(172800), "2d ago");
     }
-
 }

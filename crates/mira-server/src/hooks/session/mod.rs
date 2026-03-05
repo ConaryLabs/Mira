@@ -376,7 +376,11 @@ pub async fn run() -> Result<()> {
         let item_count = ctx.matches("[Mira/").count();
         crate::hooks::emit_activity(
             "SessionStart",
-            &format!("injected {} items ({} chars)", item_count, ctx_with_tag.len()),
+            &format!(
+                "injected {} items ({} chars)",
+                item_count,
+                ctx_with_tag.len()
+            ),
         );
 
         let db_path = super::get_db_path();

@@ -191,15 +191,11 @@ async fn init_server_context() -> Result<ServerContext> {
     );
 
     // Restore project context
+    // Priority: CWD first (correct for CLI tool invocations and per-project MCP servers),
+    // then fall back to last-active project from DB (for recovery/restart scenarios).
     let restored_project = pool
         .interact(|conn| {
-            // Try to get last active project
-            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn)
-                && let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None)
-            {
-                return Ok(Some(ProjectContext { id, path, name }));
-            }
-            // Fallback: Check if CWD is a project
+            // Primary: use CWD to resolve project (matches the actual working directory)
             if let Ok(cwd) = std::env::current_dir() {
                 let path_str = path_to_string(&cwd);
                 if let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path_str, None)
@@ -210,6 +206,12 @@ async fn init_server_context() -> Result<ServerContext> {
                         name,
                     }));
                 }
+            }
+            // Fallback: last active project from DB
+            if let Ok(Some(path)) = mira::db::get_last_active_project_sync(conn)
+                && let Ok((id, name)) = mira::db::get_or_create_project_sync(conn, &path, None)
+            {
+                return Ok(Some(ProjectContext { id, path, name }));
             }
             Ok(None)
         })

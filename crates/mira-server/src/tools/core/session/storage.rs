@@ -248,8 +248,10 @@ pub(super) async fn storage_status<C: ToolContext>(
             {
                 let mut sorted: Vec<_> = cats.iter().collect();
                 sorted.sort_by(|a, b| b.1.cmp(a.1));
-                let parts: Vec<String> =
-                    sorted.iter().map(|(k, v)| format!("{} ({})", k, v)).collect();
+                let parts: Vec<String> = sorted
+                    .iter()
+                    .map(|(k, v)| format!("{} ({})", k, v))
+                    .collect();
                 report.push_str(&format!("- Sources: {}\n", parts.join(", ")));
             }
         }

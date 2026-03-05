@@ -33,10 +33,7 @@ pub fn migrate_context_injections_table(conn: &Connection) -> Result<()> {
     )?;
 
     // ALTER TABLE fallback for existing databases (silently ignored if columns already exist)
-    let _ = conn.execute(
-        "ALTER TABLE context_injections ADD COLUMN content TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE context_injections ADD COLUMN content TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE context_injections ADD COLUMN categories TEXT",
         [],
