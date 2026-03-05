@@ -317,17 +317,16 @@ fn kill_stale_mira_processes() {
             };
 
             // Must be the same binary (or a symlink to it) as us
-            if let Some(ref my) = my_exe {
-                if exe_path != *my
-                    && fs::read_link(&exe_path).ok().as_ref() != Some(my)
-                    && my_exe.as_ref().and_then(|p| fs::read_link(p).ok()) != Some(exe_path.clone())
-                {
-                    // Also check if both resolve to the same real path
-                    let real_exe = fs::canonicalize(&exe_path).ok();
-                    let real_my = my.canonicalize().ok();
-                    if real_exe != real_my || real_exe.is_none() {
-                        continue;
-                    }
+            if let Some(ref my) = my_exe
+                && exe_path != *my
+                && fs::read_link(&exe_path).ok().as_ref() != Some(my)
+                && my_exe.as_ref().and_then(|p| fs::read_link(p).ok()) != Some(exe_path.clone())
+            {
+                // Also check if both resolve to the same real path
+                let real_exe = fs::canonicalize(&exe_path).ok();
+                let real_my = my.canonicalize().ok();
+                if real_exe != real_my || real_exe.is_none() {
+                    continue;
                 }
             }
 
@@ -337,7 +336,7 @@ fn kill_stale_mira_processes() {
                 Err(_) => continue,
             };
             let args: Vec<&str> = cmdline.split('\0').collect();
-            if !args.iter().any(|a| *a == "serve") {
+            if !args.contains(&"serve") {
                 continue;
             }
 
