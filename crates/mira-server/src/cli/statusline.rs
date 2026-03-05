@@ -13,27 +13,7 @@ const RESET: &str = "\x1b[0m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 
-/// Rainbow colors for "Mira"
-const RAINBOW: [&str; 4] = [
-    "\x1b[31m", // red
-    "\x1b[33m", // yellow
-    "\x1b[32m", // green
-    "\x1b[36m", // cyan
-];
-
 const DOT: &str = " \x1b[2m\u{00b7}\x1b[0m ";
-
-/// Build the rainbow-colored "Mira" string.
-fn rainbow_mira() -> String {
-    let chars = ['M', 'i', 'r', 'a'];
-    let mut s = String::new();
-    for (i, ch) in chars.iter().enumerate() {
-        s.push_str(RAINBOW[i % RAINBOW.len()]);
-        s.push(*ch);
-    }
-    s.push_str(RESET);
-    s
-}
 
 /// Parse the `cwd` field from the JSON that Claude Code sends on stdin.
 /// Reads a single line instead of read_to_string to avoid blocking if stdin stays open.
@@ -103,6 +83,84 @@ fn query_pending(conn: &Connection, project_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
+/// Get the active session ID from server_state.
+fn query_active_session(conn: &Connection) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM server_state WHERE key = 'active_session_id'",
+        [],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// Count non-deduped context injections (assists).
+/// If session_id is Some, scopes to that session; otherwise uses project_id.
+fn query_assists(conn: &Connection, session_id: Option<&str>, project_id: i64) -> i64 {
+    if let Some(sid) = session_id {
+        conn.query_row(
+            "SELECT COUNT(*) FROM context_injections \
+             WHERE session_id = ?1 AND was_deduped = 0",
+            [sid],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    } else {
+        conn.query_row(
+            "SELECT COUNT(*) FROM context_injections \
+             WHERE project_id = ?1 AND was_deduped = 0",
+            [project_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    }
+}
+
+/// Query subagent context hit rate.
+/// Returns (loads_with_context, total_subagent_starts).
+fn query_subagent_stats(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project_id: i64,
+) -> (i64, i64) {
+    if let Some(sid) = session_id {
+        let loads = conn
+            .query_row(
+                "SELECT COUNT(*) FROM context_injections \
+                 WHERE hook_name = 'SubagentStart' AND chars_injected > 0 AND session_id = ?1",
+                [sid],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        let total = conn
+            .query_row(
+                "SELECT COUNT(*) FROM context_injections \
+                 WHERE hook_name = 'SubagentStart' AND session_id = ?1",
+                [sid],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        (loads, total)
+    } else {
+        let loads = conn
+            .query_row(
+                "SELECT COUNT(*) FROM context_injections \
+                 WHERE hook_name = 'SubagentStart' AND chars_injected > 0 AND project_id = ?1",
+                [project_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        let total = conn
+            .query_row(
+                "SELECT COUNT(*) FROM context_injections \
+                 WHERE hook_name = 'SubagentStart' AND project_id = ?1",
+                [project_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        (loads, total)
+    }
+}
+
 /// Format seconds into a compact human-readable duration.
 #[cfg(test)]
 fn format_duration(seconds: i64) -> String {
@@ -137,7 +195,7 @@ pub fn run() -> Result<()> {
     let main_db = mira_dir.join("mira.db");
     let code_db = mira_dir.join("mira-code.db");
 
-    let mira_label = rainbow_mira();
+    let mira_label = format!("{DIM}Mira{RESET}");
 
     if !main_db.exists() {
         return Ok(());
@@ -162,7 +220,13 @@ pub fn run() -> Result<()> {
         }
     };
 
-    // Query stats from main DB
+    // Get active session for session-scoped queries
+    let session_id = query_active_session(&main_conn);
+    let sid_ref = session_id.as_deref();
+
+    // Query value metrics from main DB
+    let assists = query_assists(&main_conn, sid_ref, project_id);
+    let (subagent_loads, subagent_total) = query_subagent_stats(&main_conn, sid_ref, project_id);
     let goals = query_goals(&main_conn, project_id);
     let alerts = query_alerts(&main_conn, project_id);
 
@@ -177,8 +241,17 @@ pub fn run() -> Result<()> {
         .map(|c| query_pending(c, project_id))
         .unwrap_or(0);
 
-    // Build output parts in order: goals, indexed, alerts, pending
+    // Build output segments: assists, subagent ctx, goals, indexed, pending, alerts
     let mut parts = Vec::new();
+
+    if assists > 0 {
+        parts.push(format!("{GREEN}{assists}{RESET} assists"));
+    }
+
+    if subagent_total > 0 {
+        let pct = (subagent_loads * 100 + subagent_total / 2) / subagent_total;
+        parts.push(format!("{GREEN}{pct}%{RESET} subagent ctx"));
+    }
 
     if goals > 0 {
         parts.push(format!("{GREEN}{goals}{RESET} goals"));
@@ -188,16 +261,20 @@ pub fn run() -> Result<()> {
         parts.push(format!("{DIM}{indexed}{RESET} indexed"));
     }
 
-    if alerts > 0 {
-        parts.push(format!("{YELLOW}{alerts} alerts{RESET}"));
-    }
-
     if pending > 0 {
         parts.push(format!("{YELLOW}{pending} pending{RESET}"));
     }
 
-    let joined = parts.join(DOT);
-    println!("{mira_label}{DOT}{joined}");
+    if alerts > 0 {
+        parts.push(format!("{YELLOW}{alerts} alerts{RESET}"));
+    }
+
+    if parts.is_empty() {
+        println!("{mira_label}");
+    } else {
+        let joined = parts.join(DOT);
+        println!("{mira_label}{DOT}{joined}");
+    }
 
     Ok(())
 }
@@ -232,19 +309,4 @@ mod tests {
         assert_eq!(format_duration(172800), "2d ago");
     }
 
-    #[test]
-    fn test_rainbow_mira_contains_all_chars() {
-        let result = rainbow_mira();
-        // Strip ANSI codes and check content
-        let stripped: String = result
-            .replace(RESET, "")
-            .chars()
-            .filter(|c| !c.is_ascii_control() && *c != '[')
-            .collect();
-        // After stripping ANSI, should contain M, i, r, a (and color codes like "31m" etc.)
-        assert!(stripped.contains('M'));
-        assert!(stripped.contains('i'));
-        assert!(stripped.contains('r'));
-        assert!(stripped.contains('a'));
-    }
 }
