@@ -204,15 +204,7 @@ pub async fn run_start() -> Result<()> {
     let output = if context_parts.is_empty() {
         serde_json::json!({})
     } else {
-        crate::hooks::emit_activity(
-            "SubagentStart",
-            &format!(
-                "pre-loaded {} items for {} subagent",
-                context_parts.len(),
-                start_input.subagent_type,
-            ),
-        );
-
+        let item_count = context_parts.len();
         let mut context = format!(
             "[Mira/context] Subagent context:\n\n{}",
             context_parts.join("\n\n")
@@ -226,6 +218,16 @@ pub async fn run_start() -> Result<()> {
             }
             context.push_str("\n...");
         }
+
+        crate::hooks::emit_activity(
+            "SubagentStart",
+            &format!(
+                "pre-loaded {} items ({} chars) for {} subagent",
+                item_count,
+                context.len(),
+                start_input.subagent_type,
+            ),
+        );
 
         let db_path = crate::hooks::get_db_path();
         crate::db::injection::record_injection_fire_and_forget(
