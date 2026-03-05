@@ -365,10 +365,18 @@ pub async fn run() -> Result<()> {
     };
 
     if let Some(ref ctx) = context {
+        // Append activity tag to session context
+        let tag = crate::hooks::build_activity_tag(&["session_context"], ctx.len());
+        let ctx_with_tag = if tag.is_empty() {
+            ctx.clone()
+        } else {
+            format!("{}{}", ctx, tag)
+        };
+
         let item_count = ctx.matches("[Mira/").count();
         crate::hooks::emit_activity(
             "SessionStart",
-            &format!("injected {} items ({} chars)", item_count, ctx.len()),
+            &format!("injected {} items ({} chars)", item_count, ctx_with_tag.len()),
         );
 
         let db_path = super::get_db_path();
@@ -378,13 +386,13 @@ pub async fn run() -> Result<()> {
                 hook_name: "SessionStart".to_string(),
                 session_id: session_id.map(String::from),
                 project_id,
-                chars_injected: ctx.len(),
+                chars_injected: ctx_with_tag.len(),
                 sources_kept: vec![source.to_string()],
                 sources_dropped: vec![],
                 latency_ms: Some(inject_start.elapsed().as_millis() as u64),
                 was_deduped: false,
                 was_cached: false,
-                content: Some(ctx.clone()),
+                content: Some(ctx_with_tag.clone()),
                 categories: vec!["session_context".to_string()],
             },
         );
@@ -392,7 +400,7 @@ pub async fn run() -> Result<()> {
         let output = serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": ctx
+                "additionalContext": ctx_with_tag
             }
         });
         super::write_hook_output(&output);

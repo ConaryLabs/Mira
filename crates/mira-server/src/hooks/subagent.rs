@@ -219,6 +219,17 @@ pub async fn run_start() -> Result<()> {
             context.push_str("\n...");
         }
 
+        // Append activity tag to subagent context
+        let tag = crate::hooks::build_activity_tag(
+            &sources_kept.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            context.len(),
+        );
+        let context = if tag.is_empty() {
+            context
+        } else {
+            format!("{}{}", context, tag)
+        };
+
         crate::hooks::emit_activity(
             "SubagentStart",
             &format!(

@@ -388,6 +388,21 @@ async fn assemble_output_from_ipc(
     let budget_result = hook_budget.apply_budget_prioritized(budget_entries);
     let final_context = budget_result.content;
 
+    // Append activity tag to injected context
+    let tag = crate::hooks::build_activity_tag(
+        &budget_result
+            .kept_sources
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>(),
+        final_context.len(),
+    );
+    let final_context = if tag.is_empty() {
+        final_context
+    } else {
+        format!("{}{}", final_context, tag)
+    };
+
     if !final_context.is_empty() {
         // Cross-prompt dedup: suppress if identical context was recently injected
         let was_deduped = check_and_record_injection(session_id, &final_context);
@@ -566,6 +581,21 @@ async fn run_direct(
         crate::context::BudgetManager::with_limit(manager.config().max_chars.max(3000));
     let budget_result = hook_budget.apply_budget_prioritized(budget_entries);
     let final_context = budget_result.content;
+
+    // Append activity tag to injected context
+    let tag = crate::hooks::build_activity_tag(
+        &budget_result
+            .kept_sources
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>(),
+        final_context.len(),
+    );
+    let final_context = if tag.is_empty() {
+        final_context
+    } else {
+        format!("{}{}", final_context, tag)
+    };
 
     if !final_context.is_empty() {
         // Cross-prompt dedup: suppress if identical context was recently injected

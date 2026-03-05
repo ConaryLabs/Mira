@@ -430,6 +430,19 @@ pub fn validate_transcript_path(path_str: &str) -> Option<PathBuf> {
     None
 }
 
+/// Build a compact activity tag for appending to injected context.
+/// Returns empty string if no categories provided.
+pub fn build_activity_tag(categories: &[&str], chars: usize) -> String {
+    if categories.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n[Mira/activity] Injected: {} | {} chars",
+        categories.join(", "),
+        chars,
+    )
+}
+
 /// Timer guard for hook performance monitoring
 /// Logs execution time to stderr on drop
 pub struct HookTimer {
@@ -460,5 +473,32 @@ impl Drop for HookTimer {
         } else {
             tracing::debug!("[mira] {} hook completed in {}ms", self.hook_name, elapsed);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_activity_tag() {
+        let tag = build_activity_tag(&["goals", "reactive"], 342);
+        assert!(tag.contains("[Mira/activity]"));
+        assert!(tag.contains("goals"));
+        assert!(tag.contains("342 chars"));
+    }
+
+    #[test]
+    fn test_build_activity_tag_empty() {
+        let tag = build_activity_tag(&[], 0);
+        assert!(tag.is_empty());
+    }
+
+    #[test]
+    fn test_build_activity_tag_single_category() {
+        let tag = build_activity_tag(&["session_context"], 1500);
+        assert!(tag.contains("[Mira/activity]"));
+        assert!(tag.contains("session_context"));
+        assert!(tag.contains("1500 chars"));
     }
 }
