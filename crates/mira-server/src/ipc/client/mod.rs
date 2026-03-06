@@ -85,6 +85,27 @@ impl HookClient {
     /// Tries Unix socket (Unix) or Named Pipe (Windows), then falls back
     /// to direct DB access if the server is unavailable.
     pub async fn connect() -> Self {
+        // Try mux.sock first if session_id is available (faster, cached state)
+        #[cfg(unix)]
+        {
+            use std::time::Duration;
+            if let Some(session_id) = Self::read_session_id() {
+                let mux_sock = crate::mux::mux_socket_path(&session_id);
+                if let Ok(Ok(stream)) = tokio::time::timeout(
+                    Duration::from_millis(50),
+                    tokio::net::UnixStream::connect(&mux_sock),
+                )
+                .await
+                {
+                    let (read, write) = tokio::io::split(stream);
+                    tracing::debug!("[mira] IPC: connected via mux");
+                    return Self {
+                        inner: Backend::Ipc(IpcStream::new(read, write)),
+                    };
+                }
+            }
+        }
+
         // On Unix, try the IPC socket first
         #[cfg(unix)]
         {
@@ -169,6 +190,31 @@ impl HookClient {
         Self {
             inner: Backend::Ipc(IpcStream::new(read, write)),
         }
+    }
+
+    /// Read the current session ID from the session file.
+    fn read_session_id() -> Option<String> {
+        let home = dirs::home_dir()?;
+        let path = home.join(".mira/claude-session-id");
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Read cached state from the mux. Returns None if not connected via mux
+    /// or if the read fails. The mux responds instantly from in-memory cache.
+    pub async fn read_cached_state(&mut self, keys: &[&str]) -> Option<serde_json::Value> {
+        if !self.is_ipc() {
+            return None;
+        }
+        let result = self
+            .call(
+                "read_state",
+                json!({ "keys": keys }),
+            )
+            .await;
+        result.ok()
     }
 
     pub fn is_ipc(&self) -> bool {

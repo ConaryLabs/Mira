@@ -31,7 +31,23 @@ impl StopInput {
 
 /// Clear session identity so the status line doesn't show stale data between sessions.
 /// Clears both the file (`~/.mira/claude-session-id`) and the DB `active_session_id`.
-fn clear_session_identity() {
+/// Also sends a shutdown command to the mux if it is running.
+fn clear_session_identity(session_id: &str) {
+    // Shutdown mux if running
+    #[cfg(unix)]
+    {
+        let mux_sock = crate::mux::mux_socket_path(session_id);
+        if mux_sock.exists() {
+            // Best-effort: send shutdown command
+            if let Ok(stream) = std::os::unix::net::UnixStream::connect(&mux_sock) {
+                let req = serde_json::json!({"op": "shutdown", "id": "stop", "params": {}});
+                let mut msg = serde_json::to_string(&req).unwrap_or_default();
+                msg.push('\n');
+                let _ = std::io::Write::write_all(&mut &stream, msg.as_bytes());
+            }
+        }
+    }
+
     // Clear file
     let path = crate::hooks::session::session_file_path();
     if path.exists()
@@ -136,7 +152,7 @@ pub async fn run() -> Result<()> {
     snapshot_tasks(&mut client, project_id, &stop_input.session_id, false).await;
 
     // Clear session identity so the status line doesn't show stale assists
-    clear_session_identity();
+    clear_session_identity(&stop_input.session_id);
 
     write_hook_output(&output);
     Ok(())
@@ -200,7 +216,7 @@ pub async fn run_session_end() -> Result<()> {
     }
 
     // Clear session identity so the status line doesn't show stale assists
-    clear_session_identity();
+    clear_session_identity(session_id);
 
     write_hook_output(&serde_json::json!({}));
     Ok(())

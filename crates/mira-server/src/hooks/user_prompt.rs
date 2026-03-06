@@ -303,6 +303,11 @@ pub async fn run() -> Result<()> {
     // Check for post-compaction recovery (lightweight flag check)
     let recovery_context = get_post_compaction_recovery(session_id).await;
 
+    // TODO(mux-phase3): Use client.read_cached_state(["goals", "modified_files"])
+    // to get instant reads from the mux cache instead of round-tripping via IPC.
+    // The reactive context (semantic search based on user message) still needs a
+    // live query through get_user_prompt_context().
+
     // Try IPC first -- single composite call runs everything server-side
     let mut client = crate::ipc::client::HookClient::connect().await;
 

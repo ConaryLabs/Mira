@@ -138,6 +138,10 @@ pub async fn run_start() -> Result<()> {
 
     let mut sources_kept = Vec::new();
 
+    // TODO(mux-phase3): For narrow subagents, read modified_files from
+    // client.read_cached_state(). For full subagents, read goals from cache.
+    // search_for_subagent and generate_bundle still need live queries.
+
     if narrow {
         // Narrow subagents get project map + search hints for orientation
         // instead of goals + bundle (which require specific file paths).

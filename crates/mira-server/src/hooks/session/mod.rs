@@ -364,6 +364,12 @@ pub async fn run() -> Result<()> {
             .await
     };
 
+    // Spawn session agent (mux) for real-time hook data
+    #[cfg(unix)]
+    if let Some(sid) = session_id {
+        spawn_mux(sid);
+    }
+
     if let Some(ref ctx) = context {
         // Append activity tag to session context
         let tag = crate::hooks::build_activity_tag(&["session_context"], ctx.len());
@@ -412,6 +418,37 @@ pub async fn run() -> Result<()> {
         super::write_hook_output(&serde_json::json!({}));
     }
     Ok(())
+}
+
+/// Spawn the mux process for this session if not already running.
+#[cfg(unix)]
+fn spawn_mux(session_id: &str) {
+    let mux_sock = crate::mux::mux_socket_path(session_id);
+    if mux_sock.exists() {
+        // Check if the socket is live
+        if std::os::unix::net::UnixStream::connect(&mux_sock).is_ok() {
+            return; // Already running
+        }
+        // Stale socket -- remove it
+        let _ = std::fs::remove_file(&mux_sock);
+    }
+
+    // Spawn detached mux process
+    let mira_bin = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("mira"));
+    match std::process::Command::new(mira_bin)
+        .args(["mux", "--session-id", session_id])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_child) => {
+            tracing::debug!("[mira/mux] Spawned session agent for {session_id}");
+        }
+        Err(e) => {
+            tracing::debug!("[mira/mux] Failed to spawn session agent: {e}");
+        }
+    }
 }
 
 /// Read Claude's session_id from the temp file (if available)
