@@ -1221,3 +1221,128 @@ mod unix_tests {
         let _ = std::fs::remove_file(&sock_path);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Session channel registry tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_channel_registry_subscribe_unsubscribe() {
+    use crate::ipc::channels::SessionChannelRegistry;
+
+    let registry = SessionChannelRegistry::new();
+    let (tx, _rx) = tokio::sync::mpsc::channel(32);
+
+    registry.subscribe("sess-1", tx).await;
+    assert_eq!(registry.subscriber_count().await, 1);
+
+    registry.unsubscribe("sess-1").await;
+    assert_eq!(registry.subscriber_count().await, 0);
+}
+
+#[tokio::test]
+async fn test_channel_registry_publish() {
+    use crate::ipc::channels::SessionChannelRegistry;
+    use crate::ipc::protocol::IpcPushEvent;
+
+    let registry = SessionChannelRegistry::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+
+    registry.subscribe("sess-1", tx).await;
+
+    let event = IpcPushEvent {
+        event_type: "goal_updated".to_string(),
+        sequence: 0,
+        data: serde_json::json!({ "goal_id": 5 }),
+    };
+    let delivered = registry.publish("sess-1", event).await;
+    assert!(delivered);
+
+    let received = rx.recv().await.unwrap();
+    assert_eq!(received.event_type, "goal_updated");
+    assert_eq!(received.sequence, 1); // Registry assigns sequence
+}
+
+#[tokio::test]
+async fn test_channel_registry_publish_no_subscriber() {
+    use crate::ipc::channels::SessionChannelRegistry;
+    use crate::ipc::protocol::IpcPushEvent;
+
+    let registry = SessionChannelRegistry::new();
+
+    let event = IpcPushEvent {
+        event_type: "goal_updated".to_string(),
+        sequence: 0,
+        data: serde_json::json!({}),
+    };
+    let delivered = registry.publish("nonexistent", event).await;
+    assert!(!delivered);
+}
+
+#[tokio::test]
+async fn test_channel_registry_backpressure_drops_noncritical() {
+    use crate::ipc::channels::SessionChannelRegistry;
+    use crate::ipc::protocol::IpcPushEvent;
+
+    let registry = SessionChannelRegistry::new();
+    // Buffer size 1 -- second non-critical event should be dropped
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+
+    registry.subscribe("sess-1", tx).await;
+
+    // Fill the buffer with a critical event
+    let critical = IpcPushEvent {
+        event_type: "goal_updated".to_string(),
+        sequence: 0,
+        data: serde_json::json!({}),
+    };
+    assert!(registry.publish("sess-1", critical).await);
+
+    // Non-critical should be dropped (buffer full)
+    let non_critical = IpcPushEvent {
+        event_type: "injection_stats".to_string(),
+        sequence: 0,
+        data: serde_json::json!({}),
+    };
+    let delivered = registry.publish("sess-1", non_critical).await;
+    assert!(!delivered);
+}
+
+#[tokio::test]
+async fn test_channel_registry_cleanup_dead() {
+    use crate::ipc::channels::SessionChannelRegistry;
+
+    let registry = SessionChannelRegistry::new();
+    let (tx, rx) = tokio::sync::mpsc::channel(32);
+
+    registry.subscribe("sess-1", tx).await;
+    assert_eq!(registry.subscriber_count().await, 1);
+
+    // Drop the receiver
+    drop(rx);
+
+    registry.cleanup_dead().await;
+    assert_eq!(registry.subscriber_count().await, 0);
+}
+
+#[tokio::test]
+async fn test_channel_registry_sequence_increments() {
+    use crate::ipc::channels::SessionChannelRegistry;
+    use crate::ipc::protocol::IpcPushEvent;
+
+    let registry = SessionChannelRegistry::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+
+    registry.subscribe("sess-1", tx).await;
+
+    for i in 1..=3 {
+        let event = IpcPushEvent {
+            event_type: "tool_used".to_string(),
+            sequence: 0,
+            data: serde_json::json!({}),
+        };
+        registry.publish("sess-1", event).await;
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received.sequence, i);
+    }
+}

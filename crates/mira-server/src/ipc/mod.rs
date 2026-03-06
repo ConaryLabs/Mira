@@ -1,6 +1,7 @@
 // crates/mira-server/src/ipc/mod.rs
 // Cross-platform IPC for hook-to-server communication
 
+pub mod channels;
 pub mod client;
 pub mod handler;
 pub mod ops;
