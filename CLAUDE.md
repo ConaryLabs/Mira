@@ -111,7 +111,7 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |
 | `Stop` | Session snapshot, task export, goal progress check |
 | `SessionEnd` | Snapshot tasks on user interrupt, team session cleanup |
-| `SubagentStart` | Injects active goals for subagent context |
+| `SubagentStart` | Injects goals, project map, and search hints for subagent context |
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PostToolUseFailure` | Tracks tool failures |
 | `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |

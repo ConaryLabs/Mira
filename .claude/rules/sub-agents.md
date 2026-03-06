@@ -29,3 +29,10 @@ launching directly is fine — the sub-agent can call Mira's `code` tool itself.
 
 - User asks "where is authentication handled?"
 - Launch Explore agent directly — it can call `code(action="search", query="authentication")` itself
+
+## Session Agent (Mux)
+
+Narrow subagents now receive project map context automatically via the session
+agent (mux). The mux maintains a persistent connection to the MCP server and
+caches state for instant reads. Hooks try `mux.sock` first, falling back to
+direct IPC if the mux isn't running.

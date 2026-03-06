@@ -6,18 +6,6 @@ use tokio::sync::{mpsc, RwLock};
 
 use super::protocol::IpcPushEvent;
 
-/// Critical event types that must not be dropped under backpressure.
-const CRITICAL_EVENTS: &[&str] = &[
-    "goal_updated",
-    "milestone_completed",
-    "file_conflict",
-    "session_event",
-];
-
-fn is_critical(event_type: &str) -> bool {
-    CRITICAL_EVENTS.contains(&event_type)
-}
-
 /// Registry of active session subscriptions.
 /// The MCP server holds one of these and publishes events to it.
 pub struct SessionChannelRegistry {
@@ -61,11 +49,11 @@ impl SessionChannelRegistry {
         channel.sequence += 1;
         event.sequence = channel.sequence;
 
-        if is_critical(&event.event_type) {
-            channel.tx.send(event).await.is_ok()
-        } else {
-            channel.tx.try_send(event).is_ok()
-        }
+        // Always use try_send: the subscriber rx lives in the same task as
+        // dispatch() (inside handle_persistent_connection's select! loop),
+        // so a blocking send() would deadlock. The 64-slot buffer provides
+        // sufficient headroom for bursts.
+        channel.tx.try_send(event).is_ok()
     }
 
     /// Remove channels where the receiver has been dropped.

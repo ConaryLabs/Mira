@@ -1427,3 +1427,189 @@ async fn test_log_behavior_publishes_file_modified_event() {
     assert_eq!(event.event_type, "file_modified");
     assert_eq!(event.data["file_path"], "src/main.rs");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Subscribe + push integration tests (duplex-based, all platforms)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Send a request and read lines until we get a response (skipping push events).
+async fn send_raw_request<R, W>(
+    reader: &mut BufReader<R>,
+    writer: &mut W,
+    req: &IpcRequest,
+) -> IpcResponse
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut line = serde_json::to_string(req).unwrap();
+    line.push('\n');
+    writer.write_all(line.as_bytes()).await.unwrap();
+    writer.flush().await.unwrap();
+
+    // Read lines until we get a response matching our request ID
+    loop {
+        let mut buf = String::new();
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            reader.read_line(&mut buf),
+        )
+        .await
+        .expect("timeout waiting for response")
+        .expect("read error");
+        if n == 0 {
+            panic!("EOF waiting for response");
+        }
+
+        // Try as IpcResponse first
+        if let Ok(resp) = serde_json::from_str::<IpcResponse>(buf.trim()) {
+            if resp.id == req.id {
+                return resp;
+            }
+        }
+        // Otherwise it's a push event -- skip and keep reading
+    }
+}
+
+#[tokio::test]
+async fn test_subscribe_receives_push_events() {
+    use crate::ipc::protocol::IpcPushEvent;
+
+    let (pool, project_id) = setup_test_pool_with_project().await;
+
+    // Use two separate connections:
+    // 1. A subscriber connection that receives push events
+    // 2. A writer connection that triggers operations (and push events)
+    let server = create_test_server(pool).await;
+
+    // --- Subscriber connection ---
+    let (sub_client, sub_server) = tokio::io::duplex(64 * 1024);
+    let srv1 = server.clone();
+    tokio::spawn(async move {
+        handler::handle_connection(sub_server, srv1).await;
+    });
+    let (sub_read, mut sub_write) = tokio::io::split(sub_client);
+    let mut sub_reader = BufReader::new(sub_read);
+
+    // Subscribe
+    let sub_req = IpcRequest {
+        op: "subscribe".into(),
+        id: "sub-1".into(),
+        params: json!({ "session_id": "push-test-sess" }),
+    };
+    let mut line = serde_json::to_string(&sub_req).unwrap();
+    line.push('\n');
+    sub_write.write_all(line.as_bytes()).await.unwrap();
+    sub_write.flush().await.unwrap();
+
+    let mut buf = String::new();
+    sub_reader.read_line(&mut buf).await.unwrap();
+    let resp: IpcResponse = serde_json::from_str(buf.trim()).unwrap();
+    assert!(resp.ok, "subscribe should succeed");
+
+    // --- Writer connection (separate, non-subscribed) ---
+    let (wr_client, wr_server) = tokio::io::duplex(64 * 1024);
+    let srv2 = server.clone();
+    tokio::spawn(async move {
+        handler::handle_connection(wr_server, srv2).await;
+    });
+    let (wr_read, mut wr_write) = tokio::io::split(wr_client);
+    let mut wr_reader = BufReader::new(wr_read);
+
+    // Register session on the writer connection
+    let reg_req = IpcRequest {
+        op: "register_session".into(),
+        id: "reg-1".into(),
+        params: json!({ "session_id": "push-test-sess", "cwd": "/tmp/test", "source": "startup" }),
+    };
+    let reg_resp = send_request(&mut wr_reader, &mut wr_write, &reg_req).await;
+    assert!(reg_resp.ok, "register should succeed: {:?}", reg_resp.error);
+
+    // The subscriber should receive a session_event push from register_session
+    buf.clear();
+    let push_result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sub_reader.read_line(&mut buf),
+    )
+    .await;
+    if let Ok(Ok(n)) = push_result {
+        if n > 0 {
+            if let Ok(event) = serde_json::from_str::<IpcPushEvent>(buf.trim()) {
+                assert_eq!(event.event_type, "session_event");
+            }
+        }
+    }
+
+    // Log a file access on the writer connection
+    let log_req = IpcRequest {
+        op: "log_behavior".into(),
+        id: "log-1".into(),
+        params: json!({
+            "session_id": "push-test-sess",
+            "project_id": project_id,
+            "event_type": "file_access",
+            "event_data": { "file_path": "src/lib.rs", "operation": "Edit" }
+        }),
+    };
+    let log_resp = send_request(&mut wr_reader, &mut wr_write, &log_req).await;
+    assert!(log_resp.ok, "log_behavior should succeed: {:?}", log_resp.error);
+
+    // The subscriber should receive the file_modified push event
+    buf.clear();
+    let push_result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sub_reader.read_line(&mut buf),
+    )
+    .await;
+
+    match push_result {
+        Ok(Ok(n)) if n > 0 => {
+            let event: IpcPushEvent = serde_json::from_str(buf.trim())
+                .expect("should parse as push event");
+            assert_eq!(event.event_type, "file_modified");
+            assert_eq!(event.data["file_path"], "src/lib.rs");
+        }
+        _ => panic!("Expected file_modified push event but got timeout or error"),
+    }
+
+    // Clean shutdown
+    drop(sub_write);
+    drop(wr_write);
+}
+
+#[tokio::test]
+async fn test_subscribe_interleaved_request_response() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let server = create_test_server(pool).await;
+
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let srv = server.clone();
+    tokio::spawn(async move {
+        handler::handle_connection(server_stream, srv).await;
+    });
+
+    let (read, mut write) = tokio::io::split(client_stream);
+    let mut reader = BufReader::new(read);
+
+    // Subscribe
+    let sub_req = IpcRequest {
+        op: "subscribe".into(),
+        id: "sub-interleave".into(),
+        params: json!({ "session_id": "interleave-sess" }),
+    };
+    let resp = send_raw_request(&mut reader, &mut write, &sub_req).await;
+    assert!(resp.ok);
+
+    // Send a regular query through the persistent connection
+    let goals_req = IpcRequest {
+        op: "get_active_goals".into(),
+        id: "goals-1".into(),
+        params: json!({ "project_id": project_id, "limit": 5 }),
+    };
+    let goals_resp = send_raw_request(&mut reader, &mut write, &goals_req).await;
+    assert!(
+        goals_resp.ok,
+        "interleaved query should work: {:?}",
+        goals_resp.error
+    );
+}
