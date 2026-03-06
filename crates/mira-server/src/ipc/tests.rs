@@ -1346,3 +1346,40 @@ async fn test_channel_registry_sequence_increments() {
         assert_eq!(received.sequence, i);
     }
 }
+
+#[tokio::test]
+async fn test_subscribe_returns_snapshot() {
+    let pool = setup_test_pool().await;
+    let (mut reader, mut writer, _handle) = spawn_duplex_handler(pool).await;
+
+    // Subscribe
+    let req = IpcRequest {
+        op: "subscribe".into(),
+        id: "sub-1".into(),
+        params: json!({ "session_id": "test-session" }),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(resp.ok, "subscribe should succeed");
+    assert_eq!(resp.id, "sub-1");
+
+    // Verify snapshot structure
+    let result = resp.result.unwrap();
+    assert_eq!(result["sequence"], 0);
+    assert!(result["goals"].is_array());
+    assert!(result["modified_files"].is_array());
+}
+
+#[tokio::test]
+async fn test_subscribe_requires_session_id() {
+    let pool = setup_test_pool().await;
+    let (mut reader, mut writer, _handle) = spawn_duplex_handler(pool).await;
+
+    let req = IpcRequest {
+        op: "subscribe".into(),
+        id: "sub-2".into(),
+        params: json!({}),
+    };
+    let resp = send_request(&mut reader, &mut writer, &req).await;
+    assert!(!resp.ok);
+    assert!(resp.error.unwrap().contains("session_id required"));
+}

@@ -1,7 +1,7 @@
 // crates/mira-server/src/ipc/handler.rs
 // Per-connection handler for IPC requests
 
-use super::protocol::{IpcRequest, IpcResponse};
+use super::protocol::{InjectionStatsSnapshot, IpcPushEvent, IpcRequest, IpcResponse, SessionStateSnapshot};
 use crate::mcp::MiraServer;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -26,6 +26,41 @@ fn op_timeout(op: &str) -> Duration {
     }
 }
 
+/// Read a single NDJSON line from the reader with bounded size.
+/// Returns Ok(Some(line)) on success, Ok(None) on EOF, Err on read error or too-large.
+async fn read_request_line<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+) -> std::io::Result<Option<String>> {
+    let mut buf = String::new();
+    loop {
+        let available = match reader.fill_buf().await {
+            Ok([]) => return Ok(None), // EOF
+            Ok(b) => b,
+            Err(e) => return Err(e),
+        };
+        let newline_pos = available.iter().position(|&b| b == b'\n');
+        let end = newline_pos.map(|p| p + 1).unwrap_or(available.len());
+        if buf.len() + end > MAX_LINE_SIZE {
+            reader.consume(end);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("request too large (max {} bytes)", MAX_LINE_SIZE),
+            ));
+        }
+        buf.push_str(&String::from_utf8_lossy(&available[..end]));
+        reader.consume(end);
+        if newline_pos.is_some() {
+            let trimmed = buf.trim().to_string();
+            return if trimmed.is_empty() {
+                buf.clear();
+                continue;
+            } else {
+                Ok(Some(trimmed))
+            };
+        }
+    }
+}
+
 /// Handle a single IPC connection: loop reading request lines until EOF.
 ///
 /// Hooks typically need 2-3 operations per invocation (e.g., resolve_project
@@ -43,60 +78,18 @@ where
     let mut writer = writer;
 
     loop {
-        // Bounded line read: uses fill_buf/consume to reject lines exceeding
-        // MAX_LINE_SIZE BEFORE allocating unbounded memory. Plain read_line
-        // would buffer the entire line first, risking OOM on malicious input.
-        let mut buf = String::new();
-        let mut eof = false;
-        let mut too_large = false;
-        loop {
-            let available = match reader.fill_buf().await {
-                Ok([]) => {
-                    eof = true;
-                    break;
-                }
-                Ok(b) => b,
-                Err(e) => {
-                    let resp = IpcResponse::error(String::new(), format!("read error: {e}"));
-                    let _ = write_response(&mut writer, &resp).await;
-                    return;
-                }
-            };
-            let newline_pos = available.iter().position(|&b| b == b'\n');
-            let end = newline_pos.map(|p| p + 1).unwrap_or(available.len());
-            if buf.len() + end > MAX_LINE_SIZE {
-                too_large = true;
-                // Consume buffered data before closing connection
-                let consume_len = end;
-                reader.consume(consume_len);
+        let line = match read_request_line(&mut reader).await {
+            Ok(Some(line)) => line,
+            Ok(None) => break, // EOF
+            Err(e) => {
+                let resp = IpcResponse::error(String::new(), format!("read error: {e}"));
+                let _ = write_response(&mut writer, &resp).await;
                 break;
             }
-            // Safe: IPC sends JSON (valid UTF-8). Invalid bytes → error on parse.
-            buf.push_str(&String::from_utf8_lossy(&available[..end]));
-            reader.consume(end);
-            if newline_pos.is_some() {
-                break;
-            }
-        }
-        if eof {
-            break;
-        }
-        if too_large {
-            let resp = IpcResponse::error(
-                String::new(),
-                format!("request too large (max {} bytes)", MAX_LINE_SIZE),
-            );
-            let _ = write_response(&mut writer, &resp).await;
-            break;
-        }
-
-        let buf = buf.trim();
-        if buf.is_empty() {
-            continue;
-        }
+        };
 
         // Parse request
-        let req: IpcRequest = match serde_json::from_str(buf) {
+        let req: IpcRequest = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(e) => {
                 let resp = IpcResponse::error(String::new(), format!("parse error: {e}"));
@@ -104,6 +97,40 @@ where
                 continue;
             }
         };
+
+        // Handle subscribe: switch to persistent mode
+        if req.op == "subscribe" {
+            let session_id = req.params["session_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+
+            if session_id.is_empty() {
+                let resp = IpcResponse::error(req.id, "session_id required for subscribe");
+                let _ = write_response(&mut writer, &resp).await;
+                continue;
+            }
+
+            // Build and send initial snapshot
+            let snapshot = build_session_snapshot(&server, &session_id).await;
+            let resp = IpcResponse::success(
+                req.id,
+                serde_json::to_value(&snapshot).unwrap_or_default(),
+            );
+            if write_response(&mut writer, &resp).await.is_err() {
+                break;
+            }
+
+            // Create channel and subscribe
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<IpcPushEvent>(64);
+            server.channels.subscribe(&session_id, tx).await;
+
+            // Enter persistent mode
+            handle_persistent_connection(&mut reader, &mut writer, &server, &mut rx).await;
+
+            server.channels.unsubscribe(&session_id).await;
+            return; // Connection done after persistent mode
+        }
 
         let id = req.id.clone();
 
@@ -120,6 +147,78 @@ where
         if write_response(&mut writer, &resp).await.is_err() {
             break; // Client disconnected
         }
+    }
+}
+
+/// Handle a persistent subscription connection.
+/// Multiplexes push events (server -> client) and interleaved request-response queries.
+async fn handle_persistent_connection<R, W>(
+    reader: &mut BufReader<R>,
+    writer: &mut W,
+    server: &MiraServer,
+    rx: &mut tokio::sync::mpsc::Receiver<IpcPushEvent>,
+) where
+    R: AsyncRead + Unpin + Send,
+    W: AsyncWrite + Unpin + Send,
+{
+    loop {
+        tokio::select! {
+            // Push events from server -> client
+            Some(event) = rx.recv() => {
+                let json = match serde_json::to_string(&event) {
+                    Ok(j) => j,
+                    Err(_) => continue,
+                };
+                if writer.write_all(format!("{json}\n").as_bytes()).await.is_err() {
+                    break;
+                }
+                if writer.flush().await.is_err() {
+                    break;
+                }
+            }
+            // Interleaved requests from client -> server
+            result = read_request_line(reader) => {
+                match result {
+                    Ok(Some(line)) => {
+                        let req: IpcRequest = match serde_json::from_str(&line) {
+                            Ok(r) => r,
+                            Err(_) => continue,
+                        };
+                        let id = req.id.clone();
+                        let timeout = op_timeout(&req.op);
+                        let result = tokio::time::timeout(
+                            timeout,
+                            dispatch(&req.op, req.params, server),
+                        ).await;
+                        let resp = match result {
+                            Ok(Ok(val)) => IpcResponse::success(id, val),
+                            Ok(Err(e)) => IpcResponse::error(id, e.to_string()),
+                            Err(_) => IpcResponse::error(id, "timeout"),
+                        };
+                        if write_response(writer, &resp).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break, // EOF
+                    Err(_) => break,    // Read error
+                }
+            }
+        }
+    }
+}
+
+/// Build an initial state snapshot for a new subscription.
+async fn build_session_snapshot(
+    _server: &MiraServer,
+    _session_id: &str,
+) -> SessionStateSnapshot {
+    // Phase 1: return empty snapshot. Phase 2 will populate from DB.
+    SessionStateSnapshot {
+        sequence: 0,
+        goals: vec![],
+        injection_stats: InjectionStatsSnapshot::default(),
+        modified_files: vec![],
+        team_conflicts: vec![],
     }
 }
 

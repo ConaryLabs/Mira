@@ -19,6 +19,7 @@ use tokio::sync::RwLock;
 use crate::background::watcher::WatcherHandle;
 use crate::config::ApiKeys;
 use crate::db::pool::{CodePool, MainPool};
+use crate::ipc::channels::SessionChannelRegistry;
 use crate::embeddings::EmbeddingClient;
 use crate::fuzzy::FuzzyCache;
 use crate::hooks::session::{read_claude_cwd, read_claude_session_id};
@@ -69,6 +70,8 @@ pub struct MiraServer {
     pub processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
     /// Cache of recently completed task results for polling (5-minute retention)
     pub completed_cache: Arc<tokio::sync::Mutex<Vec<CachedTaskResult>>>,
+    /// Session channel registry for real-time push subscriptions
+    pub channels: Arc<SessionChannelRegistry>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -98,6 +101,7 @@ impl MiraServer {
             peer,
             processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
             completed_cache: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            channels: Arc::new(SessionChannelRegistry::new()),
             tool_router: Self::create_tool_router(),
         }
     }
