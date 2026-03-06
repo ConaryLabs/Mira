@@ -45,7 +45,15 @@ impl SessionChannelRegistry {
 
     /// Publish an event to a session's subscriber.
     /// Returns true if delivered, false if dropped or no subscriber.
-    /// Critical events block until delivered; non-critical are dropped if buffer full.
+    ///
+    /// Phase 1 simplification: all events use try_send uniformly. The 64-slot
+    /// buffer makes drops extremely unlikely in practice. A future phase may
+    /// distinguish critical events (goal_updated, file_conflict) by removing
+    /// the channel on delivery failure, treating it as dead.
+    ///
+    /// We cannot use blocking send() because the subscriber rx lives in the
+    /// same task as dispatch() (inside handle_persistent_connection's select!
+    /// loop), which would deadlock.
     pub async fn publish(&self, session_id: &str, mut event: IpcPushEvent) -> bool {
         let mut channels = self.channels.write().await;
         let Some(channel) = channels.get_mut(session_id) else {
@@ -55,10 +63,6 @@ impl SessionChannelRegistry {
         channel.sequence += 1;
         event.sequence = channel.sequence;
 
-        // Always use try_send: the subscriber rx lives in the same task as
-        // dispatch() (inside handle_persistent_connection's select! loop),
-        // so a blocking send() would deadlock. The 64-slot buffer provides
-        // sufficient headroom for bursts.
         channel.tx.try_send(event).is_ok()
     }
 

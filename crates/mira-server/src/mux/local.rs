@@ -6,12 +6,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, watch};
 use tokio::time::Instant;
 
 use super::state::SessionState;
 use super::upstream::PendingRequests;
 use crate::ipc::protocol::{IpcRequest, IpcResponse};
+
+/// Max line size for local connections (1 MB).
+const MAX_LINE_SIZE: usize = 1_048_576;
 
 /// Serve local hook connections on mux.sock.
 pub async fn serve(
@@ -19,6 +22,8 @@ pub async fn serve(
     state: Arc<RwLock<SessionState>>,
     upstream_writer: Arc<Mutex<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
     pending_requests: PendingRequests,
+    shutdown_tx: watch::Sender<bool>,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     // Clean stale socket
     let _ = std::fs::remove_file(&sock_path);
@@ -49,8 +54,9 @@ pub async fn serve(
                         let state = state.clone();
                         let upstream = upstream_writer.clone();
                         let pending = pending_requests.clone();
+                        let shutdown = shutdown_tx.clone();
                         tokio::spawn(async move {
-                            handle_local_connection(stream, state, upstream, pending).await;
+                            handle_local_connection(stream, state, upstream, pending, shutdown).await;
                         });
                     }
                     Err(e) => {
@@ -62,10 +68,15 @@ pub async fn serve(
                 eprintln!("[mira/mux] Shutting down after 5 minutes of inactivity");
                 break;
             }
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    eprintln!("[mira/mux] Shutdown signal received");
+                    break;
+                }
+            }
         }
     }
 
-    let _ = std::fs::remove_file(&sock_path);
     Ok(())
 }
 
@@ -74,12 +85,18 @@ async fn handle_local_connection(
     state: Arc<RwLock<SessionState>>,
     upstream: Arc<Mutex<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
     pending: PendingRequests,
+    shutdown: watch::Sender<bool>,
 ) {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+        if line.len() > MAX_LINE_SIZE {
+            line.clear();
+            continue;
+        }
+
         let req: IpcRequest = match serde_json::from_str(line.trim()) {
             Ok(r) => r,
             Err(_) => {
@@ -95,8 +112,8 @@ async fn handle_local_connection(
                 let json = serde_json::to_string(&resp).unwrap_or_default();
                 let _ = writer.write_all(format!("{json}\n").as_bytes()).await;
                 let _ = writer.flush().await;
-                // Exit the process
-                std::process::exit(0);
+                let _ = shutdown.send(true);
+                return;
             }
             _ => {
                 // Proxy to upstream server

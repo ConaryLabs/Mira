@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::{Mutex, RwLock, oneshot};
+use tokio::sync::{Mutex, RwLock, oneshot, watch};
 
 use super::state::SessionState;
 use crate::ipc::protocol::{IpcPushEvent, IpcRequest, IpcResponse, SessionStateSnapshot};
@@ -13,11 +13,15 @@ use crate::ipc::protocol::{IpcPushEvent, IpcRequest, IpcResponse, SessionStateSn
 /// Pending request map: request ID -> oneshot sender for the response.
 pub type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<IpcResponse>>>>;
 
+/// Max line size for upstream reads (1 MB).
+const MAX_LINE_SIZE: usize = 1_048_576;
+
 /// Connect to mira.sock, send subscribe, receive snapshot, spawn reader task.
 /// Returns the write half (for proxying queries) and the pending requests map.
 pub async fn connect_and_subscribe(
     session_id: &str,
     state: Arc<RwLock<SessionState>>,
+    shutdown_tx: watch::Sender<bool>,
 ) -> anyhow::Result<(tokio::io::WriteHalf<UnixStream>, PendingRequests)> {
     let socket_path = crate::ipc::socket_path();
     let stream = UnixStream::connect(&socket_path).await?;
@@ -60,7 +64,8 @@ pub async fn connect_and_subscribe(
     let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
     let pending_clone = pending.clone();
 
-    // Spawn reader task: route push events to state, responses to pending map
+    // Spawn reader task: route push events to state, responses to pending map.
+    // Signals shutdown when upstream connection dies.
     tokio::spawn(async move {
         let mut reader = reader;
         loop {
@@ -68,6 +73,9 @@ pub async fn connect_and_subscribe(
             match reader.read_line(&mut line).await {
                 Ok(0) => break, // EOF - server closed connection
                 Ok(_) => {
+                    if line.len() > MAX_LINE_SIZE {
+                        continue;
+                    }
                     let trimmed = line.trim();
                     // Try as IpcResponse first (has "id" and "ok" fields)
                     if let Ok(resp) = serde_json::from_str::<IpcResponse>(trimmed) {
@@ -84,7 +92,8 @@ pub async fn connect_and_subscribe(
                 Err(_) => break, // Read error
             }
         }
-        eprintln!("[mira/mux] Upstream connection closed");
+        eprintln!("[mira/mux] Upstream connection closed, signaling shutdown");
+        let _ = shutdown_tx.send(true);
     });
 
     Ok((write_half, pending))
