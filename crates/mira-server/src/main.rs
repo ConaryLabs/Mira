@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
                 Some(Commands::Cleanup { .. }) => Level::INFO,
                 Some(Commands::StatusLine) => Level::WARN,
                 Some(Commands::AnalyzeSession { .. }) => Level::WARN,
+                Some(Commands::Mux { .. }) => Level::INFO,
                 _ => Level::WARN,
             };
             let subscriber = FmtSubscriber::builder()
@@ -169,6 +170,9 @@ async fn main() -> Result<()> {
             correlate,
         }) => {
             analyze::run(session, turns, tools, correlate)?;
+        }
+        Some(Commands::Mux { session_id }) => {
+            mira::mux::run(session_id).await?;
         }
     }
 

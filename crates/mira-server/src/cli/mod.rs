@@ -139,6 +139,13 @@ pub enum Commands {
         #[arg(long)]
         correlate: bool,
     },
+
+    /// Run session agent (mux) for real-time hook data
+    Mux {
+        /// Session ID to subscribe to
+        #[arg(long)]
+        session_id: String,
+    },
 }
 
 #[derive(Subcommand)]

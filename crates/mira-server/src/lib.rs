@@ -23,6 +23,7 @@ pub mod ipc;
 pub mod jsonl;
 pub mod llm;
 pub mod mcp;
+pub mod mux;
 pub mod project_files;
 pub mod search;
 pub mod tasks;
