@@ -104,7 +104,16 @@ pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
         })
         .await?;
 
-    if event_type_for_publish == "file_access" {
+    // Detect file modifications: either event_type=="file_access" directly,
+    // or event_type=="tool_use" with behavior_type=="file_access" in event_data
+    let is_file_access = event_type_for_publish == "file_access"
+        || (event_type_for_publish == "tool_use"
+            && event_data_for_publish
+                .get("behavior_type")
+                .and_then(|v| v.as_str())
+                == Some("file_access"));
+
+    if is_file_access {
         if let Some(file_path) = event_data_for_publish.get("file_path").and_then(|v| v.as_str()) {
             publish_event(
                 server,
@@ -457,6 +466,7 @@ pub async fn record_file_ownership(server: &MiraServer, params: Value) -> Result
     let session_id_for_publish = session_id.clone();
     let file_path_for_publish = file_path.clone();
     let member_name_for_publish = member_name.clone();
+    let tool_name_for_publish = tool_name.clone();
 
     server
         .pool
@@ -477,7 +487,11 @@ pub async fn record_file_ownership(server: &MiraServer, params: Value) -> Result
         server,
         &session_id_for_publish,
         "file_conflict",
-        json!({ "file_path": file_path_for_publish, "other_member_name": member_name_for_publish }),
+        json!({
+            "file_path": file_path_for_publish,
+            "other_member_name": member_name_for_publish,
+            "operation": tool_name_for_publish,
+        }),
     )
     .await;
 

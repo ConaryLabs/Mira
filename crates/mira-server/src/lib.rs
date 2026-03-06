@@ -23,6 +23,7 @@ pub mod ipc;
 pub mod jsonl;
 pub mod llm;
 pub mod mcp;
+#[cfg(unix)]
 pub mod mux;
 pub mod project_files;
 pub mod search;

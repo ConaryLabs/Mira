@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
                 Some(Commands::Cleanup { .. }) => Level::INFO,
                 Some(Commands::StatusLine) => Level::WARN,
                 Some(Commands::AnalyzeSession { .. }) => Level::WARN,
+                #[cfg(unix)]
                 Some(Commands::Mux { .. }) => Level::INFO,
                 _ => Level::WARN,
             };
@@ -171,6 +172,7 @@ async fn main() -> Result<()> {
         }) => {
             analyze::run(session, turns, tools, correlate)?;
         }
+        #[cfg(unix)]
         Some(Commands::Mux { session_id }) => {
             mira::mux::run(session_id).await?;
         }

@@ -210,13 +210,13 @@ pub async fn run_session_end() -> Result<()> {
         snapshot_tasks(&mut client, project_id, session_id, true).await;
     }
 
-    // Clean up per-session directory AFTER all project resolution is done
+    // Shutdown mux BEFORE deleting per-session directory (mux.sock lives there)
+    clear_session_identity(session_id);
+
+    // Clean up per-session directory AFTER mux shutdown and project resolution
     if !session_id.is_empty() {
         crate::hooks::session::cleanup_per_session_dir(session_id);
     }
-
-    // Clear session identity so the status line doesn't show stale assists
-    clear_session_identity(session_id);
 
     write_hook_output(&serde_json::json!({}));
     Ok(())

@@ -140,7 +140,8 @@ pub enum Commands {
         correlate: bool,
     },
 
-    /// Run session agent (mux) for real-time hook data
+    /// Run session agent (mux) for real-time hook data (Unix only)
+    #[cfg(unix)]
     Mux {
         /// Session ID to subscribe to
         #[arg(long)]
