@@ -1383,3 +1383,47 @@ async fn test_subscribe_requires_session_id() {
     assert!(!resp.ok);
     assert!(resp.error.unwrap().contains("session_id required"));
 }
+
+#[tokio::test]
+async fn test_log_behavior_publishes_file_modified_event() {
+    let (pool, project_id) = setup_test_pool_with_project().await;
+    let server = create_test_server(pool).await;
+
+    // Subscribe to events
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    server.channels.subscribe("test-sess", tx).await;
+
+    // Register session first (needed for log_behavior)
+    let _ = super::ops::register_session(
+        &server,
+        json!({
+            "session_id": "test-sess",
+            "cwd": "/tmp/test",
+            "source": "startup"
+        }),
+    )
+    .await;
+
+    // Drain the session_event from register_session
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
+
+    // Log a file access
+    let _ = super::ops::log_behavior(
+        &server,
+        json!({
+            "session_id": "test-sess",
+            "project_id": project_id,
+            "event_type": "file_access",
+            "event_data": { "file_path": "src/main.rs", "operation": "Edit" }
+        }),
+    )
+    .await;
+
+    // Should receive a file_modified push event
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.event_type, "file_modified");
+    assert_eq!(event.data["file_path"], "src/main.rs");
+}

@@ -5,6 +5,18 @@ use crate::mcp::MiraServer;
 use anyhow::Result;
 use serde_json::{Value, json};
 
+use super::protocol::IpcPushEvent;
+
+/// Fire-and-forget publish to session channel. Never fails the parent operation.
+async fn publish_event(server: &MiraServer, session_id: &str, event_type: &str, data: Value) {
+    let event = IpcPushEvent {
+        event_type: event_type.to_string(),
+        sequence: 0, // Registry assigns real sequence
+        data,
+    };
+    server.channels.publish(session_id, event).await;
+}
+
 /// Resolve a project by CWD, per-session state, or last active project.
 pub async fn resolve_project(server: &MiraServer, params: Value) -> Result<Value> {
     let cwd = params.get("cwd").and_then(|v| v.as_str());
@@ -62,6 +74,11 @@ pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
         .to_string();
     let event_data = params.get("event_data").cloned().unwrap_or(json!({}));
 
+    // Clone before closure moves them -- needed for publish after DB write
+    let session_id_for_publish = session_id.clone();
+    let event_type_for_publish = event_type.clone();
+    let event_data_for_publish = event_data.clone();
+
     server
         .pool
         .interact(move |conn| {
@@ -86,6 +103,26 @@ pub async fn log_behavior(server: &MiraServer, params: Value) -> Result<Value> {
             Ok::<_, anyhow::Error>(())
         })
         .await?;
+
+    if event_type_for_publish == "file_access" {
+        if let Some(file_path) = event_data_for_publish.get("file_path").and_then(|v| v.as_str()) {
+            publish_event(
+                server,
+                &session_id_for_publish,
+                "file_modified",
+                json!({ "file_path": file_path }),
+            )
+            .await;
+        }
+    } else {
+        publish_event(
+            server,
+            &session_id_for_publish,
+            "tool_used",
+            json!({ "event_type": event_type_for_publish }),
+        )
+        .await;
+    }
 
     Ok(json!({}))
 }
@@ -416,6 +453,11 @@ pub async fn record_file_ownership(server: &MiraServer, params: Value) -> Result
         .unwrap_or("Edit")
         .to_string();
 
+    // Clone before closure moves them
+    let session_id_for_publish = session_id.clone();
+    let file_path_for_publish = file_path.clone();
+    let member_name_for_publish = member_name.clone();
+
     server
         .pool
         .interact(move |conn| {
@@ -430,6 +472,14 @@ pub async fn record_file_ownership(server: &MiraServer, params: Value) -> Result
             .map_err(|e| anyhow::anyhow!("{e}"))
         })
         .await?;
+
+    publish_event(
+        server,
+        &session_id_for_publish,
+        "file_conflict",
+        json!({ "file_path": file_path_for_publish, "other_member_name": member_name_for_publish }),
+    )
+    .await;
 
     Ok(json!({}))
 }
@@ -600,6 +650,9 @@ pub async fn register_session(server: &MiraServer, params: Value) -> Result<Valu
         .unwrap_or("startup")
         .to_string();
 
+    // Clone before closure moves session_id
+    let session_id_for_publish = session_id.clone();
+
     let project_id = server
         .pool
         .interact(move |conn| {
@@ -622,6 +675,14 @@ pub async fn register_session(server: &MiraServer, params: Value) -> Result<Valu
             Ok::<_, anyhow::Error>(project_id)
         })
         .await?;
+
+    publish_event(
+        server,
+        &session_id_for_publish,
+        "session_event",
+        json!({ "type": "started" }),
+    )
+    .await;
 
     Ok(json!({"project_id": project_id}))
 }
@@ -727,6 +788,9 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
         .ok_or_else(|| anyhow::anyhow!("missing required param: session_id"))?
         .to_string();
 
+    // Clone before closure moves session_id
+    let session_id_for_publish = session_id.clone();
+
     server
         .pool
         .interact(move |conn| {
@@ -764,6 +828,14 @@ pub async fn close_session(server: &MiraServer, params: Value) -> Result<Value> 
             Ok::<_, anyhow::Error>(())
         })
         .await?;
+
+    publish_event(
+        server,
+        &session_id_for_publish,
+        "session_event",
+        json!({ "type": "closed" }),
+    )
+    .await;
 
     Ok(json!({}))
 }
