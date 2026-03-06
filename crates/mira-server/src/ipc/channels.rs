@@ -17,6 +17,12 @@ struct SessionChannel {
     sequence: u64,
 }
 
+impl Default for SessionChannelRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionChannelRegistry {
     pub fn new() -> Self {
         Self {

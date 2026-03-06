@@ -1462,10 +1462,10 @@ where
         }
 
         // Try as IpcResponse first
-        if let Ok(resp) = serde_json::from_str::<IpcResponse>(buf.trim()) {
-            if resp.id == req.id {
-                return resp;
-            }
+        if let Ok(resp) = serde_json::from_str::<IpcResponse>(buf.trim())
+            && resp.id == req.id
+        {
+            return resp;
         }
         // Otherwise it's a push event -- skip and keep reading
     }
@@ -1532,12 +1532,11 @@ async fn test_subscribe_receives_push_events() {
         sub_reader.read_line(&mut buf),
     )
     .await;
-    if let Ok(Ok(n)) = push_result {
-        if n > 0 {
-            if let Ok(event) = serde_json::from_str::<IpcPushEvent>(buf.trim()) {
-                assert_eq!(event.event_type, "session_event");
-            }
-        }
+    if let Ok(Ok(n)) = push_result
+        && n > 0
+        && let Ok(event) = serde_json::from_str::<IpcPushEvent>(buf.trim())
+    {
+        assert_eq!(event.event_type, "session_event");
     }
 
     // Log a file access on the writer connection
