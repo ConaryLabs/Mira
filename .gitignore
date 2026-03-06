@@ -86,3 +86,4 @@ MCP_DEBUG_STATUS.md
 .ralphy/
 release.sh
 libnull.rlib
+.worktrees/
