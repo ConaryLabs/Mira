@@ -54,6 +54,45 @@ impl IpcResponse {
     }
 }
 
+/// Server-pushed event over a persistent subscription connection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpcPushEvent {
+    pub event_type: String,
+    pub sequence: u64,
+    pub data: serde_json::Value,
+}
+
+/// Full state snapshot sent on initial subscribe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStateSnapshot {
+    pub sequence: u64,
+    pub goals: Vec<GoalSnapshot>,
+    pub injection_stats: InjectionStatsSnapshot,
+    pub modified_files: Vec<String>,
+    pub team_conflicts: Vec<FileConflictSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalSnapshot {
+    pub id: i64,
+    pub title: String,
+    pub status: String,
+    pub progress_percent: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InjectionStatsSnapshot {
+    pub total_injections: u64,
+    pub total_chars: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileConflictSnapshot {
+    pub file_path: String,
+    pub other_member_name: String,
+    pub operation: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +141,48 @@ mod tests {
         let json = r#"{"op":"resolve_project","id":"x"}"#;
         let req: IpcRequest = serde_json::from_str(json).unwrap();
         assert!(req.params.is_null());
+    }
+
+    #[test]
+    fn push_event_roundtrip() {
+        let event = IpcPushEvent {
+            event_type: "goal_updated".to_string(),
+            sequence: 1,
+            data: serde_json::json!({ "goal_id": 5, "progress": 80 }),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: IpcPushEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.event_type, "goal_updated");
+        assert_eq!(parsed.sequence, 1);
+        assert_eq!(parsed.data["goal_id"], 5);
+    }
+
+    #[test]
+    fn session_state_snapshot_roundtrip() {
+        let snapshot = SessionStateSnapshot {
+            sequence: 0,
+            goals: vec![GoalSnapshot {
+                id: 1,
+                title: "Test goal".to_string(),
+                status: "in_progress".to_string(),
+                progress_percent: 50,
+            }],
+            injection_stats: InjectionStatsSnapshot { total_injections: 5, total_chars: 1200 },
+            modified_files: vec!["src/main.rs".to_string()],
+            team_conflicts: vec![],
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let parsed: SessionStateSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.goals.len(), 1);
+        assert_eq!(parsed.goals[0].progress_percent, 50);
+        assert_eq!(parsed.injection_stats.total_injections, 5);
+        assert_eq!(parsed.modified_files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn injection_stats_snapshot_default() {
+        let stats = InjectionStatsSnapshot::default();
+        assert_eq!(stats.total_injections, 0);
+        assert_eq!(stats.total_chars, 0);
     }
 }
