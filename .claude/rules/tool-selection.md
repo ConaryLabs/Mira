@@ -2,11 +2,11 @@
 
 # Tool Selection: Mira vs Grep/Glob
 
-## Use Mira Tools When
+## Use Mira's `run()` Tool When
 
-1. **Searching for code by intent** - `code(action="search", query="authentication")` finds auth code even if the word "authentication" isn't used
-2. **Understanding file structure** - `code(action="symbols", file_path="file.rs")` lists all definitions
-3. **Tracing call relationships** - `code(action="callers", function_name="fn_name")` / `code(action="callees", function_name="fn_name")` for actual call graph
+1. **Searching for code by intent** - `run('search("authentication")')` finds auth code even if the word "authentication" isn't used
+2. **Understanding file structure** - `run('symbols("file.rs")')` lists all definitions
+3. **Tracing call relationships** - `run('callers("fn_name")')` / `run('callees("fn_name")')` for actual call graph
 
 ## Use Grep/Glob When
 
@@ -18,13 +18,15 @@
 
 | Task | Wrong | Right |
 |------|-------|-------|
-| Find authentication code | `grep -r "auth"` | `code(action="search", query="authentication")` |
-| What calls this function? | `grep -r "function_name"` | `code(action="callers", function_name="function_name")` |
-| List functions in file | `grep "fn " file.rs` | `code(action="symbols", file_path="file.rs")` |
+| Find authentication code | `grep -r "auth"` | `run('search("authentication")')` |
+| What calls this function? | `grep -r "function_name"` | `run('callers("function_name")')` |
+| List functions in file | `grep "fn " file.rs` | `run('symbols("file.rs")')` |
 | Use external library | Guess from training data | Context7: `resolve-library-id` -> `query-docs` |
 | Find config files | - | `glob("**/*.toml")` - OK, exact pattern |
 | Find error message | - | `grep "error 404"` - OK, literal string |
 
-Example: "Where is authentication handled?" -> use `code(action="search", query="authentication handling")`, not `grep -r "auth"`. Semantic search finds related code using different terminology.
+Example: "Where is authentication handled?" -> use `run('search("authentication handling")')`, not `grep -r "auth"`. Semantic search finds related code using different terminology.
 
 Example: "Find where 'connection refused' is logged" -> use `Grep` with pattern `"connection refused"`. Literal string searches are Grep's strength.
+
+Use `run('help()')` to list all available Rhai functions.

@@ -7,11 +7,11 @@ Mira is a Rust MCP server providing code intelligence and session management for
 ## Session Start
 
 Project context is **auto-initialized** from Claude Code's working directory.
-For full session context, call `session(action="recap")`.
+For full session context, call `run("recap()")`.
 
 **Automatic bridging:** Mira hooks capture session source (`startup` vs `resume`), pending tasks, and working directory. Session history shows `[startup]` or `[resume←previous_id]`.
 
-**Notation:** `tool(action="x", param="y")` refers to MCP tool calls. For example, `code(action="search", query="...")` calls the `code` MCP tool with `action="search"`. These are not shell commands.
+**Notation:** Mira exposes a single `run(code)` MCP tool. Pass a Rhai script string: e.g. `run('search("auth")')` or `run('goal_list()')`. These are not shell commands.
 
 ## Architecture
 
@@ -32,7 +32,7 @@ Claude Code → stdio → rmcp framework → MiraServer (ServerHandler)
   → db/ (SQLite via DatabasePool)
 ```
 
-Tools are defined with `#[tool]` attributes in `mcp/router.rs`. Each tool delegates to a module in `tools/core/` (e.g., `tools/core/code/`, `tools/core/goals.rs`). Request/response types live in `mcp/requests.rs` and `mcp/responses/`. When adding or modifying tools, coordinate changes across all three locations.
+The single `run(code)` tool is defined in `mcp/router.rs` and dispatches to the Rhai engine in `scripting/`. Rhai bindings call into the existing business logic modules in `tools/core/` (e.g., `tools/core/code/`, `tools/core/goals.rs`).
 
 ### Two-Database Architecture
 
@@ -48,8 +48,8 @@ Always use `DatabasePool` (via `pool.run()` or `pool.interact()`), never `Databa
 
 | Subsystem | Location | Purpose |
 |-----------|----------|---------|
-| Hooks | `hooks/` | Claude Code lifecycle hooks (session, prompt, tool use, stop) |
-| Context | `context/` | Proactive context injection for hooks |
+| Hooks | `hooks/` | Claude Code lifecycle hooks (session, tool use, stop) |
+| Scripting | `scripting/` | Rhai script engine for `run()` MCP tool |
 | Indexer | `indexer/` | Tree-sitter code parsing and symbol extraction |
 | Cartographer | `cartographer/` | Codebase mapping and module detection |
 | Search | `search/` | Semantic + keyword + cross-reference search |
@@ -59,7 +59,7 @@ Always use `DatabasePool` (via `pool.run()` or `pool.interact()`), never `Databa
 
 ### MCP Framework
 
-Mira uses the **`rmcp`** crate for MCP protocol implementation. `MiraServer` implements `ServerHandler`. Tools use `#[tool]` and `#[tool_router]` proc macros. Responses use structured output with `output_schema`.
+Mira uses the **`rmcp`** crate for MCP protocol implementation. `MiraServer` implements `ServerHandler`. The server exposes a single `run(code)` tool that executes Rhai scripts, routing calls to Rust functions registered in `scripting/`. Responses use structured output with `output_schema`.
 
 ## Build & Test
 
@@ -77,7 +77,7 @@ The binary is at `target/debug/mira`. Claude Code spawns it via MCP (configured 
 ## Debugging
 
 ```bash
-mira debug-session   # Debug project(action="start") output
+mira debug-session   # Debug session startup output
 mira debug-carto     # Debug cartographer module detection
 ```
 
@@ -89,16 +89,15 @@ mira debug-carto     # Debug cartographer module detection
 |-------|------------|
 | Use `Database`/`Connection` directly | Use `DatabasePool` (`pool.run()` or `pool.interact()`) |
 | Store secrets in code or config | Keep secrets in `~/.mira/.env` only |
-| Guess at MCP tool parameters | Check tool schema or existing usage first |
-| Change tool handler signatures in `mcp/router.rs` alone | Coordinate across `router.rs`, `requests.rs`, and `tools/core/` |
+| Guess at Rhai API function names | Call `run("help()")` to list available functions |
 | Use `cargo build --release` or `cargo test --release` | Always use debug mode during development |
 
 ## Tool Selection
 
-STOP before using Grep or Glob. Prefer Mira tools for semantic work:
-- **Code by intent** -> `code(action="search", query="...")` (not Grep)
-- **File structure** -> `code(action="symbols", file_path="...")` (not grepping for definitions)
-- **Call graph** -> `code(action="callers", ...)` / `code(action="callees", ...)` (not grepping function names)
+STOP before using Grep or Glob. Prefer Mira's `run()` tool for semantic work:
+- **Code by intent** -> `run('search("authentication")')` (not Grep)
+- **File structure** -> `run('symbols("file.rs")')` (not grepping for definitions)
+- **Call graph** -> `run('callers("fn_name")')` / `run('callees("fn_name")')` (not grepping function names)
 - **External libraries** -> Context7: `resolve-library-id` then `query-docs`
 
 Use Grep/Glob only for **literal strings**, **exact filename patterns**, or **simple one-off searches**.
@@ -107,16 +106,22 @@ See `.claude/rules/tool-selection.md` for the full decision guide.
 
 ## Code Navigation Quick Reference
 
-| Need | Tool |
-|------|------|
-| Search by meaning | `code(action="search", query="...")` |
-| File structure | `code(action="symbols", file_path="...")` |
-| What calls X? | `code(action="callers", function_name="...")` |
-| What does X call? | `code(action="callees", function_name="...")` |
-| Codebase overview | `project(action="start")` output |
-| External library API | Context7: `resolve-library-id` -> `query-docs` |
-| Literal string search | `Grep` (OK) |
-| Exact filename pattern | `Glob` (OK) |
+```rhai
+// Find auth code and show file structure
+let hits = search("authentication");
+let syms = symbols(hits[0].file_path);
+format(#{ search_results: hits, symbols: syms })
+
+// Trace call graph
+let callers = callers("handle_request");
+let callees = callees("handle_request");
+
+// Session and goals
+recap()
+goal_list()
+```
+
+Use `run('help()')` to list all available Rhai functions. Use `Grep` for literal strings, `Glob` for exact filename patterns.
 
 ## Environment
 
@@ -163,13 +168,10 @@ Mira hooks **automatically inject context** — don't manually duplicate this:
 | Hook | What It Injects |
 |------|-----------------|
 | `SessionStart` | Session ID, startup vs resume, task list ID, working directory; on resume: previous session context, goals, team info, incomplete tasks from previous session |
-| `UserPromptSubmit` | Pending tasks, team context, reactive code intelligence |
-| `PreToolUse` | File reread advisory and symbol hints for Read |
 | `PostToolUse` | Tracks file modifications, team conflict detection |
 | `PreCompact` | Extracts decisions, TODOs, and errors from transcript before summarization |
 | `Stop` | Session snapshot, task export, goal progress check |
 | `SessionEnd` | Snapshot tasks on user interrupt, team session cleanup |
-| `SubagentStart` | Injects goals, project map, and search hints for subagent context |
 | `SubagentStop` | Captures discoveries from subagent work |
 | `PostToolUseFailure` | Tracks tool failures |
 | `TaskCompleted` | Logs task completions, auto-completes matching goal milestones |
@@ -190,5 +192,5 @@ When summarizing this conversation, always preserve:
 ## What NOT to Do
 
 Beyond the anti-patterns above, avoid:
-- Manually fetching session context that `UserPromptSubmit` hook already injects
+- Manually fetching session context that hooks already inject
 - Duplicating goal/task state between Claude tasks and Mira goals
