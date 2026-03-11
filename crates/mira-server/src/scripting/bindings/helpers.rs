@@ -309,7 +309,7 @@ fn rhai_pick(results: rhai::Array, fields: rhai::Array) -> rhai::Array {
             if let Some(map) = item.read_lock::<rhai::Map>() {
                 for field in &field_names {
                     if let Some(val) = map.get(field.as_str()) {
-                        new_map.insert(field.clone().into(), val.clone());
+                        new_map.insert(field.as_str().into(), val.clone());
                     }
                 }
             }
