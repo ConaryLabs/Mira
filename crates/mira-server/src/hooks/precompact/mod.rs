@@ -11,7 +11,6 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
 
 #[cfg(test)]
 pub(crate) use extract::{extract_and_save_context, extract_compaction_context};
@@ -254,76 +253,8 @@ async fn save_pre_compaction_state(
         tracing::warn!(error = %e, "Context extraction failed");
     }
 
-    // Set a post-compaction flag so the next UserPromptSubmit can inject
-    // a recovery summary (decisions, active work, files modified, etc.)
-    set_post_compaction_flag(session_id);
-
     tracing::debug!("Pre-compaction state saved");
     Ok(())
-}
-
-// ── Post-compaction flag ─────────────────────────────────────────────────
-// Written by PreCompact, consumed by UserPromptSubmit on the next prompt.
-
-/// Path to the post-compaction flag file for a session
-pub(crate) fn post_compaction_flag_path(session_id: &str) -> PathBuf {
-    crate::hooks::mira_tmp_path(session_id, "post_compact", "flag")
-}
-
-/// Set the post-compaction flag for a session
-pub(super) fn set_post_compaction_flag(session_id: &str) {
-    if session_id.is_empty() || session_id == "unknown" {
-        return;
-    }
-    let path = post_compaction_flag_path(session_id);
-    if let Some(parent) = path.parent()
-        && let Err(e) = fs::create_dir_all(parent)
-    {
-        tracing::warn!("post-compaction flag: failed to create dir: {e}");
-        return;
-    }
-    // Write a timestamp so we can age-out stale flags
-    if let Err(e) = fs::write(&path, format!("{}", crate::hooks::unix_now())) {
-        tracing::warn!("post-compaction flag: failed to write flag file: {e}");
-    }
-}
-
-/// Check whether a post-compaction flag exists and is fresh, without consuming it.
-pub(crate) fn check_post_compaction_flag(session_id: &str) -> bool {
-    if session_id.is_empty() {
-        return false;
-    }
-    let path = post_compaction_flag_path(session_id);
-    if !path.is_file() {
-        return false;
-    }
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .map(|ts| crate::hooks::unix_now().saturating_sub(ts) < 600)
-        .unwrap_or(false)
-}
-
-/// Check and consume the post-compaction flag.
-/// Returns true if compaction just happened (flag was present and fresh).
-pub(crate) fn consume_post_compaction_flag(session_id: &str) -> bool {
-    if session_id.is_empty() {
-        return false;
-    }
-    let path = post_compaction_flag_path(session_id);
-    if !path.is_file() {
-        return false;
-    }
-    // Read timestamp and check if flag is fresh (< 10 minutes)
-    let is_fresh = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .map(|ts| crate::hooks::unix_now().saturating_sub(ts) < 600)
-        .unwrap_or(false);
-
-    // Always remove the flag (consume it)
-    let _ = fs::remove_file(&path);
-    is_fresh
 }
 
 /// Parse JSONL transcript into structured messages.

@@ -8,7 +8,6 @@
 pub mod background;
 pub mod cartographer;
 pub mod config;
-pub mod context;
 pub mod db;
 pub mod embeddings;
 pub mod entities;
