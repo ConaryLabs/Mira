@@ -14,8 +14,7 @@ const MAX_LINE_SIZE: usize = 1_048_576;
 /// medium ops (search/recall) get 10s, fast ops (simple lookups/writes) get 5s.
 fn op_timeout(op: &str) -> Duration {
     match op {
-        "get_user_prompt_context"
-        | "close_session"
+        "close_session"
         | "get_startup_context"
         | "get_resume_context" => Duration::from_secs(30),
         "get_active_goals" | "snapshot_tasks" => Duration::from_secs(10),
@@ -263,8 +262,6 @@ async fn dispatch(
         "generate_bundle" => super::ops::generate_bundle(server, params).await,
         "get_project_map" => super::ops::get_project_map(server, params).await,
         "search_for_subagent" => super::ops::search_for_subagent(server, params).await,
-        // Phase 4: UserPromptSubmit
-        "get_user_prompt_context" => super::ops::get_user_prompt_context(server, params).await,
         _ => anyhow::bail!("unknown op: {op}"),
     }
 }

@@ -1,7 +1,7 @@
 // crates/mira-server/src/ipc/client/goal_ops.rs
 //! HookClient methods for goals, milestones, error patterns, and prompt context.
 
-use super::{Backend, UserPromptContextResult};
+use super::Backend;
 use serde_json::json;
 
 impl super::HookClient {
@@ -274,60 +274,4 @@ impl super::HookClient {
         false
     }
 
-    /// Get all context needed by the UserPromptSubmit hook in a single call.
-    /// Only available via IPC (returns None in Direct mode — caller handles fallback).
-    pub async fn get_user_prompt_context(
-        &mut self,
-        message: &str,
-        session_id: &str,
-    ) -> Option<UserPromptContextResult> {
-        if !self.is_ipc() {
-            return None;
-        }
-        let params = json!({"message": message, "session_id": session_id});
-        let v = self.call("get_user_prompt_context", params).await.ok()?;
-
-        Some(UserPromptContextResult {
-            project_id: v.get("project_id").and_then(|v| v.as_i64()),
-            project_path: v
-                .get("project_path")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            reactive_context: v
-                .get("reactive_context")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            reactive_sources: v
-                .get("reactive_sources")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|s| s.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            reactive_from_cache: v
-                .get("reactive_from_cache")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            reactive_summary: v
-                .get("reactive_summary")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            reactive_skip_reason: v
-                .get("reactive_skip_reason")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            team_context: v
-                .get("team_context")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            config_max_chars: v
-                .get("config_max_chars")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(3000) as usize,
-        })
-    }
 }

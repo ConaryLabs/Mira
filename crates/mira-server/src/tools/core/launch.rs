@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::db::{Goal, get_active_goals_sync};
 use crate::error::MiraError;
-use crate::hooks::pre_tool::unix_now;
+use crate::hooks::unix_now;
 use crate::mcp::responses::Json;
 use crate::mcp::responses::launch::{AgentSpec, LaunchData, LaunchOutput};
 use crate::tools::core::project::detect_project_types;

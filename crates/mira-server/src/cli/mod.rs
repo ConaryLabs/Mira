@@ -170,18 +170,12 @@ pub enum HookAction {
     SessionStart,
     /// Handle PreCompact hooks - preserve context before summarization
     PreCompact,
-    /// Handle PreToolUse hooks - inject context before Grep/Glob searches
-    PreTool,
-    /// Handle UserPromptSubmit hooks - inject proactive context
-    UserPrompt,
     /// Handle PostToolUse hooks - track file changes, provide hints
     PostTool,
     /// Handle Stop hooks - check goals, save session state
     Stop,
     /// Handle SessionEnd hooks - snapshot tasks on user interrupt
     SessionEnd,
-    /// Handle SubagentStart hooks - inject context when subagents spawn
-    SubagentStart,
     /// Handle SubagentStop hooks - capture discoveries from subagent work
     SubagentStop,
     /// Handle PostToolUseFailure hooks - track and learn from tool failures
@@ -197,12 +191,9 @@ impl std::fmt::Display for HookAction {
         let name = match self {
             Self::SessionStart => "SessionStart",
             Self::PreCompact => "PreCompact",
-            Self::PreTool => "PreTool",
-            Self::UserPrompt => "UserPrompt",
             Self::PostTool => "PostTool",
             Self::Stop => "Stop",
             Self::SessionEnd => "SessionEnd",
-            Self::SubagentStart => "SubagentStart",
             Self::SubagentStop => "SubagentStop",
             Self::PostToolFailure => "PostToolFailure",
             Self::TaskCompleted => "TaskCompleted",

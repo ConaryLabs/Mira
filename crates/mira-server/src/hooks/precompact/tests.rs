@@ -1676,7 +1676,7 @@ fn flag_expires_after_ten_minutes() {
     }
 
     // Write a timestamp that is 601 seconds in the past (past the 600s threshold)
-    let expired_ts = crate::hooks::pre_tool::unix_now().saturating_sub(601);
+    let expired_ts = crate::hooks::unix_now().saturating_sub(601);
     std::fs::write(&path, format!("{expired_ts}")).unwrap();
 
     // Both check and consume should return false for expired flag

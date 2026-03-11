@@ -332,20 +332,6 @@ impl HookClient {
 // Types
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Result from the composite `get_user_prompt_context` IPC call.
-#[derive(Debug)]
-pub struct UserPromptContextResult {
-    pub project_id: Option<i64>,
-    pub project_path: Option<String>,
-    pub reactive_context: String,
-    pub reactive_sources: Vec<String>,
-    pub reactive_from_cache: bool,
-    pub reactive_summary: String,
-    pub reactive_skip_reason: Option<String>,
-    pub team_context: Option<String>,
-    pub config_max_chars: usize,
-}
-
 /// Team membership info returned by `get_team_membership`.
 #[derive(Debug, Clone)]
 pub struct TeamMembershipInfo {

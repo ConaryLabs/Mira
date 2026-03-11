@@ -13,31 +13,6 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook user-prompt",
-            "timeout": 8,
-            "statusMessage": "Mira: Loading context..."
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Read|Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook pre-tool",
-            "timeout": 3,
-            "statusMessage": "Mira: Checking relevant context..."
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
@@ -84,18 +59,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook session-end",
             "timeout": 15,
             "statusMessage": "Mira: Closing session..."
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/mira-wrapper hook subagent-start",
-            "timeout": 5,
-            "statusMessage": "Mira: Injecting agent context..."
           }
         ]
       }

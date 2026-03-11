@@ -107,12 +107,9 @@ async fn main() -> Result<()> {
                 match action {
                     HookAction::SessionStart => mira::hooks::session::run().await,
                     HookAction::PreCompact => mira::hooks::precompact::run().await,
-                    HookAction::PreTool => mira::hooks::pre_tool::run().await,
-                    HookAction::UserPrompt => mira::hooks::user_prompt::run().await,
                     HookAction::PostTool => mira::hooks::post_tool::run().await,
                     HookAction::Stop => mira::hooks::stop::run().await,
                     HookAction::SessionEnd => mira::hooks::stop::run_session_end().await,
-                    HookAction::SubagentStart => mira::hooks::subagent::run_start().await,
                     HookAction::SubagentStop => mira::hooks::subagent::run_stop().await,
                     HookAction::PostToolFailure => mira::hooks::post_tool_failure::run().await,
                     HookAction::TaskCompleted => mira::hooks::task_completed::run().await,

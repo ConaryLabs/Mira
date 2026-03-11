@@ -4,14 +4,12 @@
 pub mod ast_diff;
 pub mod post_tool;
 pub mod post_tool_failure;
-pub mod pre_tool;
 pub mod precompact;
 pub mod session;
 pub mod stop;
 pub mod subagent;
 pub mod task_completed;
 pub mod teammate_idle;
-pub mod user_prompt;
 
 #[cfg(test)]
 mod session_tests;
@@ -19,7 +17,19 @@ mod session_tests;
 use anyhow::Result;
 use std::io::Read;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+/// Get current Unix timestamp in seconds.
+///
+/// Relocated from `pre_tool` so it remains available to `precompact`,
+/// `tools/core/launch`, and any other callers after the PreToolUse hook
+/// was removed.
+pub(crate) fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 /// Get the Mira database path (~/.mira/mira.db)
 pub fn get_db_path() -> PathBuf {

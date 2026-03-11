@@ -283,7 +283,7 @@ pub(super) fn set_post_compaction_flag(session_id: &str) {
         return;
     }
     // Write a timestamp so we can age-out stale flags
-    if let Err(e) = fs::write(&path, format!("{}", crate::hooks::pre_tool::unix_now())) {
+    if let Err(e) = fs::write(&path, format!("{}", crate::hooks::unix_now())) {
         tracing::warn!("post-compaction flag: failed to write flag file: {e}");
     }
 }
@@ -300,7 +300,7 @@ pub(crate) fn check_post_compaction_flag(session_id: &str) -> bool {
     fs::read_to_string(&path)
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-        .map(|ts| crate::hooks::pre_tool::unix_now().saturating_sub(ts) < 600)
+        .map(|ts| crate::hooks::unix_now().saturating_sub(ts) < 600)
         .unwrap_or(false)
 }
 
@@ -318,7 +318,7 @@ pub(crate) fn consume_post_compaction_flag(session_id: &str) -> bool {
     let is_fresh = fs::read_to_string(&path)
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-        .map(|ts| crate::hooks::pre_tool::unix_now().saturating_sub(ts) < 600)
+        .map(|ts| crate::hooks::unix_now().saturating_sub(ts) < 600)
         .unwrap_or(false);
 
     // Always remove the flag (consume it)
