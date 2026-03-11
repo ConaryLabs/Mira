@@ -100,3 +100,80 @@ pub async fn execute_script(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn create_test_server() -> crate::mcp::MiraServer {
+        use crate::db::pool::{CodePool, DatabasePool, MainPool};
+        use std::sync::Arc;
+        let pool = MainPool::new(Arc::new(DatabasePool::open_in_memory().await.unwrap()));
+        let code_pool = CodePool::new(Arc::new(
+            DatabasePool::open_code_db_in_memory().await.unwrap(),
+        ));
+        crate::mcp::MiraServer::new(pool, code_pool, None)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn script_returns_literal() {
+        let server = create_test_server().await;
+        let result = execute_script(&server, "42").await.unwrap();
+        assert_eq!(result, serde_json::json!(42));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn script_returns_map() {
+        let server = create_test_server().await;
+        let result = execute_script(&server, r#"#{ a: 1, b: "hello" }"#).await.unwrap();
+        assert_eq!(result["a"], 1);
+        assert_eq!(result["b"], "hello");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn script_help_returns_reference() {
+        let server = create_test_server().await;
+        let result = execute_script(&server, "help()").await.unwrap();
+        let text = result.as_str().unwrap();
+        assert!(text.contains("search"));
+        assert!(text.contains("goal_create"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn script_eval_disabled() {
+        let server = create_test_server().await;
+        let result = execute_script(&server, r#"eval("42")"#).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn script_operation_limit() {
+        let server = create_test_server().await;
+        let result = execute_script(&server, "loop { }").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn script_chains_helpers() {
+        let server = create_test_server().await;
+        let result = execute_script(&server, r#"
+            let data = [
+                #{ name: "a", score: 0.1 },
+                #{ name: "b", score: 0.9 },
+                #{ name: "c", score: 0.5 },
+            ];
+            let top = summarize(data, 2);
+            pick(top, ["name"])
+        "#).await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], "b");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn script_syntax_error() {
+        let server = create_test_server().await;
+        let result = execute_script(&server, "let x = !!!").await;
+        assert!(result.is_err());
+    }
+}
