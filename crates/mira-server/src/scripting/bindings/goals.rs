@@ -152,7 +152,12 @@ pub fn register(engine: &mut Engine, server: MiraServer) {
                     .map(crate::scripting::convert::dynamic_to_value)
                     .collect::<Vec<_>>(),
             )
-            .unwrap_or_default();
+            .map_err(|e| {
+                Box::new(EvalAltResult::ErrorRuntime(
+                    Dynamic::from(format!("Failed to serialize goals: {e}")),
+                    rhai::Position::NONE,
+                ))
+            })?;
             req.goals = Some(goals_json);
             call_async_json(async move { core::goal(&srv, req).await })
         },

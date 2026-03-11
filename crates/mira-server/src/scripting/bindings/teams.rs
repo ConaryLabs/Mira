@@ -21,4 +21,18 @@ pub fn register(engine: &mut Engine, server: MiraServer) {
             })
         },
     );
+
+    // launch(team, scope) -> Map
+    let srv = server.clone();
+    engine.register_fn(
+        "launch",
+        move |team: &str, scope: &str| -> Result<Dynamic, Box<EvalAltResult>> {
+            let srv = srv.clone();
+            let team = team.to_string();
+            let scope = scope.to_string();
+            call_async_json(async move {
+                core::handle_launch(&srv, team, Some(scope), None, None).await
+            })
+        },
+    );
 }

@@ -22,6 +22,18 @@ pub fn register(engine: &mut Engine, server: MiraServer) {
         },
     );
 
+    // index_project(skip_embed) -> Map
+    let srv = server.clone();
+    engine.register_fn(
+        "index_project",
+        move |skip_embed: bool| -> Result<Dynamic, Box<EvalAltResult>> {
+            let srv = srv.clone();
+            call_async_json(async move {
+                core::index(&srv, IndexAction::Project, None, skip_embed).await
+            })
+        },
+    );
+
     // index_status() -> Map
     let srv = server.clone();
     engine.register_fn(
