@@ -1,6 +1,7 @@
 //! Mira API bindings for Rhai scripts.
 
 pub mod code;
+pub mod goals;
 pub mod helpers;
 
 use crate::mcp::MiraServer;
@@ -10,4 +11,5 @@ use rhai::Engine;
 pub fn register_all(engine: &mut Engine, server: MiraServer) {
     helpers::register(engine, server.clone());
     code::register(engine, server.clone());
+    goals::register(engine, server.clone());
 }
