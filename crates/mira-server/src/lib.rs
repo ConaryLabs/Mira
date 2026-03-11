@@ -26,6 +26,7 @@ pub mod mcp;
 #[cfg(unix)]
 pub mod mux;
 pub mod project_files;
+pub mod scripting;
 pub mod search;
 pub mod tasks;
 pub mod tools;

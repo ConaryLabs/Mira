@@ -28,6 +28,9 @@ path = "src/main.rs"
 # Shared types
 mira-types = { path = "../mira-types" }
 
+# Scripting engine
+rhai = { version = "1", features = ["sync"] }
+
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }
 
