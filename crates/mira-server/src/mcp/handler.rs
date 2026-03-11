@@ -18,15 +18,18 @@ use rmcp::{
     task_manager::ToolCallTaskResult,
 };
 
-/// Extract the "action" field from tool arguments and look up the task TTL.
+/// Extract the "action" field and optional "code" field from tool arguments,
+/// then look up the task TTL.
 fn extract_action_ttl(request: &CallToolRequestParams) -> (Option<String>, Option<u64>) {
-    let action = request
-        .arguments
-        .as_ref()
+    let args = request.arguments.as_ref();
+    let action = args
         .and_then(|a| a.get("action"))
         .and_then(|v| v.as_str())
         .map(String::from);
-    let ttl = tasks::task_ttl(&request.name, action.as_deref());
+    let code = args
+        .and_then(|a| a.get("code"))
+        .and_then(|v| v.as_str());
+    let ttl = tasks::task_ttl(&request.name, action.as_deref(), code);
     (action, ttl)
 }
 
@@ -443,5 +446,35 @@ mod tests {
         let (action, ttl) = extract_action_ttl(&req);
         assert_eq!(action, Some("project".to_string()));
         assert_eq!(ttl, Some(600));
+    }
+
+    #[test]
+    fn extract_action_ttl_run_with_long_running_code() {
+        let req = make_request(
+            "run",
+            Some(serde_json::json!({"code": "index_project()"})),
+        );
+        let (_action, ttl) = extract_action_ttl(&req);
+        assert_eq!(ttl, Some(600));
+    }
+
+    #[test]
+    fn extract_action_ttl_run_with_simple_code() {
+        let req = make_request(
+            "run",
+            Some(serde_json::json!({"code": "search(\"hello\")"})),
+        );
+        let (_action, ttl) = extract_action_ttl(&req);
+        assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn extract_action_ttl_run_with_diff_code() {
+        let req = make_request(
+            "run",
+            Some(serde_json::json!({"code": "let d = diff(); format(d)"})),
+        );
+        let (_action, ttl) = extract_action_ttl(&req);
+        assert_eq!(ttl, Some(300));
     }
 }

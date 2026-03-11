@@ -115,9 +115,23 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
         "run" => {
             let req: mira::mcp::requests::RunRequest = serde_json::from_str(&args)?;
             match mira::scripting::execute_script(&server, &req.code).await {
-                Ok(value) => Ok(serde_json::to_string_pretty(&value)
-                    .unwrap_or_else(|_| "null".to_string())),
-                Err(e) => Err(e),
+                Ok(result) => {
+                    let mut parts: Vec<String> = Vec::new();
+                    if !result.print_output.is_empty() {
+                        parts.extend(result.print_output);
+                    }
+                    if !result.value.is_null() {
+                        match &result.value {
+                            serde_json::Value::String(s) => parts.push(s.clone()),
+                            other => parts.push(
+                                serde_json::to_string_pretty(other)
+                                    .unwrap_or_else(|_| "null".to_string()),
+                            ),
+                        }
+                    }
+                    Ok(parts.join("\n"))
+                }
+                Err(e) => Err(MiraError::Other(e.message)),
             }
         }
         _ => Err(MiraError::InvalidInput(format!("Unknown tool: {}", name))),

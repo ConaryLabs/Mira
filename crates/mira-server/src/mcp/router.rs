@@ -27,18 +27,61 @@ impl MiraServer {
         // run_tool_call() in handler.rs already handles both for ALL tool calls.
 
         match crate::scripting::execute_script(self, &req.code).await {
-            Ok(value) => {
-                let text = serde_json::to_string_pretty(&value)
-                    .unwrap_or_else(|_| "null".to_string());
+            Ok(result) => {
+                let mut parts: Vec<String> = Vec::new();
+
+                // Include print output before the return value
+                if !result.print_output.is_empty() {
+                    parts.extend(result.print_output);
+                }
+
+                // Format the return value: strings as plain text, everything else as JSON
+                if !result.value.is_null() {
+                    match &result.value {
+                        serde_json::Value::String(s) => parts.push(s.clone()),
+                        other => parts.push(
+                            serde_json::to_string_pretty(other)
+                                .unwrap_or_else(|_| "null".to_string()),
+                        ),
+                    }
+                }
+
+                let text = if parts.is_empty() {
+                    String::new()
+                } else {
+                    parts.join("\n")
+                };
+
                 Ok(CallToolResult {
                     content: vec![Content::text(text)],
-                    structured_content: Some(value),
+                    structured_content: Some(result.value),
                     is_error: Some(false),
                     meta: None,
                 })
             }
             Err(e) => {
-                Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
+                let mut parts: Vec<String> = Vec::new();
+
+                // Include print output captured before the error
+                if !e.print_output.is_empty() {
+                    parts.extend(e.print_output);
+                }
+
+                parts.push(e.message.clone());
+
+                let error_value = serde_json::json!({
+                    "error": e.message,
+                    "line": e.line,
+                    "column": e.column,
+                    "elapsed_ms": e.elapsed_ms,
+                });
+
+                Ok(CallToolResult {
+                    content: vec![Content::text(parts.join("\n"))],
+                    structured_content: Some(error_value),
+                    is_error: Some(true),
+                    meta: None,
+                })
             }
         }
     }

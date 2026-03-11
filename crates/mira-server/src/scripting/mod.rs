@@ -5,4 +5,4 @@ mod convert;
 mod engine;
 pub mod bindings;
 
-pub use engine::execute_script;
+pub use engine::{execute_script, ScriptError, ScriptResult};
