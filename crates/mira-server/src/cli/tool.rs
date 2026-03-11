@@ -112,6 +112,14 @@ pub async fn run_tool(name: String, args: String) -> Result<()> {
             .await
             .map(|output| output.0.message)
         }
+        "run" => {
+            let req: mira::mcp::requests::RunRequest = serde_json::from_str(&args)?;
+            match mira::scripting::execute_script(&server, &req.code).await {
+                Ok(value) => Ok(serde_json::to_string_pretty(&value)
+                    .unwrap_or_else(|_| "null".to_string())),
+                Err(e) => Err(e),
+            }
+        }
         _ => Err(MiraError::InvalidInput(format!("Unknown tool: {}", name))),
     };
 
@@ -140,6 +148,7 @@ fn list_cli_tool_names() -> Vec<&'static str> {
         "documentation",
         "team",
         "launch",
+        "run",
     ]
 }
 

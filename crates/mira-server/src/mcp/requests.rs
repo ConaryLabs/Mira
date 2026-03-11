@@ -334,6 +334,24 @@ pub struct LaunchRequest {
 }
 
 // ============================================================================
+// RunRequest — single MCP tool for script execution
+// ============================================================================
+
+/// Request for the `run` tool — executes a Rhai script.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+pub struct RunRequest {
+    /// Rhai script code to execute. Has access to Mira's full API.
+    /// Call help() for the API reference, help("search") for specific functions.
+    ///
+    /// Available: search(query), symbols(path), callers(fn), callees(fn),
+    /// goal_create/list/get/update/delete, goal_add_milestone, goal_complete_milestone,
+    /// recap(), current_session(), project_init(), project_info(),
+    /// diff(), index_project(), index_status(), insights(), dismiss_insight(id, source),
+    /// launch(team), format(data), summarize(results, max), pick(results, fields), help().
+    pub code: String,
+}
+
+// ============================================================================
 // Slim MCP types — reduced schema surface exposed to Claude Code.
 // Full types above are still used by CLI (`mira tool`) and handlers.
 // ============================================================================

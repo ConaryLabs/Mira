@@ -1,146 +1,47 @@
 // crates/mira-server/src/mcp/router.rs
 // MCP tool router — #[tool] annotated methods and tool call lifecycle
 
-use crate::mcp::responses::{HasMessage, Json};
-use crate::tools::core as tools;
-
 use rmcp::{
     ErrorData,
-    handler::server::{router::tool::ToolRouter, tool::IntoCallToolResult, wrapper::Parameters},
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolRequestParams, CallToolResult, Content},
     service::{RequestContext, RoleServer},
     task_manager::{self, OperationDescriptor, OperationMessage, ToolCallTaskResult},
     tool, tool_router,
 };
-use schemars::JsonSchema;
-use serde::Serialize;
 
 use super::MiraServer;
-use super::requests::*;
-use super::responses;
-use crate::hooks::session::read_claude_session_id;
+use super::requests::RunRequest;
 use crate::utils::truncate;
 
-fn tool_result<T, E: std::fmt::Display>(
-    result: Result<Json<T>, E>,
-) -> Result<CallToolResult, ErrorData>
-where
-    T: Serialize + JsonSchema + HasMessage + 'static,
-{
-    match result {
-        Ok(json) => json.into_call_tool_result(),
-        Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
-    }
-}
-
-#[allow(clippy::expect_used)] // schema_for_output on derived JsonSchema types is infallible
 #[tool_router]
 impl MiraServer {
     #[tool(
-        description = "Manage project context and workspace initialization. Actions: start (initialize session with codebase map), get (show current).",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::ProjectOutput>()
-            .expect("ProjectOutput schema")
+        description = "Execute a Rhai script with access to Mira's API. Scripts can chain calls, filter results, and shape output. Call help() for the full API reference.\n\nAvailable: search(query), symbols(path), callers(fn), callees(fn), goal_create/list/get/update/delete, goal_add_milestone, goal_complete_milestone, recap(), diff(), insights(), format(data), summarize(results, n), pick(results, fields), help()."
     )]
-    async fn project(
+    async fn run(
         &self,
-        Parameters(req): Parameters<McpProjectRequest>,
+        Parameters(req): Parameters<RunRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let action: ProjectAction = req.action.into();
-        let session_id = req.session_id.or_else(read_claude_session_id);
-        tool_result(tools::project(self, action, req.project_path, req.name, session_id).await)
-    }
+        // NOTE: Do NOT call get_or_create_session or maybe_auto_init_project here.
+        // run_tool_call() in handler.rs already handles both for ALL tool calls.
 
-    #[tool(
-        description = "Code intelligence: semantic search and call graph analysis. Actions: search (find code by meaning), symbols (list definitions in file), callers/callees (trace call graph).",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::CodeOutput>()
-            .expect("CodeOutput schema")
-    )]
-    async fn code(
-        &self,
-        Parameters(req): Parameters<McpCodeRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_code(self, req.into()).await)
+        match crate::scripting::execute_script(self, &req.code).await {
+            Ok(value) => {
+                let text = serde_json::to_string_pretty(&value)
+                    .unwrap_or_else(|_| "null".to_string());
+                Ok(CallToolResult {
+                    content: vec![Content::text(text)],
+                    structured_content: Some(value),
+                    is_error: Some(false),
+                    meta: None,
+                })
+            }
+            Err(e) => {
+                Ok(CallToolResult::error(vec![Content::text(e.to_string())]))
+            }
+        }
     }
-
-    #[tool(
-        description = "Analyze git changes semantically with change classification, impact assessment, and risk analysis. Compares refs, staged changes, or working tree. Standalone — no action field needed.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::DiffOutput>()
-            .expect("DiffOutput schema")
-    )]
-    async fn diff(
-        &self,
-        Parameters(req): Parameters<McpDiffRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(
-            tools::analyze_diff_tool(self, req.from_ref, req.to_ref, req.include_impact).await,
-        )
-    }
-
-    #[tool(
-        description = "Track cross-session objectives, progress, and milestones. Actions: create, bulk_create, list, get, update, delete, add_milestone, complete_milestone, delete_milestone, sessions. Use for multi-session work planning and progress tracking.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::GoalOutput>()
-            .expect("GoalOutput schema")
-    )]
-    async fn goal(
-        &self,
-        Parameters(req): Parameters<GoalRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::goal(self, req).await)
-    }
-
-    #[tool(
-        description = "Index codebase for semantic search and analysis. Actions: project (full reindex of entire codebase — distinct from the project tool), file (re-indexes full project, same as project), status (index stats including modules_summarized). Builds embeddings and symbol tables.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::IndexOutput>()
-            .expect("IndexOutput schema")
-    )]
-    async fn index(
-        &self,
-        Parameters(req): Parameters<McpIndexRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let action: IndexAction = req.action.into();
-        tool_result(tools::index(self, action, req.path, req.skip_embed.unwrap_or(false)).await)
-    }
-
-    #[tool(
-        description = "Session management. Actions: recap (preferences + context + goals), current_session (show current; use action=\"current_session\").",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::SessionOutput>()
-            .expect("SessionOutput schema")
-    )]
-    async fn session(
-        &self,
-        Parameters(req): Parameters<McpSessionRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_session(self, req.into()).await)
-    }
-
-    #[tool(
-        description = "Session insights and background analysis. Actions: insights (background analysis digest), dismiss_insight (remove a resolved insight; both insight_id AND insight_source are required; insight_source must be 'pondering' or 'doc_gap'). Standalone — no action field needed for insights.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::InsightsOutput>()
-            .expect("InsightsOutput schema")
-    )]
-    async fn insights(
-        &self,
-        Parameters(req): Parameters<McpInsightsRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(tools::handle_session(self, req.into()).await)
-    }
-
-    #[tool(
-        description = "Context-aware team launcher. Parses .claude/agents/{team}.md, enriches with project context, returns ready-to-spawn agent specs. Standalone — no action field needed.",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<responses::LaunchOutput>()
-            .expect("LaunchOutput schema")
-    )]
-    async fn launch(
-        &self,
-        Parameters(req): Parameters<LaunchRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        tool_result(
-            tools::handle_launch(self, req.team, req.scope, req.members, req.context_budget).await,
-        )
-    }
-
-    // documentation, team tools removed from MCP surface.
-    // Still accessible via `mira tool <name> '<json>'` CLI.
 }
 
 impl MiraServer {
@@ -468,26 +369,4 @@ mod tests {
         assert_eq!(text, "something broke");
     }
 
-    // ═══════════════════════════════════════
-    // tool_result
-    // ═══════════════════════════════════════
-
-    #[test]
-    fn tool_result_err_produces_error_content() {
-        use crate::mcp::responses::ProjectOutput;
-        let result: Result<CallToolResult, ErrorData> =
-            tool_result::<ProjectOutput, String>(Err("bad request".to_string()));
-        // Should be Ok (not protocol error), but with error content
-        let call_result = result.expect("tool_result Err should produce Ok(CallToolResult)");
-        let text = call_result
-            .content
-            .first()
-            .and_then(|c| c.as_text())
-            .map(|t| t.text.to_string())
-            .unwrap_or_default();
-        assert!(
-            text.contains("bad request"),
-            "expected 'bad request' in: {text}"
-        );
-    }
 }
